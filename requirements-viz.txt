@@ -1,0 +1,6 @@
+-r requirements.txt
+# Upstream pygame 2.6.x has no Python 3.14 wheels and is unmaintained.
+# pygame-ce is the drop-in Community Edition fork (`import pygame` unchanged)
+# with 3.14 support. Phase 12 specified pygame>=2.5,<3.0; this is that
+# dependency on a Python version pygame itself cannot install.
+pygame-ce>=2.5.6,<3.0
