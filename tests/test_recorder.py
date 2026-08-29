@@ -29,7 +29,7 @@ def test_header_matches_scenario_and_ticks_start_at_zero(tmp_path):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     try:
-        bridge = WraithNetBridge(recorder=recorder)
+        bridge = WraithNetBridge(sinks=[recorder])
     finally:
         recorder.close()
 
@@ -57,7 +57,7 @@ async def test_strikes_are_per_tick_not_cumulative(tmp_path):
     """
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
-    bridge = WraithNetBridge(recorder=recorder)
+    bridge = WraithNetBridge(sinks=[recorder])
     try:
         jet = bridge.model.jets["Jet_1"]
         target = bridge.model.targets["Target_A"]
@@ -94,7 +94,7 @@ async def test_strikes_are_per_tick_not_cumulative(tmp_path):
 def test_jammed_flag_reflects_jam_radius(tmp_path):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
-    bridge = WraithNetBridge(recorder=recorder)
+    bridge = WraithNetBridge(sinks=[recorder])
     try:
         jammer = next(iter(bridge.model.jammers.values()))
         bridge.model.space.move_agent(bridge.model.jets["Jet_1"], jammer.position)
@@ -113,7 +113,7 @@ def test_jammed_flag_reflects_jam_radius(tmp_path):
 async def test_destroyed_jet_is_absent_from_subsequent_tick(tmp_path, fast_cnp):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
-    bridge = WraithNetBridge(recorder=recorder)
+    bridge = WraithNetBridge(sinks=[recorder])
     bridge.start_agent_loops()
     try:
         victim_id = "Jet_1"
@@ -140,7 +140,7 @@ def _peek_last_tick_jets(path):
 async def test_recorded_role_matches_runtime_for_two_roles(tmp_path, fast_cnp):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
-    bridge = WraithNetBridge(recorder=recorder)
+    bridge = WraithNetBridge(sinks=[recorder])
     seen_roles: set[str] = set()
     tick0 = TraceTick.model_validate_json(path.read_text(encoding="utf-8").splitlines()[-1])
     seen_roles.update(j.role for j in tick0.jets if j.role)
@@ -175,7 +175,7 @@ async def test_recorder_has_zero_effect_on_summarize(tmp_path, fast_cnp):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     try:
-        bridge_recorded = WraithNetBridge(recorder=recorder)
+        bridge_recorded = WraithNetBridge(sinks=[recorder])
         await asyncio.wait_for(bridge_recorded.run(max_ticks=1000), timeout=60)
     finally:
         recorder.close()
@@ -189,7 +189,7 @@ async def test_full_run_trace_is_parseable_and_matches_final_state(tmp_path, fas
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     try:
-        bridge = WraithNetBridge(recorder=recorder)
+        bridge = WraithNetBridge(sinks=[recorder])
         await asyncio.wait_for(bridge.run(), timeout=60)
     finally:
         recorder.close()

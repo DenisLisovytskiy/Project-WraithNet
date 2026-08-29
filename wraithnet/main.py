@@ -1,24 +1,72 @@
 """Entrypoint: run the fixed WraithNet PoC scenario end-to-end and report results."""
 
+import argparse
 import asyncio
 
 from wraithnet.bridge import WraithNetBridge
+from wraithnet.live_stream import LiveStreamServer
 from wraithnet.metrics import export_results, summarize
 from wraithnet.recorder import TraceRecorder
+from wraithnet.scenario_io import load_scenario
+from wraithnet.scenario_schema import ScenarioConfig
+from wraithnet.trace_sink import TraceSink
 
 
-async def run_scenario() -> WraithNetBridge:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the WraithNet PoC scenario.")
+    parser.add_argument(
+        "--scenario",
+        type=str,
+        default=None,
+        help="Path to a scenario JSON file (wraithnet.scenario_schema.ScenarioConfig). "
+        "Defaults to the built-in fixed PoC scenario if omitted.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Also stream ticks live over TCP.",
+    )
+    parser.add_argument("--live-host", type=str, default="127.0.0.1")
+    parser.add_argument("--live-port", type=int, default=8765)
+    return parser.parse_args()
+
+
+async def run_scenario(
+    scenario: ScenarioConfig | None = None,
+    live: bool = False,
+    live_host: str = "127.0.0.1",
+    live_port: int = 8765,
+) -> WraithNetBridge:
     recorder = TraceRecorder("results/trace.jsonl")
-    bridge = WraithNetBridge(recorder=recorder)
+    sinks: list[TraceSink] = [recorder]
+    live_server = None
+    if live:
+        live_server = LiveStreamServer(live_host, live_port)
+        await live_server.start()
+        sinks.append(live_server)
+        print(f"Live stream listening on {live_host}:{live_server.port}")
+
+    bridge = WraithNetBridge(sinks=sinks, scenario=scenario)
     try:
         await bridge.run()
     finally:
         recorder.close()
+        if live_server is not None:
+            await live_server.close()
     return bridge
 
 
 def main() -> None:
-    bridge = asyncio.run(run_scenario())
+    args = parse_args()
+    scenario = load_scenario(args.scenario) if args.scenario else None
+    bridge = asyncio.run(
+        run_scenario(
+            scenario,
+            live=args.live,
+            live_host=args.live_host,
+            live_port=args.live_port,
+        )
+    )
     summary = summarize(bridge.model)
 
     print(f"Simulation finished at tick {summary['ticks_elapsed']}")

@@ -17,6 +17,7 @@ from mesa.datacollection import DataCollector
 
 from wraithnet import config
 from wraithnet.broker import MessageBroker
+from wraithnet.scenario_schema import ScenarioConfig, _default_scenario
 from wraithnet.schemas import ActionIntent, Observation, TargetInfo
 
 
@@ -78,15 +79,18 @@ class EwJammerAgent(mesa.Agent):
 
 
 class WraithNetModel(mesa.Model):
-    def __init__(self, seed: int | None = None) -> None:
+    def __init__(
+        self, seed: int | None = None, scenario: ScenarioConfig | None = None
+    ) -> None:
         # Mesa 3.5 prefers `rng=`; passing `seed=` directly is soft-deprecated.
         super().__init__(rng=seed)
         # Mesa 3.x replaces self.step with a no-arg _wrapped_step for its
         # event scheduler. Restore our intents-based step so callers (and
         # Phase 4's Bridge) can use model.step(intents) directly.
         self.step = self._user_step
+        self._scenario = scenario or _default_scenario()
         self.space = mesa.space.ContinuousSpace(
-            config.GRID_WIDTH, config.GRID_HEIGHT, config.GRID_TORUS
+            self._scenario.grid_width, self._scenario.grid_height, config.GRID_TORUS
         )
         self.tick = 0
         self.targets: dict[str, TargetState] = {}
@@ -127,31 +131,31 @@ class WraithNetModel(mesa.Model):
         self.datacollector.collect(self)  # capture the tick-0 baseline before any steps
 
     def _spawn_scenario(self) -> None:
-        for t in config.SCENARIO["targets"]:
-            self.targets[t["target_id"]] = TargetState(
-                target_id=t["target_id"],
-                position=t["position"],
-                hp_required=t["hp_required"],
-                target_type=t["target_type"],
+        for t in self._scenario.targets:
+            self.targets[t.target_id] = TargetState(
+                target_id=t.target_id,
+                position=t.position,
+                hp_required=t.hp_required,
+                target_type=t.target_type,
             )
-        for s in config.SCENARIO.get("sam_sites", []):
-            self.targets[s["target_id"]] = TargetState(
-                target_id=s["target_id"],
-                position=s["position"],
-                hp_required=s["hp_required"],
-                target_type=s["target_type"],
+        for s in self._scenario.sam_sites:
+            self.targets[s.target_id] = TargetState(
+                target_id=s.target_id,
+                position=s.position,
+                hp_required=s.hp_required,
+                target_type=s.target_type,
             )
-            self.sam_sites[s["target_id"]] = SamSiteAgent(
-                self, s["target_id"], s["position"]
+            self.sam_sites[s.target_id] = SamSiteAgent(
+                self, s.target_id, s.position
             )
-        for jam in config.SCENARIO.get("jammers", []):
-            self.jammers[jam["jammer_id"]] = EwJammerAgent(
-                self, jam["jammer_id"], jam["position"]
+        for jam in self._scenario.jammers:
+            self.jammers[jam.jammer_id] = EwJammerAgent(
+                self, jam.jammer_id, jam.position
             )
-        for j in config.SCENARIO["jets"]:
-            agent = JetAgent(self, agent_id=j["agent_id"], payload=j["payload"])
-            self.space.place_agent(agent, j["position"])
-            self.jets[j["agent_id"]] = agent
+        for j in self._scenario.jets:
+            agent = JetAgent(self, agent_id=j.agent_id, payload=dict(j.payload))
+            self.space.place_agent(agent, j.position)
+            self.jets[j.agent_id] = agent
 
     def step(self, intents: dict[str, ActionIntent] | None = None) -> None:
         intents = intents or {}

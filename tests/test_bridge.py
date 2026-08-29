@@ -7,6 +7,7 @@ import pytest
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.bridge import WraithNetBridge
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
 from wraithnet.schemas import Observation, TargetInfo
 
 
@@ -206,3 +207,34 @@ async def test_bridge_swarm_wipeout_terminates(fast_cnp):
         assert len(bridge.agents) == 0
     finally:
         await bridge.stop_agent_loops()
+
+
+@pytest.mark.asyncio
+async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
+    """Phase 14: a custom ScenarioConfig actually reaches the running simulation."""
+    scenario = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Solo_Jet",
+                position=(20.0, 20.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Near_Bunker",
+                position=(20.5, 20.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    bridge = WraithNetBridge(scenario=scenario)
+    await asyncio.wait_for(bridge.run(max_ticks=50), timeout=15.0)
+
+    assert bridge.model.running is False
+    assert bridge.model.swarm_wiped_out is False
+    assert bridge.model.targets["Near_Bunker"].hp_remaining == 0
+    assert "Target_A" not in bridge.model.targets
+    assert set(bridge.model.jets) == {"Solo_Jet"}
+    assert any(entry["target_id"] == "Near_Bunker" for entry in bridge.model.strike_log)

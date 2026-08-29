@@ -6,6 +6,12 @@ import pytest
 
 from wraithnet import config
 from wraithnet.broker import MessageBroker
+from wraithnet.scenario_schema import (
+    JetSpec,
+    ScenarioConfig,
+    TargetSpec,
+    _default_scenario,
+)
 from wraithnet.schemas import ActionIntent
 from wraithnet.world import WraithNetModel
 
@@ -462,3 +468,109 @@ def test_jet3_path_to_target_b_crosses_jammer():
     assert jammed_at_some_point, (
         f"Jet_3 path from {start} to {end} never entered JAM_RADIUS of {jammer}"
     )
+
+
+def test_bare_model_still_spawns_the_builtin_poc_scenario():
+    """Phase 14: omitting `scenario` must spawn the same world as before this phase."""
+    model = WraithNetModel()
+    default = _default_scenario()
+
+    assert set(model.jets) == {j.agent_id for j in default.jets}
+    assert set(model.targets) == (
+        {t.target_id for t in default.targets} | {s.target_id for s in default.sam_sites}
+    )
+    assert set(model.sam_sites) == {s.target_id for s in default.sam_sites}
+    assert set(model.jammers) == {j.jammer_id for j in default.jammers}
+
+    for spec in default.jets:
+        jet = model.jets[spec.agent_id]
+        assert jet.pos == spec.position
+        assert jet.payload == dict(spec.payload)
+        assert jet.hp == config.JET_HP
+
+    for spec in default.targets:
+        target = model.targets[spec.target_id]
+        assert target.position == spec.position
+        assert target.hp_required == spec.hp_required
+        assert target.hp_remaining == spec.hp_required
+        assert target.target_type == spec.target_type
+
+    for spec in default.sam_sites:
+        target = model.targets[spec.target_id]
+        assert target.position == spec.position
+        assert target.hp_required == spec.hp_required
+        assert target.target_type == spec.target_type
+        assert spec.target_id in model.sam_sites
+        assert model.sam_sites[spec.target_id].position == spec.position
+
+    for spec in default.jammers:
+        jammer = model.jammers[spec.jammer_id]
+        assert jammer.position == spec.position
+
+    assert model.space.x_max == default.grid_width
+    assert model.space.y_max == default.grid_height
+
+
+def test_model_spawns_custom_scenario_not_default():
+    custom = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Solo_Jet",
+                position=(5.0, 5.0),
+                payload={"JDAM": 2, "AIM9X": 0},
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Custom_Bunker",
+                position=(8.0, 8.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    model = WraithNetModel(scenario=custom)
+
+    assert set(model.jets) == {"Solo_Jet"}
+    assert set(model.targets) == {"Custom_Bunker"}
+    assert model.sam_sites == {}
+    assert model.jammers == {}
+    assert "Jet_1" not in model.jets
+    assert "Target_A" not in model.targets
+    assert "SAM_Site_1" not in model.targets
+    assert "EW_Jammer_1" not in model.jammers
+
+    jet = model.jets["Solo_Jet"]
+    assert jet.pos == (5.0, 5.0)
+    assert jet.payload == {"JDAM": 2, "AIM9X": 0}
+    target = model.targets["Custom_Bunker"]
+    assert target.position == (8.0, 8.0)
+    assert target.hp_required == 1
+    assert target.target_type == "HARDENED_BUNKER"
+
+
+def test_model_uses_scenario_grid_size_not_config_constants():
+    custom = ScenarioConfig(
+        grid_width=40.0,
+        grid_height=60.0,
+        jets=[
+            JetSpec(
+                agent_id="Solo_Jet",
+                position=(1.0, 1.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Custom_Bunker",
+                position=(2.0, 2.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    model = WraithNetModel(scenario=custom)
+    assert model.space.x_max == 40.0
+    assert model.space.y_max == 60.0
+    assert model.space.x_max != config.GRID_WIDTH
+    assert model.space.y_max != config.GRID_HEIGHT

@@ -5,30 +5,32 @@ agent negotiation loops. One coroutine, one event loop, no threads.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
+from wraithnet.scenario_schema import ScenarioConfig
+from wraithnet.trace_sink import TraceSink
 from wraithnet.world import WraithNetModel
-
-if TYPE_CHECKING:
-    from wraithnet.recorder import TraceRecorder
 
 
 class WraithNetBridge:
-    def __init__(self, recorder: TraceRecorder | None = None) -> None:
+    def __init__(
+        self,
+        sinks: list[TraceSink] | None = None,
+        scenario: ScenarioConfig | None = None,
+    ) -> None:
         self.broker = MessageBroker()
-        self.model = WraithNetModel()
+        self.model = WraithNetModel(scenario=scenario)
         self.agents: dict[str, JetAgentRuntime] = {
             agent_id: JetAgentRuntime(agent_id, self.broker)
             for agent_id in self.model.jets
         }
         self._tasks: list[asyncio.Task] = []
-        self.recorder = recorder
-        if self.recorder is not None:
-            self.recorder.record_header(self)
-            self.recorder.record_tick(self)  # tick-0 baseline, mirrors DataCollector's own tick-0 collect() call
+        self.sinks: list[TraceSink] = sinks or []
+        for sink in self.sinks:
+            sink.record_header(self)
+            sink.record_tick(self)  # tick-0 baseline, mirrors DataCollector's own tick-0 collect() call
 
     def start_agent_loops(self) -> None:
         """Start each agent's message-receive loop (handle_message dispatch)
@@ -103,8 +105,8 @@ class WraithNetBridge:
             if target.is_destroyed:
                 self.broker.close_contract(target_id)
         self.broker.expire_stale_contracts(self.model.tick)
-        if self.recorder is not None:
-            self.recorder.record_tick(self)
+        for sink in self.sinks:
+            sink.record_tick(self)
 
     async def _notify_managers_of_losses(self, destroyed_agent_ids: set[str]) -> None:
         # Only surviving managers may re-open bidding. A manager destroyed this
