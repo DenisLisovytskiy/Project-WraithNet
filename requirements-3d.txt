@@ -1,0 +1,4 @@
+-r requirements.txt
+# panda3d 1.10.16 ships official cp314 Windows wheels on PyPI, so unlike
+# pygame (requirements-viz.txt) no Community-Edition fork is needed on 3.14.
+panda3d>=1.10,<2.0
