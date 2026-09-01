@@ -152,7 +152,7 @@ def test_strike_out_of_range_is_noop():
     model = WraithNetModel()
     jet = model.jets["Jet_1"]
     target = model.targets["Target_A"]
-    assert math.dist(jet.pos, target.position) > config.STRIKE_RANGE
+    assert math.dist(jet.pos, target.position) > config.WEAPON_CATALOG["JDAM"].range
     intent = ActionIntent(
         agent_id="Jet_1",
         tick=0,
@@ -574,3 +574,453 @@ def test_model_uses_scenario_grid_size_not_config_constants():
     assert model.space.y_max == 60.0
     assert model.space.x_max != config.GRID_WIDTH
     assert model.space.y_max != config.GRID_HEIGHT
+
+
+def test_default_scenario_jets_match_historical_speed_and_hp():
+    """Phase 20's load-bearing invariant: WraithNetModel() with no scenario
+    argument must still spawn every jet as STRIKE_FIGHTER, whose catalog
+    stats exactly reproduce today's JET_SPEED=5.0 / JET_HP=5. Do not 'round'
+    or rebalance this frame — the default PoC outcome depends on it."""
+    strike = config.JET_FRAME_CATALOG["STRIKE_FIGHTER"]
+    assert strike.max_speed == 5.0
+    assert strike.hp == 5
+    assert strike.max_speed == config.JET_SPEED
+    assert strike.hp == config.JET_HP
+
+    model = WraithNetModel()
+    for jet in model.jets.values():
+        assert jet.frame_type == "STRIKE_FIGHTER"
+        assert jet.hp == 5
+        assert jet.heading == 0.0
+        assert jet.desired_heading is None
+
+    jet = model.jets["Jet_2"]
+    old_pos = jet.pos
+    destination = (old_pos[0] + 50.0, old_pos[1])
+    model.step(
+        {
+            "Jet_2": ActionIntent(
+                agent_id="Jet_2",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+            )
+        }
+    )
+    assert math.dist(old_pos, jet.pos) == pytest.approx(5.0)
+    assert jet.distance_traveled == pytest.approx(5.0)
+
+
+def test_different_frames_move_at_different_max_speeds():
+    start = (10.0, 10.0)
+    destination = (90.0, 10.0)
+    custom = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Fast",
+                position=start,
+                payload={"JDAM": 1, "AIM9X": 0},
+                frame_type="INTERCEPTOR",
+            ),
+            JetSpec(
+                agent_id="Slow",
+                position=start,
+                payload={"JDAM": 1, "AIM9X": 0},
+                frame_type="HEAVY_BOMBER",
+            ),
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Far_Bunker",
+                position=(90.0, 90.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    model = WraithNetModel(scenario=custom)
+    model.step(
+        {
+            "Fast": ActionIntent(
+                agent_id="Fast",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+            ),
+            "Slow": ActionIntent(
+                agent_id="Slow",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+            ),
+        }
+    )
+    fast_moved = math.dist(start, model.jets["Fast"].pos)
+    slow_moved = math.dist(start, model.jets["Slow"].pos)
+    assert fast_moved == pytest.approx(config.JET_FRAME_CATALOG["INTERCEPTOR"].max_speed)
+    assert slow_moved == pytest.approx(config.JET_FRAME_CATALOG["HEAVY_BOMBER"].max_speed)
+    assert fast_moved > slow_moved
+
+
+def test_heading_rotation_snaps_when_within_turn_rate():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    turn_rate = config.JET_FRAME_CATALOG[jet.frame_type].turn_rate_deg_per_tick
+    jet.heading = 0.0
+    jet.desired_heading = turn_rate - 5.0
+    assert abs(jet.desired_heading) <= turn_rate
+    model._apply_heading_rotation(jet)
+    assert jet.heading == pytest.approx(jet.desired_heading)
+
+
+def test_heading_rotation_advances_by_turn_rate_when_farther():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    turn_rate = config.JET_FRAME_CATALOG[jet.frame_type].turn_rate_deg_per_tick
+    jet.heading = 10.0
+    jet.desired_heading = 10.0 + turn_rate + 40.0
+    model._apply_heading_rotation(jet)
+    assert jet.heading == pytest.approx(10.0 + turn_rate)
+
+
+def test_heading_rotation_takes_shorter_clockwise_path():
+    """10° → 80° is 70° clockwise, not 290° counter-clockwise."""
+    custom = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Bomber",
+                position=(10.0, 10.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+                frame_type="HEAVY_BOMBER",
+                initial_heading=10.0,
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=(50.0, 50.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    model = WraithNetModel(scenario=custom)
+    jet = model.jets["Bomber"]
+    turn_rate = config.JET_FRAME_CATALOG["HEAVY_BOMBER"].turn_rate_deg_per_tick
+    jet.desired_heading = 80.0
+    model._apply_heading_rotation(jet)
+    assert jet.heading == pytest.approx(10.0 + turn_rate)
+
+
+def test_heading_rotation_takes_shorter_counterclockwise_path_through_zero():
+    """10° → 350° is 20° backward through 0°, not 340° forward through 180°.
+    HEAVY_BOMBER turn_rate (12) is less than 20, so we observe the increment
+    rather than a snap — heading should go 10 → 358, wrapping through 0."""
+    custom = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Bomber",
+                position=(10.0, 10.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+                frame_type="HEAVY_BOMBER",
+                initial_heading=10.0,
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=(50.0, 50.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    model = WraithNetModel(scenario=custom)
+    jet = model.jets["Bomber"]
+    turn_rate = config.JET_FRAME_CATALOG["HEAVY_BOMBER"].turn_rate_deg_per_tick
+    jet.desired_heading = 350.0
+    model._apply_heading_rotation(jet)
+    expected = (10.0 - turn_rate) % 360.0
+    assert jet.heading == pytest.approx(expected)
+    assert expected == pytest.approx(358.0)
+
+
+def test_heading_unchanged_when_desired_heading_is_none():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    jet.heading = 47.0
+    jet.desired_heading = None
+    for _ in range(5):
+        model._apply_heading_rotation(jet)
+    assert jet.heading == pytest.approx(47.0)
+    model.step(
+        {"Jet_1": ActionIntent(agent_id="Jet_1", tick=0, action_type="IDLE")}
+    )
+    assert jet.heading == pytest.approx(47.0)
+    assert jet.desired_heading is None
+
+
+def test_observation_current_heading_matches_jet_heading():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    jet.heading = 123.0
+    obs = model.build_observation("Jet_1", MessageBroker())
+    assert obs.current_heading == pytest.approx(123.0)
+
+
+def test_step_applies_intent_desired_heading_before_move():
+    """Wiring check: ActionIntent.desired_heading is copied onto the jet and
+    rotated in the same step as MOVE — agents.py does not set this field yet
+    (Phase 21), but the World path has to work the moment it does."""
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    jet.heading = 0.0
+    old_pos = jet.pos
+    destination = (old_pos[0] + 50.0, old_pos[1])
+    # 20° is within STRIKE_FIGHTER's 25°/tick turn rate, so it snaps this tick.
+    model.step(
+        {
+            "Jet_1": ActionIntent(
+                agent_id="Jet_1",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+                desired_heading=20.0,
+            )
+        }
+    )
+    assert jet.heading == pytest.approx(20.0)
+    assert math.dist(old_pos, jet.pos) == pytest.approx(5.0)
+
+
+def _arc_weapon(firing_arc_deg: float) -> config.WeaponSpec:
+    return config.WeaponSpec(
+        range=50.0,
+        firing_arc_deg=firing_arc_deg,
+        slot_cost=1,
+        damage_per_hit=1,
+        suitability={"HARDENED_BUNKER": 1.0, "MOBILE_RADAR": 0.0, "SAM_SITE": 0.0},
+    )
+
+
+def _heading_geometry_model(
+    jet_pos: tuple[float, float],
+    heading: float,
+    target_pos: tuple[float, float],
+    payload: dict[str, int] | None = None,
+):
+    custom = ScenarioConfig(
+        jets=[
+            JetSpec(
+                agent_id="Gunner",
+                position=jet_pos,
+                payload=payload or {"GUN_POD": 1},
+                initial_heading=heading,
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=target_pos,
+                hp_required=5,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    return WraithNetModel(scenario=custom)
+
+
+def test_target_in_firing_arc_dead_ahead_for_30deg_weapon():
+    """Jet at (50,50) heading 0° (+y); target at (50,60) is dead ahead."""
+    model = _heading_geometry_model((50.0, 50.0), 0.0, (50.0, 60.0))
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    assert model._target_in_firing_arc(jet, target, _arc_weapon(30.0)) is True
+
+
+def test_target_directly_behind_in_arc_only_for_360deg_weapon():
+    """Target at (50,40) is 180° off a heading of 0° — behind the jet."""
+    model = _heading_geometry_model((50.0, 50.0), 0.0, (50.0, 40.0))
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    assert model._target_in_firing_arc(jet, target, _arc_weapon(360.0)) is True
+    assert model._target_in_firing_arc(jet, target, _arc_weapon(30.0)) is False
+
+
+def test_target_at_exact_edge_of_60deg_arc_is_in_arc():
+    """30° clockwise of +y is the exact edge of a 60° cone (±30°)."""
+    dy = 10.0
+    dx = dy * math.tan(math.radians(30.0))
+    model = _heading_geometry_model((50.0, 50.0), 0.0, (50.0 + dx, 50.0 + dy))
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    assert model._target_in_firing_arc(jet, target, _arc_weapon(60.0)) is True
+
+
+def test_target_31deg_off_heading_is_outside_60deg_arc():
+    dy = 10.0
+    dx = dy * math.tan(math.radians(31.0))
+    model = _heading_geometry_model((50.0, 50.0), 0.0, (50.0 + dx, 50.0 + dy))
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    assert model._target_in_firing_arc(jet, target, _arc_weapon(60.0)) is False
+
+
+def test_strike_in_range_but_outside_narrow_arc_is_noop():
+    # Target is 0.3 east of the jet (inside GUN_POD range 0.5) but 90° off
+    # a heading of 0°; 90 > 60/2 so the cone misses.
+    model = _heading_geometry_model(
+        (50.0, 50.0), 0.0, (50.3, 50.0), payload={"GUN_POD": 1}
+    )
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    model._apply_strike(jet, "Bunker", "GUN_POD")
+    assert jet.payload["GUN_POD"] == 1
+    assert target.hp_remaining == 5
+    assert model.strike_log == []
+
+
+def test_amraam_strikes_a_target_behind_the_jet():
+    """All-aspect demonstration: facing +y, target due south, still a hit."""
+    model = _heading_geometry_model(
+        (50.0, 50.0), 0.0, (50.0, 40.0), payload={"AMRAAM": 1}
+    )
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    model._apply_strike(jet, "Bunker", "AMRAAM")
+    assert jet.payload["AMRAAM"] == 0
+    assert target.hp_remaining == 4
+    assert model.strike_log[-1]["weapon_type"] == "AMRAAM"
+
+
+def test_strike_damage_per_hit_greater_than_one_floors_at_zero():
+    model = _heading_geometry_model(
+        (50.0, 50.0), 90.0, (50.3, 50.0), payload={"GUN_POD": 2}
+    )
+    jet = model.jets["Gunner"]
+    target = model.targets["Bunker"]
+    damage = config.WEAPON_CATALOG["GUN_POD"].damage_per_hit
+    assert damage > 1
+    model._apply_strike(jet, "Bunker", "GUN_POD")
+    assert target.hp_remaining == 5 - damage
+    target.hp_remaining = 1
+    model._apply_strike(jet, "Bunker", "GUN_POD")
+    assert target.hp_remaining == 0
+    assert jet.payload["GUN_POD"] == 0
+
+
+def _home_base_model(
+    jet_pos: tuple[float, float],
+    home_base: tuple[float, float] = (20.0, 20.0),
+    payload: dict[str, int] | None = None,
+) -> WraithNetModel:
+    return WraithNetModel(
+        scenario=ScenarioConfig(
+            home_base=home_base,
+            jets=[
+                JetSpec(
+                    agent_id="Homebody",
+                    position=jet_pos,
+                    payload=payload or {"JDAM": 1, "AIM9X": 0},
+                )
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(80.0, 80.0),
+                    hp_required=1,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+        )
+    )
+
+
+def test_fuel_burns_flat_per_tick_regardless_of_action():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    burn = config.JET_FRAME_CATALOG[jet.frame_type].fuel_burn_per_tick
+    start = jet.fuel
+    model.step({})  # idle
+    assert jet.fuel == pytest.approx(start - burn)
+    intent_move = ActionIntent(
+        agent_id="Jet_1",
+        tick=1,
+        action_type="MOVE",
+        target_position=(80.0, 80.0),
+    )
+    model.step({"Jet_1": intent_move})
+    assert jet.fuel == pytest.approx(start - 2 * burn)
+    model.space.move_agent(jet, model.targets["Target_A"].position)
+    intent_strike = ActionIntent(
+        agent_id="Jet_1",
+        tick=2,
+        action_type="STRIKE",
+        target_id="Target_A",
+        weapon_type="JDAM",
+    )
+    model.step({"Jet_1": intent_strike})
+    assert jet.fuel == pytest.approx(start - 3 * burn)
+
+
+def test_rtb_jet_lands_inside_radius_not_just_outside():
+    home = (20.0, 20.0)
+    model = _home_base_model(jet_pos=home, home_base=home)
+    jet = model.jets["Homebody"]
+    jet.is_rtb = True
+    model.step({})
+    assert "Homebody" not in model.jets
+    assert "Homebody" in model.jets_returned_to_base
+
+    model = _home_base_model(
+        jet_pos=(home[0], home[1] + config.RTB_LANDING_RADIUS + 0.01),
+        home_base=home,
+    )
+    jet = model.jets["Homebody"]
+    jet.is_rtb = True
+    model.step({})
+    assert "Homebody" in model.jets
+    assert "Homebody" not in model.jets_returned_to_base
+
+
+def test_fuel_exhaustion_reaps_without_counting_as_landed():
+    model = _home_base_model(jet_pos=(80.0, 80.0), home_base=(20.0, 20.0))
+    jet = model.jets["Homebody"]
+    jet.fuel = 0.0
+    jet.is_rtb = False
+    hp_before = jet.hp
+    model.step({})
+    assert "Homebody" not in model.jets
+    assert "Homebody" not in model.jets_returned_to_base
+    # Fuel exhaustion must not be implemented by zeroing hp.
+    assert hp_before > 0
+
+    model = _home_base_model(jet_pos=(80.0, 80.0), home_base=(20.0, 20.0))
+    jet = model.jets["Homebody"]
+    jet.fuel = 0.0
+    jet.is_rtb = True  # flying home but not there yet
+    model.step({})
+    assert "Homebody" not in model.jets
+    assert "Homebody" not in model.jets_returned_to_base
+
+
+def test_arriving_home_on_empty_tank_is_a_landing_not_a_loss():
+    """Ordering guarantee: land *before* the fuel<=0 reap, so 0 fuel at
+    the pad is a safe recovery."""
+    home = (20.0, 20.0)
+    model = _home_base_model(jet_pos=home, home_base=home)
+    jet = model.jets["Homebody"]
+    jet.is_rtb = True
+    jet.fuel = 0.0
+    model.step({})
+    assert "Homebody" not in model.jets
+    assert "Homebody" in model.jets_returned_to_base
+
+
+def test_observation_exposes_fuel_frame_and_home_base():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    obs = model.build_observation("Jet_1", MessageBroker())
+    assert obs.frame_type == "STRIKE_FIGHTER"
+    assert obs.fuel == pytest.approx(jet.fuel)
+    assert obs.home_base == model._home_base == config.DEFAULT_HOME_BASE

@@ -13,6 +13,9 @@ def test_config_constants_are_sane():
     assert len(config.SCENARIO["sam_sites"]) == 1
     assert len(config.SCENARIO["jammers"]) == 1
     assert config.JET_HP > 0
+    assert config.JET_FRAME_CATALOG["STRIKE_FIGHTER"].max_speed == config.JET_SPEED
+    assert config.JET_FRAME_CATALOG["STRIKE_FIGHTER"].hp == config.JET_HP
+    assert set(config.JET_FRAME_CATALOG) == {"INTERCEPTOR", "STRIKE_FIGHTER", "HEAVY_BOMBER"}
     assert config.SAM_ENGAGEMENT_RANGE > 0
     assert config.SAM_DAMAGE_PER_TICK > 0
     assert config.JAM_RADIUS > 0

@@ -180,13 +180,13 @@ def test_decide_intent_refuses_strike_on_memory_only_target():
     jet.refresh_world_view()
     jet._commit("Target_A", 1, "JDAM")
 
-    # ...then lose direct sensing while still within STRIKE_RANGE of memory coords.
+    # ...then lose direct sensing while still within JDAM range of memory coords.
     jet.set_observation(
         _obs("Jet_1", target.position, {"JDAM": 1, "AIM9X": 0}, [], tick=1)
     )
     # Do NOT refresh — keep the remembered entry; Observation.known_targets is empty.
     assert jet.latest_observation is not None
-    assert math.dist(jet.latest_observation.current_position, target.position) <= config.STRIKE_RANGE
+    assert math.dist(jet.latest_observation.current_position, target.position) <= config.WEAPON_CATALOG["JDAM"].range
     assert any(t.target_id == "Target_A" for t in jet.effective_known_targets())
     assert jet.latest_observation.known_targets == []
 

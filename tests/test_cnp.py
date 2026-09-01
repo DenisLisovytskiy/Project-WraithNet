@@ -406,7 +406,7 @@ def test_decide_intent_move_when_far_from_committed_target():
     intent = jet.decide_intent()
     assert intent.action_type == "MOVE"
     assert intent.target_position == target.position
-    assert math.dist((70.0, 70.0), target.position) > config.STRIKE_RANGE
+    assert math.dist((70.0, 70.0), target.position) > config.WEAPON_CATALOG["JDAM"].range
 
 
 def test_decide_intent_strike_when_in_range_decrements_committed_payload():

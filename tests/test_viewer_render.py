@@ -1,8 +1,10 @@
 """Headless tests for viewer coordinate mapping and trace loading (no Pygame)."""
 
+import pytest
+
 from wraithnet.config import SENSOR_RADIUS
 from wraithnet.trace_schemas import JetFrame, TargetFrame, TraceHeader, TraceTick
-from viewer.render import CANVAS_SIZE, MARGIN, world_length_to_screen, world_to_screen
+from viewer.render import CANVAS_SIZE, HUD_WIDTH, MARGIN, WINDOW_SIZE, world_length_to_screen, world_to_screen
 from viewer.trace_loader import load_trace
 
 
@@ -53,6 +55,10 @@ def test_world_length_to_screen_scales_sensor_radius():
     assert world_length_to_screen(SENSOR_RADIUS, 100.0, CANVAS_SIZE, MARGIN) == expected
 
 
+def test_window_is_1200_by_900():
+    assert WINDOW_SIZE == (CANVAS_SIZE + HUD_WIDTH, CANVAS_SIZE) == (1200, 900)
+
+
 def test_load_trace_round_trips_synthetic_file(tmp_path):
     header = _sample_header()
     ticks = [
@@ -83,3 +89,17 @@ def test_load_trace_round_trips_synthetic_file(tmp_path):
     loaded_header, loaded_ticks = load_trace(path)
     assert loaded_header == header
     assert loaded_ticks == ticks
+
+
+def test_load_trace_rejects_empty_file(tmp_path):
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="empty"):
+        load_trace(path)
+
+
+def test_load_trace_rejects_header_only(tmp_path):
+    path = tmp_path / "header_only.jsonl"
+    path.write_text(_sample_header().model_dump_json() + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no recorded ticks"):
+        load_trace(path)

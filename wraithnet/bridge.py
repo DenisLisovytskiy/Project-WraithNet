@@ -71,6 +71,15 @@ class WraithNetBridge:
         for agent in self.agents.values():
             agent.check_pending_bid_timeout()
 
+        # 1d. Bingo-fuel check — before negotiation so a jet that just decided
+        # to RTB this tick doesn't also try to bid/manage this same tick.
+        began_rtb_this_tick: set[str] = set()
+        for agent_id, agent in self.agents.items():
+            if agent.bingo_fuel_reached():
+                agent.begin_rtb()
+                self.model.jets[agent_id].is_rtb = True
+                began_rtb_this_tick.add(agent_id)
+
         # 2. Negotiate (idle agents only), bounded by MAX_TICK_WAIT_SECONDS
         idle_agents = [a for a in self.agents.values() if a.role == "IDLE"]
         if idle_agents:
@@ -92,11 +101,17 @@ class WraithNetBridge:
         self.model.step(intents)
         destroyed_this_tick = alive_before - set(self.model.jets)
 
-        # 4b. Cancel destroyed runtimes and trigger Manager Fallback (Phase 8)
+        # 4b. Cancel destroyed/landed runtimes and trigger Manager Fallback
+        # (Phase 8). RTB-this-tick IDs reuse the same notify path (design §2.5)
+        # so a contractor flying home doesn't strand its manager; those jets
+        # stay in self.agents until they later land or run dry.
         if destroyed_this_tick:
             for agent_id in destroyed_this_tick:
                 self.agents[agent_id].stop()
-            await self._notify_managers_of_losses(destroyed_this_tick)
+        leaving = destroyed_this_tick | began_rtb_this_tick
+        if leaving:
+            await self._notify_managers_of_losses(leaving)
+        if destroyed_this_tick:
             for agent_id in destroyed_this_tick:
                 del self.agents[agent_id]
 

@@ -238,3 +238,122 @@ async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
     assert "Target_A" not in bridge.model.targets
     assert set(bridge.model.jets) == {"Solo_Jet"}
     assert any(entry["target_id"] == "Near_Bunker" for entry in bridge.model.strike_log)
+
+
+@pytest.mark.asyncio
+async def test_rtb_contractor_notifies_manager_like_a_combat_loss(fast_cnp):
+    """A contractor that hits bingo is handed off the same way a SAM kill is."""
+    bridge = WraithNetBridge()
+    bridge.start_agent_loops()
+    try:
+        for _ in range(8):
+            await bridge._tick()
+            if not bridge.model.running:
+                break
+
+        victim_id = None
+        for aid, agent in bridge.agents.items():
+            if agent.role == "CONTRACTOR" and agent.committed_target_id is not None:
+                victim_id = aid
+                break
+        if victim_id is None:
+            victim_id = next(iter(bridge.model.jets))
+
+        managers_with_victim = [
+            mid
+            for mid, mgr in bridge.agents.items()
+            for cids in mgr.managed_contracts.values()
+            if victim_id in cids
+        ]
+
+        # Park far from SAMs and outside the landing radius so this tick's
+        # only loss-of-availability is bingo RTB, not a SAM kill or a landing.
+        jet = bridge.model.jets[victim_id]
+        bridge.model.space.move_agent(jet, (10.0, 10.0))
+        jet.hp = config.JET_FRAME_CATALOG[jet.frame_type].hp
+        # (10,10)→(2,2) is ~11.3 units: bingo ≈ 2.7 for a STRIKE_FIGHTER, so
+        # fuel=2.0 triggers RTB but survives this tick's burn and does not land.
+        jet.fuel = 2.0
+        await bridge._tick()
+
+        assert victim_id in bridge.agents
+        assert bridge.agents[victim_id].role == "RTB"
+        assert bridge.model.jets[victim_id].is_rtb is True
+        assert victim_id not in bridge.model.jets_returned_to_base
+
+        for mid in managers_with_victim:
+            if mid not in bridge.agents:
+                continue
+            for cids in bridge.agents[mid].managed_contracts.values():
+                assert victim_id not in cids
+    finally:
+        await bridge.stop_agent_loops()
+
+
+@pytest.mark.asyncio
+async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
+    scenario = ScenarioConfig(
+        home_base=(20.0, 20.0),
+        jets=[
+            JetSpec(
+                agent_id="Homebody",
+                position=(20.0, 20.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Far_Bunker",
+                position=(80.0, 80.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    bridge = WraithNetBridge(scenario=scenario)
+    bridge.start_agent_loops()
+    try:
+        runtime = bridge.agents["Homebody"]
+        task = runtime._task
+        bridge.model.jets["Homebody"].fuel = 0.0
+        await bridge._tick()
+        assert "Homebody" not in bridge.agents
+        assert "Homebody" not in bridge.model.jets
+        assert "Homebody" in bridge.model.jets_returned_to_base
+        await asyncio.sleep(0)
+        assert task is not None
+        assert task.cancelled() or task.done()
+    finally:
+        await bridge.stop_agent_loops()
+
+
+@pytest.mark.asyncio
+async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
+    scenario = ScenarioConfig(
+        home_base=(2.0, 2.0),
+        jets=[
+            JetSpec(
+                agent_id="Dry",
+                position=(80.0, 80.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+            )
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Far_Bunker",
+                position=(90.0, 90.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    bridge = WraithNetBridge(scenario=scenario)
+    bridge.start_agent_loops()
+    try:
+        bridge.model.jets["Dry"].fuel = 0.0
+        await bridge._tick()
+        assert "Dry" not in bridge.agents
+        assert "Dry" not in bridge.model.jets
+        assert "Dry" not in bridge.model.jets_returned_to_base
+    finally:
+        await bridge.stop_agent_loops()

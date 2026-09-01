@@ -4,16 +4,18 @@ data-driven replacement for the hardcoded wraithnet.config.SCENARIO dict —
 see docs/09_..._Design_Document.md §4.
 """
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from wraithnet import config
-from wraithnet.config import TargetType, WeaponType
+from wraithnet.config import JetFrameType, TargetType, WeaponType
 
 
 class JetSpec(BaseModel):
     agent_id: str
     position: tuple[float, float]
     payload: dict[WeaponType, int]
+    frame_type: JetFrameType = "STRIKE_FIGHTER"
+    initial_heading: float = Field(default=0.0, ge=0.0, lt=360.0)
 
 
 class TargetSpec(BaseModel):
@@ -42,6 +44,7 @@ class ScenarioConfig(BaseModel):
     targets: list[TargetSpec]
     sam_sites: list[SamSiteSpec] = []
     jammers: list[JammerSpec] = []
+    home_base: tuple[float, float] = config.DEFAULT_HOME_BASE
 
     @model_validator(mode="after")
     def _validate(self) -> "ScenarioConfig":
@@ -84,6 +87,16 @@ class ScenarioConfig(BaseModel):
                         f"Jet '{jet.agent_id}' has a {weapon} count of {count}. "
                         "Weapon counts cannot be negative."
                     )
+            slots_used = sum(
+                config.WEAPON_CATALOG[wt].slot_cost * count
+                for wt, count in jet.payload.items()
+            )
+            slots_max = config.JET_FRAME_CATALOG[jet.frame_type].ordnance_slots
+            if slots_used > slots_max:
+                errors.append(
+                    f"Jet '{jet.agent_id}' payload requires {slots_used} ordnance slots "
+                    f"but its {jet.frame_type} frame only has {slots_max}"
+                )
 
         if errors:
             raise ValueError("\n".join(errors))
@@ -117,6 +130,7 @@ def _entity_positions(
         (f"Jammer '{jammer.jammer_id}'", jammer.position)
         for jammer in scenario.jammers
     )
+    positions.append(("Home base", scenario.home_base))
     return positions
 
 

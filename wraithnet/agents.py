@@ -7,6 +7,8 @@ structure (receive -> dispatch to handle_message -> repeat) unchanged so
 Phase 3 is a pure extension, not a rewrite.
 Phase 6: weapon-suitability-aware bidding and STRIKE weapon_type.
 Phase 7: world_view memory, DATALINK_CONTACT sharing, direct-sensing STRIKE rule.
+Phase 21: catalog-driven bidding; rotate-to-bear before striking a narrow-arc weapon.
+Phase 22: bingo-fuel RTB role; fly home, ignore new contracts.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import uuid
 from wraithnet import config
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
+from wraithnet.geometry import bearing_to, is_in_firing_arc
 from wraithnet.schemas import ActionIntent, Message, Observation, TargetInfo
 
 MAX_CFP_ROUNDS = 5  # defensive cap so a manager can't re-broadcast forever
@@ -40,13 +43,14 @@ def compute_bid(
     suitable = [
         (wt, count)
         for wt, count in observation.payload.items()
-        if count > 0 and config.WEAPON_SUITABILITY.get((wt, target.target_type), 0.0) > 0.0
+        if count > 0
+        and config.WEAPON_CATALOG[wt].suitability.get(target.target_type, 0.0) > 0.0
     ]
     if not suitable:
         return None
     # Prefer the suitable weapon this jet holds the most of; tie-break alphabetically.
     weapon_type, count = max(suitable, key=lambda pair: (pair[1], pair[0]))
-    suitability = config.WEAPON_SUITABILITY[(weapon_type, target.target_type)]
+    suitability = config.WEAPON_CATALOG[weapon_type].suitability[target.target_type]
     payload_score = min(1.0, count / ask)
     distance = math.dist(observation.current_position, target.position)
     distance_score = distance / config.MAX_GRID_DISTANCE
@@ -410,11 +414,41 @@ class JetAgentRuntime:
         self._cfp_round = 0
         await self._broadcast_cfp_and_collect(target.hp_remaining)
 
+    def begin_rtb(self) -> None:
+        """Called once, the tick bingo fuel is first crossed. Idempotent — a
+        second call is a no-op so the Bridge cannot double-abort a claim."""
+        if self.role == "RTB":
+            return
+        if self.role == "MANAGER" or self.managed_target_id is not None:
+            self._abort_open_management()
+        self.role = "RTB"
+        self.committed_target_id = None
+        self.committed_weapon_type = None
+
+    def bingo_fuel_reached(self) -> bool:
+        obs = self.latest_observation
+        if obs is None or self.role == "RTB":
+            return False
+        frame = config.JET_FRAME_CATALOG[obs.frame_type]
+        distance_home = math.dist(obs.current_position, obs.home_base)
+        ticks_home = distance_home / frame.max_speed
+        bingo = ticks_home * frame.fuel_burn_per_tick * config.RTB_FUEL_SAFETY_MARGIN
+        return obs.fuel <= bingo
+
     def decide_intent(self) -> ActionIntent:
         """Pure function of current state + latest_observation. Phase 4's
         Bridge calls this once per tick per agent to get its next ActionIntent."""
         obs = self.latest_observation
         assert obs is not None
+        if self.role == "RTB":
+            bearing = bearing_to(obs.current_position, obs.home_base)
+            return ActionIntent(
+                agent_id=self.agent_id,
+                tick=obs.tick,
+                action_type="MOVE",
+                target_position=obs.home_base,
+                desired_heading=bearing,
+            )
         if self.committed_target_id is None:
             return ActionIntent(agent_id=self.agent_id, tick=obs.tick, action_type="IDLE")
         target = next(
@@ -425,7 +459,12 @@ class JetAgentRuntime:
             ),
             None,
         )
-        if target is None or target.hp_remaining <= 0 or self.committed_payload <= 0:
+        if (
+            target is None
+            or target.hp_remaining <= 0
+            or self.committed_payload <= 0
+            or self.committed_weapon_type is None
+        ):
             self.committed_target_id = None
             self.committed_weapon_type = None
             self.role = "IDLE"
@@ -433,20 +472,40 @@ class JetAgentRuntime:
         distance = math.dist(obs.current_position, target.position)
         # Safety: never STRIKE a memory-only target — must be directly sensing it.
         directly_sensed = any(t.target_id == target.target_id for t in obs.known_targets)
-        if distance <= config.STRIKE_RANGE and directly_sensed:
-            self.committed_payload -= 1
+        weapon = config.WEAPON_CATALOG[self.committed_weapon_type]
+        bearing = bearing_to(obs.current_position, target.position)
+        in_range = distance <= weapon.range
+        if in_range and directly_sensed:
+            in_arc = is_in_firing_arc(
+                obs.current_heading,
+                obs.current_position,
+                target.position,
+                weapon.firing_arc_deg,
+            )
+            if in_arc:
+                self.committed_payload -= 1
+                return ActionIntent(
+                    agent_id=self.agent_id,
+                    tick=obs.tick,
+                    action_type="STRIKE",
+                    target_id=target.target_id,
+                    weapon_type=self.committed_weapon_type,
+                )
+            # In range but not pointed at the target yet: turn toward it this
+            # tick instead of striking. Still in position, just not yet able
+            # to fire — does not consume payload, does not lose the contract.
             return ActionIntent(
                 agent_id=self.agent_id,
                 tick=obs.tick,
-                action_type="STRIKE",
-                target_id=target.target_id,
-                weapon_type=self.committed_weapon_type,
+                action_type="IDLE",
+                desired_heading=bearing,
             )
         return ActionIntent(
             agent_id=self.agent_id,
             tick=obs.tick,
             action_type="MOVE",
             target_position=target.position,
+            desired_heading=bearing,
         )
 
     async def scan_and_negotiate(self) -> None:

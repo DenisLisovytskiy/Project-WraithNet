@@ -67,13 +67,17 @@
       "target_type": "SAM_SITE"
     }
   ],
-  "jammers": [
-    {
-      "jammer_id": "EW_Jammer_1",
-      "position": [
-        46.0,
-        19.0
-      ]
-    }
-  ]
+    "jammers": [
+        {
+            "jammer_id": "EW_Jammer_1",
+            "position": [
+                46.0,
+                19.0
+            ]
+        }
+    ],
+    "home_base": [
+        2.0,
+        2.0
+    ]
 }

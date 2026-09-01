@@ -4,13 +4,22 @@ Implemented in Phase 1 (Schemas & World Scaffolding).
 See docs/phases/Phase_1_Schemas_and_World.md.
 Phase 6 adds weapon/target typing and Observation sensor/jam fields.
 Phase 7: DATALINK_CONTACT message type; contract_id optional for contacts.
+Phase 20: ActionIntent.desired_heading; Observation.current_heading.
+Phase 22: Observation.frame_type / fuel / home_base.
 """
 
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from wraithnet.config import BROADCAST_ID, TargetType, WeaponType
+from wraithnet.config import (
+    BROADCAST_ID,
+    DEFAULT_HOME_BASE,
+    JET_FRAME_CATALOG,
+    JetFrameType,
+    TargetType,
+    WeaponType,
+)
 
 
 class TargetInfo(BaseModel):
@@ -36,6 +45,12 @@ class Observation(BaseModel):
     payload: dict[WeaponType, int]
     known_targets: list[TargetInfo]
     comms_jammed: bool = False
+    current_heading: float = Field(default=0.0, ge=0.0, lt=360.0)
+    frame_type: JetFrameType = "STRIKE_FIGHTER"
+    fuel: float = Field(
+        default=JET_FRAME_CATALOG["STRIKE_FIGHTER"].fuel_capacity, ge=0.0
+    )
+    home_base: tuple[float, float] = DEFAULT_HOME_BASE
 
     @property
     def total_payload_remaining(self) -> int:
@@ -49,6 +64,7 @@ class ActionIntent(BaseModel):
     target_position: Optional[tuple[float, float]] = None
     target_id: Optional[str] = None
     weapon_type: Optional[WeaponType] = None
+    desired_heading: Optional[float] = Field(default=None, ge=0.0, lt=360.0)
 
     @model_validator(mode="after")
     def _check_required_fields_for_action(self) -> "ActionIntent":

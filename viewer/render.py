@@ -99,18 +99,11 @@ def _require_pygame():
     return pygame
 
 
-_font_cache: dict[int, object] = {}
-
-
 def _font(size: int = 22):
     pygame = _require_pygame()
     if not pygame.font.get_init():
         pygame.font.init()
-    cached = _font_cache.get(size)
-    if cached is None:
-        cached = pygame.font.Font(None, size)
-        _font_cache[size] = cached
-    return cached
+    return pygame.font.Font(None, size)
 
 
 def _xy(pos: tuple[float, float], header: TraceHeader) -> tuple[int, int]:
@@ -323,9 +316,15 @@ def draw_hud(
         HUD_TEXT_COLOR,
         22,
     ) + 4
-    status = "PLAYING" if playing else "PAUSED"
-    speed = f"{ticks_per_second:.1f} tps" if ticks_per_second else ""
-    y += _blit_text(surface, f"{status}  {speed}".rstrip(), (x, y), HUD_MUTED_COLOR, 20) + 4
+    if ticks_per_second:
+        status = "PLAYING" if playing else "PAUSED"
+        y += _blit_text(
+            surface,
+            f"{status}  {ticks_per_second:.1f} tps",
+            (x, y),
+            HUD_MUTED_COLOR,
+            20,
+        ) + 4
     y += _blit_text(
         surface,
         f"Sensor rings: {'ON' if show_sensor_radius else 'OFF'}",
@@ -367,22 +366,28 @@ def draw_hud(
     y += _blit_text(surface, "JAMMED", (x + 22, y), HUD_TEXT_COLOR, 20) + 12
 
     y += _blit_text(surface, "Targets", (x, y), HUD_MUTED_COLOR, 18) + 4
-    legend_targets = [
-        ("HARDENED_BUNKER", "Bunker (square)"),
-        ("MOBILE_RADAR", "Radar (diamond)"),
-        ("SAM_SITE", "SAM (octagon)"),
-    ]
-    for key, label in legend_targets:
-        color = TARGET_TYPE_STYLE[key]["color"]
-        pygame.draw.rect(surface, color, pygame.Rect(x + 2, y + 2, 12, 12))
-        y += _blit_text(surface, label, (x + 22, y), HUD_TEXT_COLOR, 20) + 2
+    pygame.draw.rect(
+        surface,
+        TARGET_TYPE_STYLE["HARDENED_BUNKER"]["color"],
+        pygame.Rect(x + 2, y + 2, 12, 12),
+    )
+    y += _blit_text(surface, "Bunker (square)", (x + 22, y), HUD_TEXT_COLOR, 20) + 2
+    diamond = [(x + 8, y + 1), (x + 14, y + 8), (x + 8, y + 15), (x + 2, y + 8)]
+    pygame.draw.polygon(surface, TARGET_TYPE_STYLE["MOBILE_RADAR"]["color"], diamond)
+    y += _blit_text(surface, "Radar (diamond)", (x + 22, y), HUD_TEXT_COLOR, 20) + 2
+    pygame.draw.polygon(
+        surface,
+        TARGET_TYPE_STYLE["SAM_SITE"]["color"],
+        _polygon((x + 8, y + 8), 7, 8, math.pi / 8),
+    )
+    y += _blit_text(surface, "SAM (octagon)", (x + 22, y), HUD_TEXT_COLOR, 20) + 2
     pygame.draw.circle(surface, JAMMER_COLOR, (x + 8, y + 8), 6)
     y += _blit_text(surface, "EW Jammer + jam radius", (x + 22, y), HUD_TEXT_COLOR, 20) + 16
 
     y += _blit_text(surface, "Controls", (x, y), HUD_MUTED_COLOR, 18) + 4
     for line in (
         "Space   play / pause",
-        "Left/Right   step tick",
+        "Left / Right   step tick",
         "+ / -   speed",
         "S   sensor rings",
         "R   restart",

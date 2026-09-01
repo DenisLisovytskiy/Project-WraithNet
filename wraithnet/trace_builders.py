@@ -23,7 +23,7 @@ def build_trace_header(bridge: WraithNetBridge) -> TraceHeader:
         sensor_radius=config.SENSOR_RADIUS,
         jam_radius=config.JAM_RADIUS,
         sam_engagement_range=config.SAM_ENGAGEMENT_RANGE,
-        strike_range=config.STRIKE_RANGE,
+        strike_range=config.WEAPON_CATALOG["JDAM"].range,
         jet_ids=list(model.jets.keys()),
         initial_payload={aid: dict(j.payload) for aid, j in model.jets.items()},
         target_ids=list(model.targets.keys()),

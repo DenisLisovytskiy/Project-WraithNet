@@ -5,6 +5,9 @@ See docs/phases/Phase_1_Schemas_and_World.md.
 Phase 6: dict-based payload, target_type, weapon suitability on strike.
 Phase 7: sensor-limited build_observation.
 Phase 8: jet HP, SAM sites, swarm-wipeout termination.
+Phase 20: per-jet airframe catalog, independent heading / turn-rate rotation.
+Phase 21: per-weapon range / firing-arc / damage on strike.
+Phase 22: fuel burn, bingo-fuel RTB, landing vs fuel-exhaustion reap.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from mesa.datacollection import DataCollector
 
 from wraithnet import config
 from wraithnet.broker import MessageBroker
+from wraithnet.geometry import is_in_firing_arc, shortest_signed_angle
 from wraithnet.scenario_schema import ScenarioConfig, _default_scenario
 from wraithnet.schemas import ActionIntent, Observation, TargetInfo
 
@@ -38,12 +42,26 @@ class TargetState:
 
 
 class JetAgent(mesa.Agent):
-    def __init__(self, model: WraithNetModel, agent_id: str, payload: dict[str, int]) -> None:
+    def __init__(
+        self,
+        model: WraithNetModel,
+        agent_id: str,
+        payload: dict[str, int],
+        frame_type: config.JetFrameType,
+        initial_heading: float = 0.0,
+    ) -> None:
         super().__init__(model)
         self.agent_id = agent_id
         self.payload = dict(payload)  # mutable copy; never share the scenario dict
         self.distance_traveled = 0.0
-        self.hp: int = config.JET_HP
+        self.frame_type = frame_type
+        self.hp: int = config.JET_FRAME_CATALOG[frame_type].hp
+        self.fuel: float = config.JET_FRAME_CATALOG[frame_type].fuel_capacity
+        self.is_rtb: bool = False
+        # Degrees: 0 = facing +y (world "up"), increasing clockwise when viewed
+        # from above (90 = facing +x). Independent of travel direction.
+        self.heading: float = initial_heading % 360.0
+        self.desired_heading: float | None = None
 
     @property
     def is_destroyed(self) -> bool:
@@ -99,6 +117,8 @@ class WraithNetModel(mesa.Model):
         self.jammers: dict[str, EwJammerAgent] = {}
         self.strike_log: list[dict] = []  # ground truth for Phase 5 validation
         self.swarm_wiped_out: bool = False
+        self._home_base: tuple[float, float] = self._scenario.home_base
+        self.jets_returned_to_base: set[str] = set()
         self._spawn_scenario()
         self._initial_jet_ids: set[str] = set(self.jets.keys())
         self.total_jammed_agent_ticks: int = 0
@@ -153,7 +173,13 @@ class WraithNetModel(mesa.Model):
                 self, jam.jammer_id, jam.position
             )
         for j in self._scenario.jets:
-            agent = JetAgent(self, agent_id=j.agent_id, payload=dict(j.payload))
+            agent = JetAgent(
+                self,
+                agent_id=j.agent_id,
+                payload=dict(j.payload),
+                frame_type=j.frame_type,
+                initial_heading=j.initial_heading,
+            )
             self.space.place_agent(agent, j.position)
             self.jets[j.agent_id] = agent
 
@@ -173,12 +199,44 @@ class WraithNetModel(mesa.Model):
             jet = self.jets.get(agent_id)
             if jet is None:
                 continue
+            # Heading rotation is independent of action_type (a jet can MOVE
+            # one way while turning to face another). Applied *before*
+            # MOVE/STRIKE so Phase 21's firing-arc check sees this tick's
+            # post-rotation heading — a jet that finishes turning can fire
+            # the same tick. (Order is a no-op for gameplay this phase;
+            # nothing reads heading for a combat decision until Phase 21.)
+            jet.desired_heading = intent.desired_heading
+            self._apply_heading_rotation(jet)
             if intent.action_type == "MOVE":
                 self._apply_move(jet, intent.target_position)
             elif intent.action_type == "STRIKE":
                 self._apply_strike(jet, intent.target_id, intent.weapon_type)
-            # IDLE: no-op
+            # IDLE: no-op (heading may still have rotated above)
         self._apply_sam_damage()
+        # Fuel burn — flat per tick, every live jet, regardless of movement
+        # (design doc §5). SAM-killed jets were already reaped above.
+        for jet in self.jets.values():
+            jet.fuel -= config.JET_FRAME_CATALOG[jet.frame_type].fuel_burn_per_tick
+        # Landing must run BEFORE the fuel-exhaustion reap so a jet that
+        # arrives home with exactly 0 fuel this tick is a safe landing, not a
+        # dry-tank loss. Snapshot the dict because this mutates self.jets.
+        for jet in list(self.jets.values()):
+            if (
+                jet.is_rtb
+                and math.dist(jet.pos, self._home_base) <= config.RTB_LANDING_RADIUS
+            ):
+                self.jets_returned_to_base.add(jet.agent_id)
+                self.space.remove_agent(jet)
+                jet.remove()
+                del self.jets[jet.agent_id]
+        # Fuel exhaustion is an independent condition — do not zero hp.
+        destroyed_ids = [
+            aid for aid, jet in self.jets.items() if jet.is_destroyed or jet.fuel <= 0
+        ]
+        for aid in destroyed_ids:
+            jet = self.jets.pop(aid)
+            self.space.remove_agent(jet)
+            jet.remove()
         if all(t.is_destroyed for t in self.targets.values()):
             self.running = False  # success — includes SAM_Site_1 now
         elif len(self.jets) == 0:
@@ -202,19 +260,37 @@ class WraithNetModel(mesa.Model):
             self.space.remove_agent(jet)
             jet.remove()  # Mesa 3.x: deregister from model.agents / AgentSet
 
+    def _apply_heading_rotation(self, jet: JetAgent) -> None:
+        if jet.desired_heading is None:
+            return
+        turn_rate = config.JET_FRAME_CATALOG[jet.frame_type].turn_rate_deg_per_tick
+        delta = shortest_signed_angle(jet.heading, jet.desired_heading)
+        if abs(delta) <= turn_rate:
+            jet.heading = jet.desired_heading % 360.0
+        else:
+            jet.heading = (jet.heading + turn_rate * (1.0 if delta > 0 else -1.0)) % 360.0
+
     def _apply_move(self, jet: JetAgent, destination: tuple[float, float]) -> None:
+        max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
         distance = math.dist(jet.pos, destination)
-        if distance <= config.JET_SPEED:
+        if distance <= max_speed:
             new_pos = destination
             moved = distance
         else:
-            dx = destination[0] - jet.pos[0]
-            dy = destination[1] - jet.pos[1]
-            ratio = config.JET_SPEED / distance
+            dx, dy = destination[0] - jet.pos[0], destination[1] - jet.pos[1]
+            ratio = max_speed / distance
             new_pos = (jet.pos[0] + dx * ratio, jet.pos[1] + dy * ratio)
-            moved = config.JET_SPEED
+            moved = max_speed
         self.space.move_agent(jet, new_pos)
         jet.distance_traveled += moved
+
+    def _target_in_firing_arc(
+        self, jet: JetAgent, target: TargetState, weapon: config.WeaponSpec
+    ) -> bool:
+        # Delegates to wraithnet.geometry so decide_intent cannot drift.
+        return is_in_firing_arc(
+            jet.heading, jet.pos, target.position, weapon.firing_arc_deg
+        )
 
     def _apply_strike(
         self, jet: JetAgent, target_id: str | None, weapon_type: str | None
@@ -222,14 +298,19 @@ class WraithNetModel(mesa.Model):
         target = self.targets.get(target_id) if target_id else None
         if target is None or weapon_type is None or jet.payload.get(weapon_type, 0) <= 0:
             return
-        if config.WEAPON_SUITABILITY.get((weapon_type, target.target_type), 0.0) <= 0.0:
+        weapon = config.WEAPON_CATALOG[weapon_type]
+        if weapon.suitability.get(target.target_type, 0.0) <= 0.0:
             return  # physically cannot damage this target type with this weapon — no-op
-        if math.dist(jet.pos, target.position) > config.STRIKE_RANGE:
+        if math.dist(jet.pos, target.position) > weapon.range:
             return
+        if weapon.firing_arc_deg < 360.0 and not self._target_in_firing_arc(
+            jet, target, weapon
+        ):
+            return  # in range but not pointed at it — decide_intent rotates to bear
         # Stale STRIKE on an already-destroyed target still consumes payload while
         # in range; hp_remaining stays clamped at 0 (documented Phase 1 semantics).
         jet.payload[weapon_type] -= 1
-        target.hp_remaining = max(0, target.hp_remaining - 1)
+        target.hp_remaining = max(0, target.hp_remaining - weapon.damage_per_hit)
         self.strike_log.append(
             {
                 "tick": self.tick,
@@ -269,4 +350,8 @@ class WraithNetModel(mesa.Model):
             payload=dict(jet.payload),
             known_targets=known_targets,
             comms_jammed=self._jet_is_jammed(jet),
+            current_heading=jet.heading,
+            frame_type=jet.frame_type,
+            fuel=max(0.0, jet.fuel),
+            home_base=self._home_base,
         )
