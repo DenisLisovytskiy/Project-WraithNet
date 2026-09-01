@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import sys
+import time
 
 from panda3d.core import ClockObject, loadPrcFileData
 
@@ -24,11 +25,16 @@ from viewer3d.cameras import ChaseCamera, MissionBriefCamera, OrbitCamera
 from viewer3d.highlights import compute_highlights
 from viewer3d.hud import Hud
 from viewer3d.launch import SimLaunchHandle, launch_scenario
+from viewer3d.flight_dynamics import (
+    CRUISE_ALTITUDE,
+    GROUND_ALTITUDE,
+    strike_boost_active,
+)
 from viewer3d.scene import (
+    apply_jet_flight_easing,
     apply_tick_highlights,
     build_static_scene,
     decay_highlights,
-    jet_altitude,
     update_tick,
 )
 from viewer3d.stream_client import (
@@ -79,6 +85,8 @@ class WraithNetViewer3D(ShowBase):
         self._hud = Hud(self)
         self._editor = None
         self._sim_handle: SimLaunchHandle | None = None
+        self._first_seen_wallclock: dict[str, float] = {}
+        self._last_tick_wallclock: float | None = None
 
         if start_client is None:
             start_client = not editor_mode
@@ -301,6 +309,7 @@ class WraithNetViewer3D(ShowBase):
         self._poll_sim_health()
         self._update_camera(dt)
         if self._handles is not None:
+            apply_jet_flight_easing(self._handles, dt)
             decay_highlights(self._handles, dt)
         self._refresh_hud()
         return task.cont
@@ -312,6 +321,8 @@ class WraithNetViewer3D(ShowBase):
                 old = self._handles
                 self._header = event.header
                 self._handles = build_static_scene(self.render, self._header)
+                self._first_seen_wallclock.clear()
+                self._last_tick_wallclock = None
                 if (
                     old is not None
                     and old.root is not None
@@ -344,12 +355,43 @@ class WraithNetViewer3D(ShowBase):
             if self.selected_jet_id is None and self._header is not None:
                 if self._header.jet_ids:
                     self.selected_jet_id = self._header.jet_ids[0]
+        now = time.monotonic()
+        tick_dt = 1.0 / 60.0
+        if self._last_tick_wallclock is not None:
+            tick_dt = max(0.001, now - self._last_tick_wallclock)
+        self._last_tick_wallclock = now
+
+        seconds_airborne: dict[str, float] = {}
+        for frame in tick.jets:
+            aid = frame.agent_id
+            if aid not in self._first_seen_wallclock:
+                self._first_seen_wallclock[aid] = now
+            seconds_airborne[aid] = now - self._first_seen_wallclock[aid]
+
+        if self._handles is not None:
+            for strike in tick.strikes:
+                self._handles.last_struck_tick[strike.agent_id] = tick.tick
+            just_struck = {
+                aid
+                for aid in {j.agent_id for j in tick.jets}
+                if strike_boost_active(
+                    self._handles.last_struck_tick.get(aid), tick.tick
+                )
+            }
+
         highlights = compute_highlights(self._previous_tick, tick)
         if self._handles is not None and self._header is not None:
             apply_tick_highlights(
                 self._handles, self._header, self._previous_tick, tick, highlights
             )
-            update_tick(self._handles, self._header, tick)
+            update_tick(
+                self._handles,
+                self._header,
+                tick,
+                seconds_airborne=seconds_airborne,
+                just_struck=just_struck,
+                tick_dt=tick_dt,
+            )
         self._previous_tick = tick
         self._latest_tick = tick
         self._ticks.append(tick)
@@ -362,7 +404,12 @@ class WraithNetViewer3D(ShowBase):
         for frame in self._latest_tick.jets:
             if frame.agent_id != self.selected_jet_id:
                 continue
-            z = jet_altitude(frame.agent_id, self._header) if self._header else 8.0
+            z = GROUND_ALTITUDE
+            if self._handles is not None:
+                z = self._handles.rendered_altitude.get(
+                    frame.agent_id,
+                    self._handles.desired_altitude.get(frame.agent_id, CRUISE_ALTITUDE),
+                )
             heading = self._heading_deg(frame.agent_id)
             return (frame.position[0], frame.position[1], z), heading
         return None

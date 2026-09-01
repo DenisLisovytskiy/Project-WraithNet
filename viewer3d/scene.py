@@ -3,9 +3,8 @@ Coordinate mapping: sim (x, y) -> Panda3D (x, y), with z reserved for a
 synthetic, presentation-only flight altitude -- see design doc §6.1-6.2.
 No gameplay logic reads z; it is purely cosmetic.
 
-Glyphs are vertex-colored Geom polygons parented under a billboard node
-(set_billboard_point_eye) rather than textured CardMaker quads -- simpler
-silhouettes, no asset files, and the same contract Phase 17/18 will extend.
+Ground entities use camera-facing billboard glyphs. Jets use a small,
+non-billboarded procedural dart mesh oriented in full 3D (Phase 25).
 """
 
 from __future__ import annotations
@@ -26,6 +25,15 @@ from panda3d.core import (
     TransparencyAttrib,
 )
 
+from viewer3d.flight_dynamics import (
+    CRUISE_ALTITUDE,
+    GROUND_ALTITUDE,
+    MAX_BANK_RATE_PER_SECOND,
+    MAX_CLIMB_RATE_PER_SECOND,
+    desired_altitude,
+    desired_bank_deg,
+    ease_toward,
+)
 from viewer3d.highlights import TickHighlights
 from wraithnet.trace_schemas import StrikeEvent, TraceHeader, TraceTick
 
@@ -51,6 +59,8 @@ STRIKE_COLOR = (1.0, 0.90, 0.32, 1.0)
 DESTRUCTION_COLOR = (1.0, 1.0, 1.0, 1.0)
 JAM_FLASH_COLOR = (1.0, 0.35, 1.0, 1.0)
 UNJAM_FLASH_COLOR = (0.31, 0.86, 1.0, 1.0)
+RTB_FLASH_COLOR = (0.31, 0.63, 1.0, 1.0)
+HOME_BASE_COLOR = (0.35, 0.78, 0.55, 1.0)
 
 
 @dataclass
@@ -70,6 +80,14 @@ class SceneHandles:
     jammers: dict[str, NodePath] = field(default_factory=dict)
     last_jet_xy: dict[str, tuple[float, float]] = field(default_factory=dict)
     jet_heading_deg: dict[str, float] = field(default_factory=dict)
+    rendered_altitude: dict[str, float] = field(default_factory=dict)
+    rendered_bank_deg: dict[str, float] = field(default_factory=dict)
+    desired_altitude: dict[str, float] = field(default_factory=dict)
+    desired_bank_deg: dict[str, float] = field(default_factory=dict)
+    previous_desired_altitude: dict[str, float] = field(default_factory=dict)
+    first_seen_tick: dict[str, int] = field(default_factory=dict)
+    last_struck_tick: dict[str, int] = field(default_factory=dict)
+    home_base: NodePath | None = None
     fx_root: NodePath | None = None
     highlight_fx: list[_FxItem] = field(default_factory=list)
 
@@ -101,6 +119,43 @@ def _polygon_geom(name: str, points_xz: list[tuple[float, float]], color) -> Geo
 def _attach_glyph(parent: NodePath, name: str, points_xz, color) -> NodePath:
     np = parent.attach_new_node(_polygon_geom(name, points_xz, color))
     np.set_billboard_point_eye()
+    np.set_light_off()
+    np.set_two_sided(True)
+    np.set_scale(GLYPH_SCALE)
+    return np
+
+
+def _dart_geom(name: str, color) -> GeomNode:
+    """Small double-sided dart: nose +Y, wings in X, shallow tail Z inset."""
+    verts = [
+        (0.0, 0.7, 0.0),
+        (-0.5, -0.4, -0.08),
+        (0.5, -0.4, -0.08),
+        (0.0, -0.15, 0.08),
+    ]
+    tris = [(0, 1, 2), (1, 2, 3)]
+    fmt = GeomVertexFormat.get_v3c4()
+    vdata = GeomVertexData(name, fmt, Geom.UH_static)
+    vertex = GeomVertexWriter(vdata, "vertex")
+    col = GeomVertexWriter(vdata, "color")
+    r, g, b, a = color
+    for x, y, z in verts:
+        vertex.add_data3(x, y, z)
+        col.add_data4(r, g, b, a)
+    prim = GeomTriangles(Geom.UH_static)
+    for a, b, c in tris:
+        prim.add_vertices(a, b, c)
+    prim.close_primitive()
+    geom = Geom(vdata)
+    geom.add_primitive(prim)
+    node = GeomNode(name)
+    node.add_geom(geom)
+    return node
+
+
+def _attach_jet_dart(parent: NodePath, name: str, color) -> NodePath:
+    """Jet glyph without billboarding -- true 3D heading/bank via set_hpr."""
+    np = parent.attach_new_node(_dart_geom(name, color))
     np.set_light_off()
     np.set_two_sided(True)
     np.set_scale(GLYPH_SCALE)
@@ -228,6 +283,19 @@ def _jet_altitude(agent_id: str, header: TraceHeader) -> float:
     return jet_altitude(agent_id, header)
 
 
+def _pop_jet_state(handles: SceneHandles, aid: str) -> None:
+    handles.jet_glyphs.pop(aid, None)
+    handles.last_jet_xy.pop(aid, None)
+    handles.jet_heading_deg.pop(aid, None)
+    handles.rendered_altitude.pop(aid, None)
+    handles.rendered_bank_deg.pop(aid, None)
+    handles.desired_altitude.pop(aid, None)
+    handles.desired_bank_deg.pop(aid, None)
+    handles.previous_desired_altitude.pop(aid, None)
+    handles.first_seen_tick.pop(aid, None)
+    handles.last_struck_tick.pop(aid, None)
+
+
 def _target_points(target_type: str):
     if target_type == "MOBILE_RADAR":
         return _diamond_pts()
@@ -270,46 +338,100 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         _ground_disc(anchor, f"jam-ring-{jid}", 0.0, 0.0, header.jam_radius, JAM_DISC_COLOR)
         handles.jammers[jid] = anchor
 
+    home = getattr(header, "home_base", None)
+    if home is not None:
+        hx, hy = float(home[0]), float(home[1])
+        home_np = root.attach_new_node("home-base")
+        home_np.set_pos(hx, hy, 0.2)
+        _attach_glyph(
+            home_np, "home-pole", [(0.0, 0.0), (0.12, 0.0), (0.12, 1.2), (0.0, 1.2)], (0.85, 0.85, 0.9, 1.0)
+        )
+        _attach_glyph(
+            home_np,
+            "home-flag",
+            [(0.12, 1.2), (0.85, 0.95), (0.12, 0.7)],
+            HOME_BASE_COLOR,
+        )
+        _ground_disc(home_np, "home-pad", 0.0, 0.0, 1.4, (0.35, 0.78, 0.55, 0.22))
+        handles.home_base = home_np
+
     for aid in header.jet_ids:
         anchor = root.attach_new_node(f"jet-{aid}")
-        anchor.set_pos(cx, cy, _jet_altitude(aid, header))
-        glyph = _attach_glyph(anchor, f"glyph-{aid}", _triangle_pts(), _jet_color(aid, header))
+        anchor.set_pos(cx, cy, GROUND_ALTITUDE)
+        glyph = _attach_jet_dart(anchor, f"glyph-{aid}", _jet_color(aid, header))
         anchor.hide()  # no jet position in the header; first tick reveals them
         handles.jets[aid] = anchor
         handles.jet_glyphs[aid] = glyph
+        handles.rendered_altitude[aid] = GROUND_ALTITUDE
+        handles.rendered_bank_deg[aid] = 0.0
 
     return handles
 
 
-def update_tick(handles: SceneHandles, header: TraceHeader, tick: TraceTick) -> None:
+def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
+    """Ease rendered altitude/bank toward the latest per-tick targets every frame."""
+    for aid, anchor in list(handles.jets.items()):
+        if anchor.is_empty() or anchor.is_hidden():
+            continue
+        target_z = handles.desired_altitude.get(aid, CRUISE_ALTITUDE)
+        target_bank = handles.desired_bank_deg.get(aid, 0.0)
+        current_z = handles.rendered_altitude.get(aid, GROUND_ALTITUDE)
+        current_bank = handles.rendered_bank_deg.get(aid, 0.0)
+        new_z = ease_toward(current_z, target_z, MAX_CLIMB_RATE_PER_SECOND, dt)
+        new_bank = ease_toward(current_bank, target_bank, MAX_BANK_RATE_PER_SECOND, dt)
+        handles.rendered_altitude[aid] = new_z
+        handles.rendered_bank_deg[aid] = new_bank
+        pos = anchor.get_pos()
+        anchor.set_pos(pos.x, pos.y, new_z)
+        heading = handles.jet_heading_deg.get(aid, 0.0)
+        glyph = handles.jet_glyphs.get(aid)
+        if glyph is not None and not glyph.is_empty():
+            # pitch=0.0: optional climb-rate pitch tilt deferred to a later phase.
+            glyph.set_hpr(heading, 0.0, -new_bank)
+
+
+def update_tick(
+    handles: SceneHandles,
+    header: TraceHeader,
+    tick: TraceTick,
+    *,
+    seconds_airborne: dict[str, float] | None = None,
+    just_struck: set[str] | None = None,
+    tick_dt: float = 1.0 / 60.0,
+) -> None:
+    airborne = seconds_airborne or {}
+    struck = just_struck or set()
     alive_ids = {frame.agent_id for frame in tick.jets}
     for aid in list(handles.jets):
         if aid not in alive_ids:
             handles.jets[aid].remove_node()
             handles.jets.pop(aid)
-            handles.jet_glyphs.pop(aid, None)
-            handles.last_jet_xy.pop(aid, None)
-            handles.jet_heading_deg.pop(aid, None)
+            _pop_jet_state(handles, aid)
 
     for frame in tick.jets:
-        anchor = handles.jets.get(frame.agent_id)
+        aid = frame.agent_id
+        anchor = handles.jets.get(aid)
         if anchor is None or anchor.is_empty():
             continue
         x, y = frame.position
-        z = _jet_altitude(frame.agent_id, header)
-        anchor.set_pos(x, y, z)
+        anchor.set_pos(x, y, handles.rendered_altitude.get(aid, GROUND_ALTITUDE))
         anchor.show()
-        prev = handles.last_jet_xy.get(frame.agent_id)
-        glyph = handles.jet_glyphs.get(frame.agent_id)
-        if glyph is not None and not glyph.is_empty():
-            if prev is not None:
-                dx, dy = x - prev[0], y - prev[1]
-                if dx * dx + dy * dy > 1e-8:
-                    heading = math.degrees(math.atan2(dx, dy))
-                    handles.jet_heading_deg[frame.agent_id] = heading
-                    # Billboard in-plane roll: 0 faces +y (sim "north") on first tick.
-                    glyph.set_r(-heading)
-        handles.last_jet_xy[frame.agent_id] = (x, y)
+        if aid not in handles.first_seen_tick:
+            handles.first_seen_tick[aid] = tick.tick
+        heading = float(frame.heading)
+        handles.jet_heading_deg[aid] = heading
+        target_z = desired_altitude(
+            airborne.get(aid, 0.0),
+            frame.position,
+            header,
+            tick,
+            just_struck=aid in struck,
+        )
+        prev_z = handles.previous_desired_altitude.get(aid)
+        handles.desired_altitude[aid] = target_z
+        handles.desired_bank_deg[aid] = desired_bank_deg(prev_z, target_z, tick_dt)
+        handles.previous_desired_altitude[aid] = target_z
+        handles.last_jet_xy[aid] = (x, y)
 
     for frame in tick.targets:
         anchor = handles.targets.get(frame.target_id)
@@ -409,6 +531,35 @@ def flash_jam_transition(handles: SceneHandles, jet_id: str, jammed: bool) -> No
     handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
 
 
+def flash_rtb_transition(handles: SceneHandles, jet_id: str) -> None:
+    """Brief blue ring when a jet begins RTB, analogous to the jam flash."""
+    anchor = handles.jets.get(jet_id)
+    glyph = handles.jet_glyphs.get(jet_id)
+    if glyph is not None and not glyph.is_empty():
+        original = glyph.get_color()
+        glyph.set_color(*RTB_FLASH_COLOR)
+
+        def _restore(g=glyph, c=original) -> None:
+            if g is not None and not g.is_empty():
+                g.set_color(c)
+
+        dummy = _fx_parent(handles).attach_new_node(f"rtb-flash-{jet_id}")
+        handles.highlight_fx.append(_FxItem(node=dummy, restore=_restore, duration=0.5))
+        return
+    if anchor is None or anchor.is_empty():
+        last = handles.last_jet_xy.get(jet_id)
+        if last is None:
+            return
+        np = _ground_ring(
+            _fx_parent(handles), f"rtb-ring-{jet_id}", last[0], last[1], 0.4, 2.0, RTB_FLASH_COLOR
+        )
+        handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
+        return
+    p = anchor.get_pos()
+    np = _ground_ring(_fx_parent(handles), f"rtb-ring-{jet_id}", p.x, p.y, p.z, 2.0, RTB_FLASH_COLOR)
+    handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
+
+
 def decay_highlights(handles: SceneHandles, dt: float) -> None:
     """Fade/remove short-lived highlight nodes. Called once per frame."""
     still: list[_FxItem] = []
@@ -452,25 +603,28 @@ def apply_tick_highlights(
         target = header.target_positions.get(strike.target_id)
         if origin is None or target is None:
             continue
-        flash_strike(
-            handles,
-            strike,
-            origin,
-            target,
-            z_jet=jet_altitude(strike.agent_id, header),
+        z_jet = handles.rendered_altitude.get(
+            strike.agent_id,
+            handles.desired_altitude.get(
+                strike.agent_id, jet_altitude(strike.agent_id, header)
+            ),
         )
+        flash_strike(handles, strike, origin, target, z_jet=z_jet)
     for tid in highlights.newly_destroyed_target_ids:
         pos = header.target_positions.get(tid)
         pulse_destruction(handles, tid, pos)
     for aid in highlights.newly_destroyed_jet_ids:
         pos = jet_xy.get(aid)
         if pos is not None:
-            pulse_destruction(
-                handles, aid, (pos[0], pos[1], jet_altitude(aid, header))
+            z = handles.rendered_altitude.get(
+                aid, handles.desired_altitude.get(aid, jet_altitude(aid, header))
             )
+            pulse_destruction(handles, aid, (pos[0], pos[1], z))
         else:
             pulse_destruction(handles, aid)
     for aid in highlights.newly_jammed_jet_ids:
         flash_jam_transition(handles, aid, True)
     for aid in highlights.newly_unjammed_jet_ids:
         flash_jam_transition(handles, aid, False)
+    for aid in getattr(highlights, "newly_rtb_jet_ids", []):
+        flash_rtb_transition(handles, aid)

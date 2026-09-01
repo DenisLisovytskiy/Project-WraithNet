@@ -27,6 +27,7 @@ ROLE_RING_COLOR = {
     "MANAGER": (230 / 255, 200 / 255, 60 / 255, 1.0),
     "CONTRACTOR": (90 / 255, 220 / 255, 90 / 255, 1.0),
     "CONTRACTOR_PENDING": (230 / 255, 140 / 255, 40 / 255, 1.0),
+    "RTB": (80 / 255, 160 / 255, 255 / 255, 1.0),
 }
 
 CYAN = (0.45, 0.88, 1.0, 1.0)
@@ -329,9 +330,18 @@ class Hud:
         lines.append(f"  ALIVE   {jets_alive} / {len(header.jet_ids)}")
         if latest_tick is not None:
             by_role = Counter((j.role or "IDLE") for j in latest_tick.jets)
-            for role in ("MANAGER", "CONTRACTOR", "CONTRACTOR_PENDING", "IDLE"):
+            for role in ("MANAGER", "CONTRACTOR", "CONTRACTOR_PENDING", "IDLE", "RTB"):
                 if by_role.get(role, 0):
                     lines.append(f"  {role}  {by_role[role]}")
+            for frame in latest_tick.jets:
+                ftype = (header.jet_frame_types or {}).get(frame.agent_id, "STRIKE_FIGHTER")
+                stats = (header.jet_frame_stats or {}).get(ftype) or {}
+                cap = float(stats.get("fuel_capacity") or 0.0) or 1.0
+                hp_max = float(stats.get("hp") or 5.0)
+                lines.append(
+                    f"  {frame.agent_id}  HP {frame.hp:.0f}/{hp_max:.0f}  "
+                    f"FUEL {frame.fuel:.0f}/{cap:.0f}"
+                )
         self._set_force("\n".join(lines))
 
     def _update_coordinates_and_minimap(
@@ -434,6 +444,8 @@ class Hud:
         summary: RunSummary = compute_run_summary(header, ticks)
         if summary.swarm_wiped_out:
             title, fg = "SWARM WIPED OUT", RED
+        elif getattr(summary, "mission_aborted", False):
+            title, fg = "MISSION ABORTED", (0.86, 0.70, 0.31, 1.0)
         elif summary.solved:
             title, fg = "MISSION COMPLETE", GREEN
         else:
@@ -444,7 +456,9 @@ class Hud:
         text = (
             f"{title}\n"
             f"Targets destroyed  {summary.targets_destroyed}/{summary.total_targets}\n"
-            f"Jets lost          {summary.jets_destroyed}/{summary.total_jets}\n"
+            f"Jets destroyed     {summary.jets_destroyed}/{summary.total_jets}\n"
+            f"Returned to base   {getattr(summary, 'jets_returned_to_base', 0)}\n"
+            f"Still flying       {getattr(summary, 'jets_still_flying', 0)}\n"
             f"Missiles fired     {summary.total_missiles_fired}  ({weapon_bits})"
         )
         self.summary_text = text

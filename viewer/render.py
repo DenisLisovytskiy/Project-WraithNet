@@ -35,6 +35,7 @@ ROLE_RING_COLOR = {
     "MANAGER": (230, 200, 60),
     "CONTRACTOR": (90, 220, 90),
     "CONTRACTOR_PENDING": (230, 140, 40),
+    "RTB": (80, 160, 255),
 }
 
 TARGET_TYPE_STYLE = {
@@ -52,6 +53,12 @@ TARGET_RADIUS = 11
 JAMMER_RADIUS = 9
 HP_BAR_WIDTH = 22
 HP_BAR_HEIGHT = 3
+FUEL_BAR_WIDTH = 22
+FUEL_BAR_HEIGHT = 3
+HOME_BASE_COLOR = (90, 200, 140)
+HEADING_INDICATOR_COLOR = (240, 240, 250)
+FUEL_BAR_COLOR = (70, 180, 230)
+FUEL_BAR_EMPTY = (30, 50, 70)
 
 STRIKE_LINE_COLOR = (255, 230, 80)
 DESTRUCTION_PULSE_COLOR = (255, 255, 255)
@@ -112,6 +119,39 @@ def _xy(pos: tuple[float, float], header: TraceHeader) -> tuple[int, int]:
 
 def _scale(length: float, header: TraceHeader) -> int:
     return world_length_to_screen(length, header.grid_width, CANVAS_SIZE, MARGIN)
+
+
+def heading_indicator_endpoints(
+    position: tuple[float, float],
+    heading_deg: float,
+    header: TraceHeader,
+    length_world: float = 3.0,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Screen-space (center, tip) of a heading tick. World heading 0° = +y;
+    world_to_screen flips y, so the tip of a 0° heading is *above* the jet
+    on the pygame surface."""
+    rad = math.radians(heading_deg)
+    tip = (
+        position[0] + math.sin(rad) * length_world,
+        position[1] + math.cos(rad) * length_world,
+    )
+    return _xy(position, header), _xy(tip, header)
+
+
+def fuel_bar_fill_width(
+    fuel: float, capacity: float, bar_width: int = FUEL_BAR_WIDTH
+) -> int:
+    if capacity <= 0.0:
+        return 0
+    frac = max(0.0, min(1.0, fuel / capacity))
+    return max(0, int(bar_width * frac))
+
+
+def _frame_stat(header: TraceHeader, agent_id: str, key: str, fallback: float) -> float:
+    frame_type = (header.jet_frame_types or {}).get(agent_id, "STRIKE_FIGHTER")
+    stats = (header.jet_frame_stats or {}).get(frame_type) or {}
+    value = stats.get(key)
+    return float(value) if value is not None else fallback
 
 
 def _jet_color(agent_id: str, header: TraceHeader) -> tuple[int, int, int]:
@@ -206,6 +246,27 @@ def draw_jammer(surface: Surface, header: TraceHeader) -> None:
         pygame.draw.circle(surface, BACKGROUND_COLOR, center, 3)
 
 
+def draw_home_base(surface: Surface, header: TraceHeader) -> None:
+    """Always-visible home-base marker (flag + pad), independent of tick."""
+    pygame = _require_pygame()
+    home = getattr(header, "home_base", None)
+    if home is None:
+        return
+    center = _xy(tuple(home), header)
+    pad = pygame.Rect(center[0] - 7, center[1] - 5, 14, 10)
+    pygame.draw.rect(surface, HOME_BASE_COLOR, pad, 0)
+    pygame.draw.rect(surface, BORDER_COLOR, pad, 1)
+    pygame.draw.line(
+        surface, HUD_TEXT_COLOR, (center[0] - 2, center[1] + 5), (center[0] - 2, center[1] - 14), 2
+    )
+    flag = [
+        (center[0] - 2, center[1] - 14),
+        (center[0] + 10, center[1] - 10),
+        (center[0] - 2, center[1] - 6),
+    ]
+    pygame.draw.polygon(surface, HOME_BASE_COLOR, flag)
+
+
 def draw_targets(surface: Surface, header: TraceHeader, tick: TraceTick) -> None:
     pygame = _require_pygame()
     for frame in tick.targets:
@@ -267,6 +328,9 @@ def draw_jets(
         center = _xy(frame.position, header)
         fill = _jet_color(frame.agent_id, header)
         pygame.draw.circle(surface, fill, center, JET_RADIUS)
+        origin, tip = heading_indicator_endpoints(frame.position, frame.heading, header)
+        pygame.draw.line(surface, HEADING_INDICATOR_COLOR, origin, tip, 2)
+        pygame.draw.circle(surface, HEADING_INDICATOR_COLOR, tip, 2)
         if frame.role is not None:
             ring = ROLE_RING_COLOR.get(frame.role, ROLE_RING_COLOR["IDLE"])
             pygame.draw.circle(surface, ring, center, JET_RADIUS + 3, 2)
@@ -278,12 +342,27 @@ def draw_jets(
         pygame.draw.rect(
             surface, (40, 40, 48), pygame.Rect(bar_x, bar_y, HP_BAR_WIDTH, HP_BAR_HEIGHT)
         )
-        frac = max(0.0, min(1.0, frame.hp / JET_HP))
+        hp_max = _frame_stat(header, frame.agent_id, "hp", JET_HP)
+        frac = max(0.0, min(1.0, frame.hp / hp_max)) if hp_max else 0.0
         hp_color = (80, 200, 90) if frac > 0.5 else (220, 160, 50) if frac > 0.25 else (210, 60, 60)
         pygame.draw.rect(
             surface,
             hp_color,
             pygame.Rect(bar_x, bar_y, max(0, int(HP_BAR_WIDTH * frac)), HP_BAR_HEIGHT),
+        )
+        # Fuel bar — cyan, distinct from HP's green-yellow-red.
+        fuel_y = bar_y - FUEL_BAR_HEIGHT - 2
+        pygame.draw.rect(
+            surface,
+            FUEL_BAR_EMPTY,
+            pygame.Rect(bar_x, fuel_y, FUEL_BAR_WIDTH, FUEL_BAR_HEIGHT),
+        )
+        capacity = _frame_stat(header, frame.agent_id, "fuel_capacity", 1.0)
+        fill_w = fuel_bar_fill_width(frame.fuel, capacity)
+        pygame.draw.rect(
+            surface,
+            FUEL_BAR_COLOR,
+            pygame.Rect(bar_x, fuel_y, fill_w, FUEL_BAR_HEIGHT),
         )
         if show_sensor_radius:
             _draw_dotted_circle(surface, (90, 90, 110), center, sensor_r)
@@ -476,12 +555,14 @@ def draw_end_of_run_overlay(
     if summary is None:
         summary = compute_run_summary(header, ticks)
 
-    overlay = pygame.Surface((420, 170), pygame.SRCALPHA)
+    overlay = pygame.Surface((440, 220), pygame.SRCALPHA)
     overlay.fill(OVERLAY_BG)
     pygame.draw.rect(overlay, BORDER_COLOR, overlay.get_rect(), 1)
 
     if summary.swarm_wiped_out:
         title, title_color = "SWARM WIPED OUT", (220, 80, 80)
+    elif getattr(summary, "mission_aborted", False):
+        title, title_color = "MISSION ABORTED", (220, 180, 80)
     elif summary.solved:
         title, title_color = "MISSION COMPLETE", (90, 210, 110)
     else:
@@ -498,7 +579,17 @@ def draw_end_of_run_overlay(
             22,
         ),
         (
-            f"Jets lost          {summary.jets_destroyed}/{summary.total_jets}",
+            f"Jets destroyed     {summary.jets_destroyed}/{summary.total_jets}",
+            HUD_TEXT_COLOR,
+            22,
+        ),
+        (
+            f"Returned to base   {getattr(summary, 'jets_returned_to_base', 0)}",
+            HUD_TEXT_COLOR,
+            22,
+        ),
+        (
+            f"Still flying       {getattr(summary, 'jets_still_flying', len(ticks[-1].jets) if ticks else 0)}",
             HUD_TEXT_COLOR,
             22,
         ),
@@ -512,7 +603,7 @@ def draw_end_of_run_overlay(
     for text, color, size in lines:
         rendered = _font(size).render(text, True, color)
         overlay.blit(rendered, (16, y))
-        y += rendered.get_height() + 6
+        y += rendered.get_height() + 4
 
     # Lower-left of the canvas so the map stays visible.
-    surface.blit(overlay, (MARGIN, CANVAS_SIZE - 170 - MARGIN))
+    surface.blit(overlay, (MARGIN, CANVAS_SIZE - 220 - MARGIN))

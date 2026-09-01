@@ -28,7 +28,9 @@ from wraithnet.scenario_schema import (
 from viewer3d.editor import (
     OrthoEditorCamera,
     _humanize_validation_error,
+    ordnance_slots_used,
     scenario_to_header,
+    slots_usage_text,
 )
 
 
@@ -530,5 +532,119 @@ def test_load_button_surfaces_missing_file(tmp_path):
         _invoke(editor._btn_load)
         assert editor.banner_messages
         assert any("Could not load" in msg for msg in editor.banner_messages)
+    finally:
+        _destroy_app(app)
+
+
+def test_non_default_frame_type_save_reload_round_trips(tmp_path):
+    app = _editor_app()
+    try:
+        editor = app._editor
+        editor.begin_placement("jet")
+        editor.on_ground_clicked((30.0, 40.0))
+        editor.set_frame_type("HEAVY_BOMBER")
+        editor.begin_placement("target")
+        editor.on_ground_clicked((70.0, 80.0))
+        dest = tmp_path / "bomber.json"
+        assert editor.save(str(dest)) is None
+        loaded = load_scenario(dest)
+        assert loaded.jets[0].frame_type == "HEAVY_BOMBER"
+
+        editor.load(str(dest))
+        assert editor.scenario_draft["jets"][0]["frame_type"] == "HEAVY_BOMBER"
+        editor.on_ground_clicked((30.0, 40.0))
+        assert "HEAVY_BOMBER" in editor._frame_btn["text"]
+    finally:
+        _destroy_app(app)
+
+
+def test_place_home_base_is_a_single_moved_marker(tmp_path):
+    app = _editor_app()
+    try:
+        editor = app._editor
+        assert editor.scenario_draft["home_base"] == list(wn_config.DEFAULT_HOME_BASE)
+
+        editor.begin_placement("home_base")
+        editor.on_ground_clicked((11.0, 22.0))
+        editor.begin_placement("home_base")
+        editor.on_ground_clicked((33.0, 44.0))
+
+        home = editor.scenario_draft["home_base"]
+        assert home == pytest.approx([33.0, 44.0])
+        assert len(home) == 2
+
+        editor.begin_placement("jet")
+        editor.on_ground_clicked((10.0, 10.0))
+        editor.begin_placement("target")
+        editor.on_ground_clicked((50.0, 50.0))
+        dest = tmp_path / "home.json"
+        assert editor.save(str(dest)) is None
+        loaded = load_scenario(dest)
+        assert loaded.home_base == pytest.approx((33.0, 44.0))
+        assert isinstance(loaded.home_base, tuple)
+        assert len(loaded.home_base) == 2
+    finally:
+        _destroy_app(app)
+
+
+def test_save_without_placing_home_base_keeps_the_default(tmp_path):
+    app = _editor_app()
+    try:
+        editor = app._editor
+        editor.begin_placement("jet")
+        editor.on_ground_clicked((10.0, 10.0))
+        editor.begin_placement("target")
+        editor.on_ground_clicked((50.0, 50.0))
+        dest = tmp_path / "default_home.json"
+        assert editor.save(str(dest)) is None
+        loaded = load_scenario(dest)
+        assert loaded.home_base == pytest.approx(wn_config.DEFAULT_HOME_BASE)
+    finally:
+        _destroy_app(app)
+
+
+def test_slots_usage_indicator_matches_scenario_validator():
+    fit = {"JDAM": 3, "AIM9X": 1}
+    overflow = {"JDAM": 8, "AIM9X": 0}
+    assert slots_usage_text(fit, "STRIKE_FIGHTER") == "4 / 7 slots"
+    used, cap = ordnance_slots_used(fit, "STRIKE_FIGHTER")
+    assert used <= cap
+    ScenarioConfig.model_validate(_valid_kwargs(jets=[
+        {"agent_id": "Jet_1", "position": (10.0, 10.0), "payload": fit}
+    ]))
+
+    assert slots_usage_text(overflow, "STRIKE_FIGHTER") == "8 / 7 slots"
+    used, cap = ordnance_slots_used(overflow, "STRIKE_FIGHTER")
+    assert used > cap
+    with pytest.raises(ValidationError):
+        ScenarioConfig.model_validate(_valid_kwargs(jets=[
+            {"agent_id": "Jet_1", "position": (10.0, 10.0), "payload": overflow}
+        ]))
+
+    interceptor_overflow = {"JDAM": 5, "AIM9X": 0}
+    assert slots_usage_text(interceptor_overflow, "INTERCEPTOR") == "5 / 4 slots"
+    assert slots_usage_text(interceptor_overflow, "STRIKE_FIGHTER") == "5 / 7 slots"
+
+
+def test_slots_preview_updates_when_payload_or_frame_changes():
+    app = _editor_app()
+    try:
+        editor = app._editor
+        editor.begin_placement("jet")
+        editor.on_ground_clicked((12.0, 13.0))
+        assert editor._slots_label["text"] == "1 / 7 slots"
+
+        editor._field_a_entry.enterText("8")
+        editor._field_b_entry.enterText("0")
+        editor._refresh_slots_preview()
+        assert editor._slots_label["text"] == "8 / 7 slots"
+
+        editor.set_frame_type("INTERCEPTOR")
+        assert editor._slots_label["text"] == "8 / 4 slots"
+
+        editor.set_frame_type("HEAVY_BOMBER")
+        editor._field_a_entry.enterText("1")
+        editor._refresh_slots_preview()
+        assert editor._slots_label["text"] == "1 / 10 slots"
     finally:
         _destroy_app(app)

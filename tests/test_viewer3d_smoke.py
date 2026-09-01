@@ -27,7 +27,18 @@ from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
 from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
 from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
-from viewer3d.scene import SceneHandles, apply_tick_highlights, build_static_scene, update_tick
+from viewer3d.scene import (
+    SceneHandles,
+    apply_jet_flight_easing,
+    apply_tick_highlights,
+    build_static_scene,
+    update_tick,
+)
+from viewer3d.flight_dynamics import (
+    CRUISE_ALTITUDE,
+    GROUND_ALTITUDE,
+    POST_STRIKE_CLIMB_BOOST_ALTITUDE,
+)
 from viewer3d.stream_client import DisconnectedEvent, EndEvent, HeaderEvent, TickEvent
 
 
@@ -107,6 +118,12 @@ def test_build_static_scene_and_update_tick_destroyed_target_and_removed_jet():
     assert set(handles.targets) == {"Target_A", "SAM_Site_1"}
     assert "EW_Jammer_1" in handles.jammers
     assert handles.jets["Jet_1"].is_hidden()
+    home = handles.root.find("**/home-base")
+    assert not home.is_empty()
+    assert handles.home_base is not None
+    assert (handles.home_base.get_pos().x, handles.home_base.get_pos().y) == pytest.approx(
+        header.home_base
+    )
 
     alive_targets = [
         TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False),
@@ -144,6 +161,45 @@ def test_build_static_scene_and_update_tick_destroyed_target_and_removed_jet():
     rm = destroyed.get_attrib(RenderModeAttrib)
     assert rm is not None
     assert rm.get_mode() == RenderModeAttrib.M_wireframe
+
+
+def test_jet_orientation_follows_heading_not_travel_direction():
+    """Crab: the jet moves +x while heading stays 0° (+y). Orientation must
+    follow heading, proving the old position-delta estimate is gone."""
+    header = _sample_header()
+    root = NodePath("crab-root")
+    handles = build_static_scene(root, header)
+    targets = [
+        TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False),
+        TargetFrame(target_id="SAM_Site_1", hp_remaining=1, claimed=False),
+    ]
+    update_tick(
+        handles,
+        header,
+        _tick(0, [_jet_frame("Jet_1", (10.0, 10.0), heading=0.0)], targets),
+        seconds_airborne={"Jet_1": 3.0},
+    )
+    apply_jet_flight_easing(handles, 0.016)
+    update_tick(
+        handles,
+        header,
+        _tick(1, [_jet_frame("Jet_1", (20.0, 10.0), heading=0.0)], targets),
+        seconds_airborne={"Jet_1": 3.0},
+    )
+    apply_jet_flight_easing(handles, 0.016)
+    assert handles.jet_heading_deg["Jet_1"] == pytest.approx(0.0)
+    glyph = handles.jet_glyphs["Jet_1"]
+    assert glyph.get_h() == pytest.approx(0.0)
+
+    update_tick(
+        handles,
+        header,
+        _tick(2, [_jet_frame("Jet_1", (20.0, 20.0), heading=90.0)], targets),
+        seconds_airborne={"Jet_1": 3.0},
+    )
+    apply_jet_flight_easing(handles, 0.016)
+    assert handles.jet_heading_deg["Jet_1"] == pytest.approx(90.0)
+    assert glyph.get_h() == pytest.approx(90.0)
 
 
 def test_viewer_app_drains_live_stream_without_raising():
@@ -203,6 +259,64 @@ def test_viewer_app_drains_live_stream_without_raising():
             pass
         thread.join(timeout=10.0)
     assert "err" not in error_box
+
+
+def test_live_jet_altitude_eases_over_wall_clock_time():
+    """Phase 25: rendered altitude must change over real elapsed time, not stay fixed."""
+    from viewer3d.app import WraithNetViewer3D
+
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+    port_box: dict = {}
+
+    async def _run_sim() -> None:
+        server = LiveStreamServer(port=0)
+        await server.start()
+        port_box["port"] = server.port
+        ready.set()
+        bridge = WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
+        bridge.start_agent_loops()
+        try:
+            for _ in range(6):
+                await bridge._tick()
+            await asyncio.sleep(2.0)
+        finally:
+            await bridge.stop_agent_loops()
+            await server.close()
+
+    def _thread() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_run_sim())
+
+    thread = threading.Thread(target=_thread, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=10.0)
+
+    app = WraithNetViewer3D("127.0.0.1", port_box["port"])
+    try:
+        samples: list[float] = []
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            app.task_mgr.step()
+            time.sleep(0.08)
+            if app._handles is None or "Solo_Jet" not in app._handles.jets:
+                continue
+            z = app._handles.rendered_altitude.get("Solo_Jet")
+            if z is not None:
+                samples.append(z)
+            if len(samples) >= 3 and max(samples) - min(samples) > 0.05:
+                break
+        assert samples, "expected rendered altitude samples from the live viewer"
+        assert max(samples) - min(samples) > 0.05
+        assert min(samples) >= GROUND_ALTITUDE - 0.01
+        assert max(samples) <= CRUISE_ALTITUDE + POST_STRIKE_CLIMB_BOOST_ALTITUDE + 0.5
+    finally:
+        app._client.stop()
+        try:
+            app.destroy()
+        except Exception:
+            pass
+        thread.join(timeout=10.0)
 
 
 def _destroy_app(app) -> None:

@@ -13,12 +13,12 @@ import pytest
 pygame = pytest.importorskip("pygame")
 
 from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
-from viewer.playback import advance_playback, compute_highlights
 from viewer.render import (
     WINDOW_SIZE,
     draw_destruction_pulses,
     draw_end_of_run_overlay,
     draw_grid_background,
+    draw_home_base,
     draw_hud,
     draw_jam_transition_flash,
     draw_jammer,
@@ -26,6 +26,7 @@ from viewer.render import (
     draw_strike_highlights,
     draw_targets,
 )
+from viewer.playback import RunSummary, advance_playback, compute_highlights
 from viewer.trace_loader import load_trace
 
 
@@ -183,6 +184,7 @@ def test_draw_pipeline_raises_nothing_across_three_tick_trace(tmp_path):
         for i, current in enumerate(loaded_ticks):
             draw_grid_background(surface, loaded_header)
             draw_jammer(surface, loaded_header)
+            draw_home_base(surface, loaded_header)
             draw_targets(surface, loaded_header, current)
             draw_jets(surface, loaded_header, current, show_sensor_radius=i % 2 == 0)
             draw_hud(surface, loaded_header, current, i, len(loaded_ticks), i % 2 == 0)
@@ -225,6 +227,7 @@ def test_draw_pipeline_raises_nothing_across_rich_trace(tmp_path):
                 assert highlights.newly_destroyed_jet_ids == ["Jet_1"]
             draw_grid_background(surface, loaded_header)
             draw_jammer(surface, loaded_header)
+            draw_home_base(surface, loaded_header)
             draw_targets(surface, loaded_header, current)
             draw_jets(surface, loaded_header, current, show_sensor_radius=True)
             draw_strike_highlights(surface, loaded_header, current, highlights, previous)
@@ -261,3 +264,62 @@ def test_autoplay_accumulator_advances_then_pauses_at_end():
     )
     assert tick_index == last_index
     assert playing is False
+
+
+def test_end_of_run_overlay_mission_aborted_and_fuel_bars_do_not_raise():
+    pygame.init()
+    try:
+        surface = pygame.Surface(WINDOW_SIZE)
+        header = _header()
+        header.jet_frame_types = {"Jet_1": "STRIKE_FIGHTER"}
+        header.jet_frame_stats = {
+            "STRIKE_FIGHTER": {"fuel_capacity": 80.0, "max_speed": 5.0, "hp": 5.0}
+        }
+        summary = RunSummary(
+            solved=False,
+            swarm_wiped_out=False,
+            mission_aborted=True,
+            targets_destroyed=0,
+            total_targets=2,
+            jets_destroyed=0,
+            jets_returned_to_base=2,
+            jets_still_flying=0,
+            total_jets=2,
+            total_missiles_fired=0,
+            per_weapon_type_missiles_fired={},
+        )
+        empty = TraceTick(
+            tick=1,
+            jets=[],
+            targets=[TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False)],
+            strikes=[],
+            running=False,
+            swarm_wiped_out=False,
+            mission_aborted=True,
+        )
+        draw_end_of_run_overlay(surface, header, [empty], summary=summary)
+        for fuel in (0.0, 40.0, 80.0):
+            tick = TraceTick(
+                tick=0,
+                jets=[
+                    JetFrame(
+                        agent_id="Jet_1",
+                        position=(10.0, 10.0),
+                        hp=5,
+                        payload={"JDAM": 1, "AIM9X": 0},
+                        destroyed=False,
+                        jammed=False,
+                        role="RTB",
+                        heading=45.0,
+                        fuel=fuel,
+                    )
+                ],
+                targets=[TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False)],
+                strikes=[],
+                running=True,
+                swarm_wiped_out=False,
+            )
+            draw_jets(surface, header, tick, show_sensor_radius=False)
+            draw_home_base(surface, header)
+    finally:
+        pygame.quit()

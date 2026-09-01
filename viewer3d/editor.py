@@ -29,6 +29,7 @@ from viewer3d.scene import build_static_scene, jet_altitude
 from wraithnet import config as wn_config
 from wraithnet.scenario_io import load_scenario, save_scenario
 from wraithnet.scenario_schema import ScenarioConfig
+from wraithnet.trace_builders import catalog_header_fields
 from wraithnet.trace_schemas import TraceHeader
 
 CYAN = (0.45, 0.88, 1.0, 1.0)
@@ -36,6 +37,24 @@ PANEL_BG = (0.02, 0.07, 0.11, 0.78)
 RED = (1.0, 0.35, 0.32, 1.0)
 BTN_BG = (0.08, 0.18, 0.24, 0.95)
 _VALUE_ERROR_PREFIX = "Value error, "
+_FRAME_TYPES = list(wn_config.JET_FRAME_CATALOG)
+
+
+def ordnance_slots_used(payload: dict, frame_type: str) -> tuple[int, int]:
+    """Live preview of ScenarioConfig's slot-capacity rule. Does not validate."""
+    used = 0
+    for weapon, count in (payload or {}).items():
+        spec = wn_config.WEAPON_CATALOG.get(weapon)
+        if spec is None:
+            continue
+        used += spec.slot_cost * int(count)
+    cap = wn_config.JET_FRAME_CATALOG[frame_type].ordnance_slots
+    return used, cap
+
+
+def slots_usage_text(payload: dict, frame_type: str) -> str:
+    used, cap = ordnance_slots_used(payload, frame_type)
+    return f"{used} / {cap} slots"
 
 
 def scenario_to_header(config: ScenarioConfig) -> TraceHeader:
@@ -64,6 +83,9 @@ def scenario_to_header(config: ScenarioConfig) -> TraceHeader:
         sam_site_ids=[s.target_id for s in config.sam_sites],
         jammer_positions={j.jammer_id: tuple(j.position) for j in config.jammers},
         target_positions={t.target_id: tuple(t.position) for t in targets},
+        home_base=tuple(config.home_base),
+        jet_frame_types={j.agent_id: j.frame_type for j in config.jets},
+        **catalog_header_fields(),
     )
 
 
@@ -221,6 +243,7 @@ class ScenarioEditor:
             "targets": [],
             "sam_sites": [],
             "jammers": [],
+            "home_base": list(wn_config.DEFAULT_HOME_BASE),
         }
         self.camera = OrthoEditorCamera(
             base, self.scenario_draft["grid_width"], self.scenario_draft["grid_height"]
@@ -267,12 +290,15 @@ class ScenarioEditor:
         self._btn_add_jammer = _btn(
             self._panel, "Add Jammer", (0.52, 0, -0.24), self.begin_placement, ["jammer"]
         )
+        self._btn_home_base = _btn(
+            self._panel, "Place Home Base", (0.37, 0, -0.32), self.begin_placement, ["home_base"]
+        )
 
-        self._list_anchor_z = -0.34
+        self._list_anchor_z = -0.42
         DirectLabel(
             parent=self._panel,
             text="[ ENTITIES ]",
-            pos=(0.08, 0, -0.32),
+            pos=(0.08, 0, -0.40),
             scale=0.034,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
@@ -282,13 +308,13 @@ class ScenarioEditor:
         self._form_frame = DirectFrame(
             parent=self._panel,
             frameColor=(0.03, 0.09, 0.13, 0.4),
-            frameSize=(0.06, 0.86, -1.22, -0.92),
+            frameSize=(0.06, 0.86, -1.36, -0.98),
             relief=None,
         )
         DirectLabel(
             parent=self._form_frame,
             text="[ PROPERTIES ]",
-            pos=(0.08, 0, -0.96),
+            pos=(0.08, 0, -1.02),
             scale=0.032,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
@@ -296,7 +322,7 @@ class ScenarioEditor:
         )
         self._id_entry = DirectEntry(
             parent=self._form_frame,
-            pos=(0.45, 0, -1.02),
+            pos=(0.45, 0, -1.08),
             scale=0.035,
             width=12,
             initialText="",
@@ -306,7 +332,7 @@ class ScenarioEditor:
         DirectLabel(
             parent=self._form_frame,
             text="ID",
-            pos=(0.10, 0, -1.02),
+            pos=(0.10, 0, -1.08),
             scale=0.032,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
@@ -314,7 +340,7 @@ class ScenarioEditor:
         )
         self._field_a_entry = DirectEntry(
             parent=self._form_frame,
-            pos=(0.45, 0, -1.08),
+            pos=(0.45, 0, -1.14),
             scale=0.035,
             width=12,
             initialText="",
@@ -324,7 +350,7 @@ class ScenarioEditor:
         self._field_a_label = DirectLabel(
             parent=self._form_frame,
             text="JDAM",
-            pos=(0.10, 0, -1.08),
+            pos=(0.10, 0, -1.14),
             scale=0.032,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
@@ -332,7 +358,7 @@ class ScenarioEditor:
         )
         self._field_b_entry = DirectEntry(
             parent=self._form_frame,
-            pos=(0.45, 0, -1.14),
+            pos=(0.45, 0, -1.20),
             scale=0.035,
             width=12,
             initialText="",
@@ -342,22 +368,38 @@ class ScenarioEditor:
         self._field_b_label = DirectLabel(
             parent=self._form_frame,
             text="AIM9X",
-            pos=(0.10, 0, -1.14),
+            pos=(0.10, 0, -1.20),
             scale=0.032,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
             frameColor=(0, 0, 0, 0),
         )
+        self._frame_btn = _btn(
+            self._form_frame, "Frame: STRIKE_FIGHTER", (0.46, 0, -1.26), self._cycle_frame_type
+        )
+        self._slots_label = DirectLabel(
+            parent=self._form_frame,
+            text="0 / 7 slots",
+            pos=(0.10, 0, -1.32),
+            scale=0.030,
+            text_fg=CYAN,
+            text_align=TextNode.ALeft,
+            frameColor=(0, 0, 0, 0),
+        )
         self._btn_apply = _btn(
-            self._form_frame, "Apply", (0.22, 0, -1.20), self._apply_form
+            self._form_frame, "Apply", (0.22, 0, -1.38), self._apply_form
         )
         self._btn_delete = _btn(
-            self._form_frame, "Delete", (0.52, 0, -1.20), self._delete_selected
+            self._form_frame, "Delete", (0.52, 0, -1.38), self._delete_selected
         )
+        self._field_a_entry["command"] = self._on_payload_typed
+        self._field_b_entry["command"] = self._on_payload_typed
+        self._frame_btn.hide()
+        self._slots_label.hide()
 
         self._path_entry = DirectEntry(
             parent=self._panel,
-            pos=(0.48, 0, -1.34),
+            pos=(0.48, 0, -1.50),
             scale=0.032,
             width=18,
             initialText=self._path,
@@ -367,19 +409,19 @@ class ScenarioEditor:
         DirectLabel(
             parent=self._panel,
             text="Path",
-            pos=(0.08, 0, -1.34),
+            pos=(0.08, 0, -1.50),
             scale=0.032,
             text_fg=CYAN,
             text_align=TextNode.ALeft,
             frameColor=(0, 0, 0, 0),
         )
-        self._btn_save = _btn(self._panel, "Save", (0.18, 0, -1.44), self._save_clicked)
-        self._btn_load = _btn(self._panel, "Load", (0.40, 0, -1.44), self._load_clicked)
+        self._btn_save = _btn(self._panel, "Save", (0.18, 0, -1.60), self._save_clicked)
+        self._btn_load = _btn(self._panel, "Load", (0.40, 0, -1.60), self._load_clicked)
         self._btn_preview = _btn(
-            self._panel, "Preview", (0.66, 0, -1.44), self._preview_clicked
+            self._panel, "Preview", (0.66, 0, -1.60), self._preview_clicked
         )
         self._btn_launch = _btn(
-            self._panel, "Launch", (0.40, 0, -1.54), self._launch_clicked
+            self._panel, "Launch", (0.40, 0, -1.70), self._launch_clicked
         )
 
         bl = getattr(self.base, "a2dBottomLeft", None) or parent
@@ -481,8 +523,16 @@ class ScenarioEditor:
                 "agent_id": self._next_id("Jet_", "agent_id", "jets"),
                 "position": pos,
                 "payload": {"JDAM": 1, "AIM9X": 0},
+                "frame_type": "STRIKE_FIGHTER",
             }
             self.scenario_draft["jets"].append(ent)
+        elif kind == "home_base":
+            self.scenario_draft["home_base"] = [pos[0], pos[1]]
+            self.rebuild_scene()
+            self._refresh_entity_list()
+            _, errors = self._construct_config()
+            self._set_banner(errors or [])
+            return
         elif kind == "target":
             ent = {
                 "target_id": self._next_id("Target_", "target_id", "targets"),
@@ -561,6 +611,10 @@ class ScenarioEditor:
             self._field_b_entry.enterText(str(payload.get("AIM9X", 0)))
             self._field_a_entry.show()
             self._field_b_entry.show()
+            self._frame_btn.show()
+            self._slots_label.show()
+            self._set_frame_button_label(entity.get("frame_type", "STRIKE_FIGHTER"))
+            self._refresh_slots_preview()
         elif kind == "target":
             self._field_a_label["text"] = "type"
             self._field_b_label["text"] = "hp"
@@ -568,6 +622,8 @@ class ScenarioEditor:
             self._field_b_entry.enterText(str(entity.get("hp_required", 1)))
             self._field_a_entry.show()
             self._field_b_entry.show()
+            self._frame_btn.hide()
+            self._slots_label.hide()
         elif kind == "sam_site":
             self._field_a_label["text"] = "hp"
             self._field_b_label["text"] = ""
@@ -575,11 +631,55 @@ class ScenarioEditor:
             self._field_b_entry.enterText("")
             self._field_a_entry.show()
             self._field_b_entry.hide()
+            self._frame_btn.hide()
+            self._slots_label.hide()
         else:
             self._field_a_label["text"] = ""
             self._field_b_label["text"] = ""
             self._field_a_entry.hide()
             self._field_b_entry.hide()
+            self._frame_btn.hide()
+            self._slots_label.hide()
+
+    def _set_frame_button_label(self, frame_type: str) -> None:
+        self._frame_btn["text"] = f"Frame: {frame_type}"
+
+    def set_frame_type(self, frame_type: str) -> None:
+        """Test/UI helper: assign a catalog frame to the selected jet."""
+        if self._selected is None or self._kind_of(self._selected) != "jet":
+            return
+        if frame_type not in wn_config.JET_FRAME_CATALOG:
+            return
+        self._selected["frame_type"] = frame_type
+        self._set_frame_button_label(frame_type)
+        self._refresh_slots_preview()
+
+    def _cycle_frame_type(self) -> None:
+        if self._selected is None or self._kind_of(self._selected) != "jet":
+            return
+        current = self._selected.get("frame_type", "STRIKE_FIGHTER")
+        idx = _FRAME_TYPES.index(current) if current in _FRAME_TYPES else 0
+        nxt = _FRAME_TYPES[(idx + 1) % len(_FRAME_TYPES)]
+        self.set_frame_type(nxt)
+
+    def _payload_from_form(self) -> dict[str, int]:
+        try:
+            jdam = int(self._field_a_entry.get().strip() or "0")
+            aim = int(self._field_b_entry.get().strip() or "0")
+        except ValueError:
+            return {}
+        return {"JDAM": jdam, "AIM9X": aim}
+
+    def _on_payload_typed(self, _text: str = "") -> None:
+        self._refresh_slots_preview()
+
+    def _refresh_slots_preview(self) -> None:
+        if self._selected is None or self._kind_of(self._selected) != "jet":
+            self._slots_label["text"] = ""
+            return
+        payload = self._payload_from_form() or (self._selected.get("payload") or {})
+        frame_type = self._selected.get("frame_type", "STRIKE_FIGHTER")
+        self._slots_label["text"] = slots_usage_text(payload, frame_type)
 
     def _kind_of(self, entity: dict) -> str:
         for kind, ent in self._all_entities():
@@ -609,6 +709,8 @@ class ScenarioEditor:
                 self._set_banner(["Payload counts must be integers."])
                 return
             entity["payload"] = {"JDAM": jdam, "AIM9X": aim}
+            entity["frame_type"] = entity.get("frame_type", "STRIKE_FIGHTER")
+            self._refresh_slots_preview()
         elif kind == "target":
             if new_id:
                 entity["target_id"] = new_id
@@ -669,6 +771,7 @@ class ScenarioEditor:
             "targets": list(self.scenario_draft["targets"]),
             "sam_sites": list(self.scenario_draft["sam_sites"]),
             "jammers": list(self.scenario_draft["jammers"]),
+            "home_base": tuple(self.scenario_draft["home_base"]),
         }
         try:
             return ScenarioConfig.model_validate(data), None
@@ -700,6 +803,7 @@ class ScenarioEditor:
             "targets": [t.model_dump() for t in loaded.targets],
             "sam_sites": [s.model_dump() for s in loaded.sam_sites],
             "jammers": [j.model_dump() for j in loaded.jammers],
+            "home_base": list(loaded.home_base),
         }
         self.camera = OrthoEditorCamera(
             self.base, loaded.grid_width, loaded.grid_height
@@ -753,6 +857,11 @@ class ScenarioEditor:
             sam_site_ids=[s["target_id"] for s in sams],
             jammer_positions={j["jammer_id"]: tuple(j["position"]) for j in jammers},
             target_positions={t["target_id"]: tuple(t["position"]) for t in all_targets},
+            home_base=tuple(self.scenario_draft.get("home_base") or wn_config.DEFAULT_HOME_BASE),
+            jet_frame_types={
+                j["agent_id"]: j.get("frame_type", "STRIKE_FIGHTER") for j in jets
+            },
+            **catalog_header_fields(),
         )
 
     def rebuild_scene(self) -> None:

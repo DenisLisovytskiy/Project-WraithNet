@@ -16,6 +16,7 @@ class TickHighlights:
     newly_destroyed_jet_ids: list[str]
     newly_jammed_jet_ids: list[str]
     newly_unjammed_jet_ids: list[str]
+    newly_rtb_jet_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class RunSummary:
     total_jets: int
     total_missiles_fired: int
     per_weapon_type_missiles_fired: dict[str, int]
+    mission_aborted: bool = False
+    jets_returned_to_base: int = 0
+    jets_still_flying: int = 0
 
 
 def compute_highlights(previous: TraceTick | None, current: TraceTick) -> TickHighlights:
@@ -47,7 +51,6 @@ def compute_highlights(previous: TraceTick | None, current: TraceTick) -> TickHi
         if previous is not None
         else []
     )
-    newly_destroyed_jet_ids = sorted(prev_jet_ids - curr_jet_ids) if previous else []
     newly_jammed_jet_ids = (
         [
             j.agent_id
@@ -62,12 +65,24 @@ def compute_highlights(previous: TraceTick | None, current: TraceTick) -> TickHi
         for j in current.jets
         if not j.jammed and j.agent_id in prev_jets and prev_jets[j.agent_id].jammed
     ]
+    events = list(getattr(current, "jet_outcomes", None) or [])
+    if previous is not None and events:
+        newly_rtb_jet_ids = [
+            e.agent_id for e in events if e.outcome == "returned_to_base"
+        ]
+        newly_destroyed_jet_ids = sorted(
+            e.agent_id for e in events if e.outcome == "destroyed"
+        )
+    else:
+        newly_rtb_jet_ids = []
+        newly_destroyed_jet_ids = sorted(prev_jet_ids - curr_jet_ids) if previous else []
     return TickHighlights(
         strikes=list(current.strikes),
         newly_destroyed_target_ids=newly_destroyed_target_ids,
         newly_destroyed_jet_ids=newly_destroyed_jet_ids,
         newly_jammed_jet_ids=newly_jammed_jet_ids,
         newly_unjammed_jet_ids=newly_unjammed_jet_ids,
+        newly_rtb_jet_ids=newly_rtb_jet_ids,
     )
 
 
@@ -106,12 +121,31 @@ def compute_run_summary(header: TraceHeader, ticks: list[TraceTick]) -> RunSumma
     total_targets = len(header.target_ids)
     targets_destroyed = sum(1 for t in final.targets if t.hp_remaining <= 0)
     total_jets = len(header.jet_ids)
+    returned = 0
+    destroyed_events = 0
+    for tick in ticks:
+        for event in getattr(tick, "jet_outcomes", None) or []:
+            if event.outcome == "returned_to_base":
+                returned += 1
+            elif event.outcome == "destroyed":
+                destroyed_events += 1
+    if returned or destroyed_events:
+        jets_destroyed = destroyed_events
+        jets_returned_to_base = returned
+        jets_still_flying = len(final.jets)
+    else:
+        jets_destroyed = total_jets - len(final.jets)
+        jets_returned_to_base = 0
+        jets_still_flying = len(final.jets)
     return RunSummary(
         solved=targets_destroyed == total_targets,
         swarm_wiped_out=final.swarm_wiped_out,
+        mission_aborted=bool(getattr(final, "mission_aborted", False)),
         targets_destroyed=targets_destroyed,
         total_targets=total_targets,
-        jets_destroyed=total_jets - len(final.jets),
+        jets_destroyed=jets_destroyed,
+        jets_returned_to_base=jets_returned_to_base,
+        jets_still_flying=jets_still_flying,
         total_jets=total_jets,
         total_missiles_fired=sum(missiles.values()),
         per_weapon_type_missiles_fired=dict(missiles),

@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from wraithnet.trace_schemas import (
     JetFrame,
+    JetOutcomeEvent,
     StrikeEvent,
     TargetFrame,
     TraceHeader,
@@ -89,6 +90,41 @@ def test_trace_tick_json_round_trip():
     )
     restored = TraceTick.model_validate_json(tick.model_dump_json())
     assert restored == tick
+
+
+def test_trace_header_airframe_fields_round_trip():
+    header = _sample_header(
+        home_base=(4.0, 6.0),
+        jet_frame_types={"Jet_1": "INTERCEPTOR", "Jet_2": "HEAVY_BOMBER"},
+        weapon_ranges={"JDAM": 1.0, "AIM9X": 1.0},
+        weapon_firing_arcs_deg={"JDAM": 360.0, "GUN_POD": 60.0},
+        jet_frame_stats={"INTERCEPTOR": {"fuel_capacity": 40.0, "max_speed": 7.0, "hp": 4.0}},
+    )
+    restored = TraceHeader.model_validate_json(header.model_dump_json())
+    assert restored.home_base == (4.0, 6.0)
+    assert restored.jet_frame_types["Jet_1"] == "INTERCEPTOR"
+    assert restored.weapon_ranges["JDAM"] == 1.0
+    assert restored.weapon_firing_arcs_deg["GUN_POD"] == 60.0
+    assert restored.jet_frame_stats["INTERCEPTOR"]["fuel_capacity"] == 40.0
+
+
+def test_jet_frame_heading_and_fuel_round_trip():
+    frame = _sample_jet(heading=90.0, fuel=17.5)
+    restored = JetFrame.model_validate_json(frame.model_dump_json())
+    assert restored.heading == 90.0
+    assert restored.fuel == 17.5
+
+
+def test_jet_outcome_event_round_trip():
+    tick = _sample_tick(
+        jet_outcomes=[
+            JetOutcomeEvent(agent_id="Jet_1", tick=4, outcome="returned_to_base"),
+        ],
+        mission_aborted=True,
+    )
+    restored = TraceTick.model_validate_json(tick.model_dump_json())
+    assert restored.jet_outcomes[0].outcome == "returned_to_base"
+    assert restored.mission_aborted is True
 
 
 @pytest.mark.parametrize("weapon_type", ["JDAM", "AIM9X"])

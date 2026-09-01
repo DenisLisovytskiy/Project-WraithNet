@@ -20,6 +20,7 @@ class TraceRecorder:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self._path.open("w", encoding="utf-8")
+        self._previously_seen_outcome_ids: set[str] = set()
 
     def record_header(self, bridge: WraithNetBridge) -> None:
         header = build_trace_header(bridge)
@@ -27,7 +28,9 @@ class TraceRecorder:
         self._file.flush()
 
     def record_tick(self, bridge: WraithNetBridge) -> None:
-        tick = build_trace_tick(bridge)
+        tick = build_trace_tick(
+            bridge, seen_outcome_ids=self._previously_seen_outcome_ids
+        )
         self._file.write(tick.model_dump_json() + "\n")
         self._file.flush()
 

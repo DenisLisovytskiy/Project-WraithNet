@@ -23,6 +23,7 @@ class LiveStreamServer:
         self._writers: list[asyncio.StreamWriter] = []
         self._backlog: list[str] = []  # every JSON line ever sent, header first
         self._closed = False
+        self._previously_seen_outcome_ids: set[str] = set()
 
     @property
     def host(self) -> str:
@@ -76,7 +77,9 @@ class LiveStreamServer:
         self._send({"type": "header", "data": header.model_dump(mode="json")})
 
     def record_tick(self, bridge: WraithNetBridge) -> None:
-        tick = build_trace_tick(bridge)
+        tick = build_trace_tick(
+            bridge, seen_outcome_ids=self._previously_seen_outcome_ids
+        )
         self._send({"type": "tick", "data": tick.model_dump(mode="json")})
 
     def _send(self, message: dict) -> None:

@@ -5,7 +5,14 @@ equivalent cases from tests/test_viewer_playback.py against the live-stream
 incremental highlighter.
 """
 
-from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
+from wraithnet.trace_schemas import (
+    JetFrame,
+    JetOutcomeEvent,
+    StrikeEvent,
+    TargetFrame,
+    TraceHeader,
+    TraceTick,
+)
 from viewer3d.highlights import compute_highlights, compute_run_summary
 
 
@@ -164,3 +171,40 @@ def test_compute_run_summary_counts_strikes_and_losses():
     assert summary.total_missiles_fired == 2
     assert summary.per_weapon_type_missiles_fired == {"JDAM": 1, "AIM9X": 1}
     assert summary.swarm_wiped_out is False
+
+
+def test_newly_rtb_jet_ids_mirrors_jam_transition_shape():
+    prev = _tick(4, jets=[_jet("Lander"), _jet("Stay")])
+    curr = _tick(
+        5,
+        jets=[_jet("Stay")],
+        jet_outcomes=[
+            JetOutcomeEvent(agent_id="Lander", tick=5, outcome="returned_to_base"),
+        ],
+    )
+    highlights = compute_highlights(prev, curr)
+    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    assert highlights.newly_destroyed_jet_ids == []
+    none_prev = compute_highlights(None, curr)
+    assert none_prev.newly_rtb_jet_ids == []
+
+
+def test_compute_run_summary_mission_aborted_split():
+    header = _header()
+    t0 = _tick(0, jets=[_jet("Jet_1"), _jet("Jet_2", position=(20.0, 20.0))])
+    t1 = _tick(
+        1,
+        jets=[],
+        jet_outcomes=[
+            JetOutcomeEvent(agent_id="Jet_1", tick=1, outcome="returned_to_base"),
+            JetOutcomeEvent(agent_id="Jet_2", tick=1, outcome="returned_to_base"),
+        ],
+        mission_aborted=True,
+        running=False,
+    )
+    summary = compute_run_summary(header, [t0, t1])
+    assert summary.mission_aborted is True
+    assert summary.swarm_wiped_out is False
+    assert summary.jets_returned_to_base == 2
+    assert summary.jets_destroyed == 0
+    assert summary.jets_still_flying == 0

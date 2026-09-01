@@ -9,6 +9,7 @@ from wraithnet.bridge import WraithNetBridge
 from wraithnet.metrics import summarize
 from wraithnet.recorder import TraceRecorder
 from wraithnet.schemas import ActionIntent
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 
@@ -203,3 +204,94 @@ async def test_full_run_trace_is_parseable_and_matches_final_state(tmp_path, fas
     assert final.tick == bridge.model.tick
     assert final.running == bridge.model.running
     assert final.swarm_wiped_out == bridge.model.swarm_wiped_out
+
+
+def test_header_exposes_home_base_frames_and_weapon_catalog(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    recorder = TraceRecorder(path)
+    try:
+        bridge = WraithNetBridge(sinks=[recorder])
+    finally:
+        recorder.close()
+    header, _ticks = _read_trace(path)
+    assert header.home_base == bridge.model._home_base
+    assert header.jet_frame_types == {
+        aid: jet.frame_type for aid, jet in bridge.model.jets.items()
+    }
+    for wt, spec in config.WEAPON_CATALOG.items():
+        assert header.weapon_ranges[wt] == spec.range
+        assert header.weapon_firing_arcs_deg[wt] == spec.firing_arc_deg
+    for name, spec in config.JET_FRAME_CATALOG.items():
+        stats = header.jet_frame_stats[name]
+        assert stats["fuel_capacity"] == spec.fuel_capacity
+        assert stats["max_speed"] == spec.max_speed
+        assert stats["hp"] == spec.hp
+
+
+def test_tick_heading_and_fuel_match_live_jet(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    recorder = TraceRecorder(path)
+    bridge = WraithNetBridge(sinks=[recorder])
+    try:
+        jet = bridge.model.jets["Jet_1"]
+        jet.heading = 123.0
+        jet.fuel = 41.0
+        recorder.record_tick(bridge)
+    finally:
+        recorder.close()
+    _, ticks = _read_trace(path)
+    frame = next(j for j in ticks[-1].jets if j.agent_id == "Jet_1")
+    assert frame.heading == pytest.approx(123.0)
+    assert frame.fuel == pytest.approx(41.0)
+
+
+def test_jet_outcomes_are_per_tick_not_cumulative(tmp_path):
+    home = (20.0, 20.0)
+    scenario = ScenarioConfig(
+        home_base=home,
+        jets=[
+            JetSpec(
+                agent_id="Lander",
+                position=home,
+                payload={"JDAM": 1, "AIM9X": 0},
+            ),
+            JetSpec(
+                agent_id="Doomed",
+                position=(80.0, 80.0),
+                payload={"JDAM": 1, "AIM9X": 0},
+            ),
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Far_Bunker",
+                position=(90.0, 90.0),
+                hp_required=5,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    )
+    path = tmp_path / "trace.jsonl"
+    recorder = TraceRecorder(path)
+    bridge = WraithNetBridge(sinks=[recorder], scenario=scenario)
+    try:
+        bridge.model.jets["Lander"].is_rtb = True
+        bridge.model.jets["Doomed"].hp = 0
+        recorder.record_tick(bridge)  # still present at tick 0
+        bridge.model.step({})
+        recorder.record_tick(bridge)
+        removal_tick = bridge.model.tick
+        bridge.model.step({})
+        recorder.record_tick(bridge)
+    finally:
+        recorder.close()
+
+    _, ticks = _read_trace(path)
+    by_tick = {t.tick: t for t in ticks}
+    events = by_tick[removal_tick].jet_outcomes
+    kinds = {e.agent_id: e.outcome for e in events}
+    assert kinds["Lander"] == "returned_to_base"
+    assert kinds["Doomed"] == "destroyed"
+    later = by_tick[removal_tick + 1]
+    assert later.jet_outcomes == []
+    assert "Lander" not in {j.agent_id for j in later.jets}
+    assert "Doomed" not in {j.agent_id for j in later.jets}

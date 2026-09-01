@@ -94,8 +94,8 @@ class ChaseCamera:
     """Trails behind and above a selected jet, banking toward its heading.
     The explicit 'Ace Combat' reference -- see design doc §6.4.
 
-    `jet_heading` is degrees from +y (sim "north"), matching scene.py's
-    billboard yaw convention (`atan2(dx, dy)`).
+    `jet_heading` is degrees from +y (sim "north"), matching
+    TraceTick.JetFrame.heading (and scene.py's billboard roll).
     """
 
     def __init__(self, base, follow_distance=12.0, follow_height=5.0) -> None:

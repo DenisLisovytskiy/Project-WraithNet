@@ -42,7 +42,7 @@ class JetFrameSpec:
     fuel_burn_per_tick: float     # consumed per tick starting Phase 22
     ordnance_slots: int           # enforced by ScenarioConfig (Phase 21)
     hp: int
-    evasion_bonus: int            # NOT consumed until Phase 23
+    evasion_bonus: int            # flat reduction to SAM damage, floored at 0
 
 
 @dataclass(frozen=True)

@@ -8,12 +8,15 @@ Phase 8: jet HP, SAM sites, swarm-wipeout termination.
 Phase 20: per-jet airframe catalog, independent heading / turn-rate rotation.
 Phase 21: per-weapon range / firing-arc / damage on strike.
 Phase 22: fuel burn, bingo-fuel RTB, landing vs fuel-exhaustion reap.
+Phase 23: evasion-reduced SAM damage, persistent JetOutcome snapshots,
+          mission_aborted vs swarm_wiped_out termination.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 import mesa
 from mesa.datacollection import DataCollector
@@ -39,6 +42,21 @@ class TargetState:
     @property
     def is_destroyed(self) -> bool:
         return self.hp_remaining <= 0
+
+
+@dataclass(frozen=True)
+class JetOutcome:
+    """Snapshot of a jet taken the tick it leaves active play.
+
+    Survives deletion from ``WraithNetModel.jets`` so metrics can still
+    report how far a destroyed or RTB'd jet flew and what it brought home.
+    """
+
+    agent_id: str
+    frame_type: config.JetFrameType
+    outcome: Literal["destroyed", "returned_to_base"]
+    distance_traveled: float
+    final_payload_remaining: dict[str, int]
 
 
 class JetAgent(mesa.Agent):
@@ -117,6 +135,8 @@ class WraithNetModel(mesa.Model):
         self.jammers: dict[str, EwJammerAgent] = {}
         self.strike_log: list[dict] = []  # ground truth for Phase 5 validation
         self.swarm_wiped_out: bool = False
+        self.mission_aborted: bool = False
+        self.jet_outcomes: dict[str, JetOutcome] = {}
         self._home_base: tuple[float, float] = self._scenario.home_base
         self.jets_returned_to_base: set[str] = set()
         self._spawn_scenario()
@@ -133,7 +153,9 @@ class WraithNetModel(mesa.Model):
                 "TargetsDestroyed": lambda m: sum(
                     1 for t in m.targets.values() if t.is_destroyed
                 ),
-                "JetsDestroyed": lambda m: len(m._initial_jet_ids) - len(m.jets),
+                "JetsDestroyed": lambda m: sum(
+                    1 for o in m.jet_outcomes.values() if o.outcome == "destroyed"
+                ),
                 "SamSitesDestroyed": lambda m: sum(
                     1 for tid in m.sam_sites if m.targets[tid].is_destroyed
                 ),
@@ -225,27 +247,56 @@ class WraithNetModel(mesa.Model):
                 jet.is_rtb
                 and math.dist(jet.pos, self._home_base) <= config.RTB_LANDING_RADIUS
             ):
-                self.jets_returned_to_base.add(jet.agent_id)
-                self.space.remove_agent(jet)
-                jet.remove()
-                del self.jets[jet.agent_id]
+                self._remove_jet(jet, "returned_to_base")
         # Fuel exhaustion is an independent condition — do not zero hp.
         destroyed_ids = [
             aid for aid, jet in self.jets.items() if jet.is_destroyed or jet.fuel <= 0
         ]
         for aid in destroyed_ids:
-            jet = self.jets.pop(aid)
-            self.space.remove_agent(jet)
-            jet.remove()
+            self._remove_jet(self.jets[aid], "destroyed")
         if all(t.is_destroyed for t in self.targets.values()):
             self.running = False  # success — includes SAM_Site_1 now
         elif len(self.jets) == 0:
             self.running = False
-            self.swarm_wiped_out = True
+            if self.jets_returned_to_base:
+                # At least one jet made it home; not a wipeout. "mission
+                # aborted" specifically means the swarm ran out of fuel and
+                # had to go home before finishing the objective — not a
+                # general-purpose abort flag.
+                self.mission_aborted = True
+            else:
+                self.swarm_wiped_out = True  # every jet that left play was destroyed
         self.total_jammed_agent_ticks += sum(
             1 for jet in self.jets.values() if self._jet_is_jammed(jet)
         )
         self.datacollector.collect(self)
+        assert self.all_jet_ids() == self._initial_jet_ids
+
+    def all_jet_ids(self) -> set[str]:
+        """Every jet that ever existed this run, alive or not. Must always equal
+        self._initial_jet_ids -- if it doesn't, a jet was removed from self.jets
+        without a corresponding JetOutcome being recorded, which is exactly the
+        class of bug this phase exists to fix. See tests/test_world.py."""
+        return set(self.jets) | set(self.jet_outcomes)
+
+    def _remove_jet(
+        self, jet: JetAgent, outcome: Literal["destroyed", "returned_to_base"]
+    ) -> None:
+        """Snapshot then drop from play. Every removal path must go through here
+        so all_jet_ids() stays equal to _initial_jet_ids."""
+        self.jet_outcomes[jet.agent_id] = JetOutcome(
+            agent_id=jet.agent_id,
+            frame_type=jet.frame_type,
+            outcome=outcome,
+            distance_traveled=jet.distance_traveled,
+            final_payload_remaining=dict(jet.payload),
+        )
+        if outcome == "returned_to_base":
+            self.jets_returned_to_base.add(jet.agent_id)
+        self.space.remove_agent(jet)
+        jet.remove()
+        del self.jets[jet.agent_id]
+        assert self.all_jet_ids() == self._initial_jet_ids
 
     def _apply_sam_damage(self) -> None:
         for sam_target_id, sam in self.sam_sites.items():
@@ -253,12 +304,14 @@ class WraithNetModel(mesa.Model):
                 continue
             for jet in self.jets.values():
                 if math.dist(jet.pos, sam.position) <= config.SAM_ENGAGEMENT_RANGE:
-                    jet.hp -= config.SAM_DAMAGE_PER_TICK
+                    evasion = config.JET_FRAME_CATALOG[jet.frame_type].evasion_bonus
+                    # Flat integer reduction, never a probability roll —
+                    # preserves SAM_DAMAGE_PER_TICK's deterministic invariant.
+                    damage = max(0, config.SAM_DAMAGE_PER_TICK - evasion)
+                    jet.hp -= damage
         destroyed_ids = [aid for aid, jet in self.jets.items() if jet.is_destroyed]
         for aid in destroyed_ids:
-            jet = self.jets.pop(aid)
-            self.space.remove_agent(jet)
-            jet.remove()  # Mesa 3.x: deregister from model.agents / AgentSet
+            self._remove_jet(self.jets[aid], "destroyed")
 
     def _apply_heading_rotation(self, jet: JetAgent) -> None:
         if jet.desired_heading is None:

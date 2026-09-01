@@ -72,6 +72,10 @@ def main() -> None:
     print(f"Simulation finished at tick {summary['ticks_elapsed']}")
     if summary["swarm_wiped_out"]:
         print("OUTCOME: FAILURE — entire swarm destroyed before objective complete.")
+    elif summary["mission_aborted"]:
+        print(
+            "OUTCOME: MISSION ABORTED — swarm returned to base before completing the objective."
+        )
     else:
         print(
             f"Solved: {summary['solved']} "
@@ -79,7 +83,8 @@ def main() -> None:
         )
     print(
         f"Jets destroyed: {summary['jets_destroyed']} / "
-        f"survived: {summary['jets_survived']}"
+        f"returned to base: {summary['jets_returned_to_base']} / "
+        f"still flying: {summary['jets_still_flying']}"
     )
     print(f"Total distance traveled: {summary['total_distance_traveled']:.2f}")
     print(

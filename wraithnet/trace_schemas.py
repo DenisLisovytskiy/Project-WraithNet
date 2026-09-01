@@ -5,11 +5,11 @@ pydantic and stdlib — never a GUI library, never anything from viewer/.
 See docs/07_Visualization_Design_Document.md §3 for the full rationale.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from wraithnet.config import TargetType, WeaponType
+from wraithnet.config import DEFAULT_HOME_BASE, JetFrameType, TargetType, WeaponType
 
 
 class TraceHeader(BaseModel):
@@ -31,6 +31,13 @@ class TraceHeader(BaseModel):
     # without it). See docs/phases/Phase_12_Pygame_Viewer_Static_Rendering.md
     # Part B.
     target_positions: dict[str, tuple[float, float]]
+    # Phase 24: airframe / weapon overlay data so viewers never have to
+    # import wraithnet.config (viewer3d isolation) or guess capacities.
+    home_base: tuple[float, float] = DEFAULT_HOME_BASE
+    jet_frame_types: dict[str, JetFrameType] = Field(default_factory=dict)
+    weapon_ranges: dict[WeaponType, float] = Field(default_factory=dict)
+    weapon_firing_arcs_deg: dict[WeaponType, float] = Field(default_factory=dict)
+    jet_frame_stats: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class JetFrame(BaseModel):
@@ -41,6 +48,8 @@ class JetFrame(BaseModel):
     destroyed: bool
     jammed: bool
     role: Optional[str]
+    heading: float = 0.0
+    fuel: float = 0.0
 
 
 class TargetFrame(BaseModel):
@@ -55,6 +64,14 @@ class StrikeEvent(BaseModel):
     weapon_type: WeaponType
 
 
+class JetOutcomeEvent(BaseModel):
+    """Emitted on the tick a jet leaves play — not a ghost frame, not cumulative."""
+
+    agent_id: str
+    tick: int
+    outcome: Literal["destroyed", "returned_to_base"]
+
+
 class TraceTick(BaseModel):
     tick: int
     jets: list[JetFrame]
@@ -62,3 +79,5 @@ class TraceTick(BaseModel):
     strikes: list[StrikeEvent]
     running: bool
     swarm_wiped_out: bool
+    mission_aborted: bool = False
+    jet_outcomes: list[JetOutcomeEvent] = Field(default_factory=list)

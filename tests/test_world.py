@@ -8,12 +8,22 @@ from wraithnet import config
 from wraithnet.broker import MessageBroker
 from wraithnet.scenario_schema import (
     JetSpec,
+    SamSiteSpec,
     ScenarioConfig,
     TargetSpec,
     _default_scenario,
 )
 from wraithnet.schemas import ActionIntent
 from wraithnet.world import WraithNetModel
+
+
+def assert_all_jet_ids_intact(model: WraithNetModel) -> None:
+    """Shared Phase 23 invariant: every jet that left play has a JetOutcome."""
+    assert model.all_jet_ids() == model._initial_jet_ids, (
+        f"jet roster drifted: live={set(model.jets)} "
+        f"outcomes={set(model.jet_outcomes)} "
+        f"initial={model._initial_jet_ids}"
+    )
 
 
 def test_model_spawns_exact_scenario():
@@ -332,6 +342,7 @@ def test_running_false_when_all_targets_destroyed():
     model.step({})
     assert model.running is False
     assert model.swarm_wiped_out is False
+    assert model.mission_aborted is False
 
 
 def test_running_stays_true_if_only_one_target_destroyed():
@@ -379,10 +390,12 @@ def test_sam_damage_in_range_and_out_of_range():
     jet = model.jets["Jet_1"]
     sam = model.sam_sites["SAM_Site_1"]
     hp_before = jet.hp
+    evasion = config.JET_FRAME_CATALOG[jet.frame_type].evasion_bonus
+    expected = max(0, config.SAM_DAMAGE_PER_TICK - evasion)
     # Place jet inside engagement range
     model.space.move_agent(jet, sam.position)
     model._apply_sam_damage()
-    assert jet.hp == hp_before - config.SAM_DAMAGE_PER_TICK
+    assert jet.hp == hp_before - expected
 
     # Outside range — unaffected
     far = model.jets["Jet_3"]
@@ -390,6 +403,7 @@ def test_sam_damage_in_range_and_out_of_range():
     assert math.dist(far.pos, sam.position) > config.SAM_ENGAGEMENT_RANGE
     model._apply_sam_damage()
     assert far.hp == far_hp
+    assert_all_jet_ids_intact(model)
 
 
 def test_destroyed_sam_deals_no_damage():
@@ -404,15 +418,17 @@ def test_destroyed_sam_deals_no_damage():
 
 
 def test_jet_destroyed_removed_from_jets_and_space():
-    model = WraithNetModel()
-    jet = model.jets["Jet_1"]
-    sam = model.sam_sites["SAM_Site_1"]
-    model.space.move_agent(jet, sam.position)
-    # Drain HP via repeated SAM damage
-    while "Jet_1" in model.jets:
+    """HEAVY_BOMBER (evasion 0) still dies to repeated SAM ticks; the
+    STRIKE_FIGHTER default frame's evasion equals SAM_DAMAGE_PER_TICK, so
+    it would never be reaped this way."""
+    model = _sam_exposure_model("HEAVY_BOMBER")
+    jet = model.jets["Victim"]
+    while "Victim" in model.jets:
         model._apply_sam_damage()
-    assert "Jet_1" not in model.jets
+    assert "Victim" not in model.jets
     assert jet not in model.space.agents
+    assert model.jet_outcomes["Victim"].outcome == "destroyed"
+    assert_all_jet_ids_intact(model)
 
 
 def test_swarm_wipeout_terminates_as_failure():
@@ -422,7 +438,9 @@ def test_swarm_wipeout_terminates_as_failure():
     model.step({})
     assert model.running is False
     assert model.swarm_wiped_out is True
+    assert model.mission_aborted is False
     assert len(model.jets) == 0
+    assert_all_jet_ids_intact(model)
 
 
 def test_ew_jammer_spawns_from_scenario():
@@ -971,6 +989,7 @@ def test_rtb_jet_lands_inside_radius_not_just_outside():
     model.step({})
     assert "Homebody" not in model.jets
     assert "Homebody" in model.jets_returned_to_base
+    assert_all_jet_ids_intact(model)
 
     model = _home_base_model(
         jet_pos=(home[0], home[1] + config.RTB_LANDING_RADIUS + 0.01),
@@ -1024,3 +1043,273 @@ def test_observation_exposes_fuel_frame_and_home_base():
     assert obs.frame_type == "STRIKE_FIGHTER"
     assert obs.fuel == pytest.approx(jet.fuel)
     assert obs.home_base == model._home_base == config.DEFAULT_HOME_BASE
+
+
+def _sam_exposure_model(
+    frame_type: config.JetFrameType,
+    agent_id: str = "Victim",
+    sam_pos: tuple[float, float] = (50.0, 50.0),
+) -> WraithNetModel:
+    """One jet sitting on a live SAM site, plus a far dummy bunker so the
+    scenario is valid. Used to compare frames under identical SAM exposure."""
+    return WraithNetModel(
+        scenario=ScenarioConfig(
+            jets=[
+                JetSpec(
+                    agent_id=agent_id,
+                    position=sam_pos,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                    frame_type=frame_type,
+                )
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(90.0, 90.0),
+                    hp_required=5,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+            sam_sites=[
+                SamSiteSpec(
+                    target_id="SAM_Pad",
+                    position=sam_pos,
+                    hp_required=1,
+                    target_type="SAM_SITE",
+                )
+            ],
+        )
+    )
+
+
+def _evasion_pair_model(sam_pos: tuple[float, float] = (50.0, 50.0)) -> WraithNetModel:
+    """Two frames on the same SAM pad so a before/after HP comparison is fair."""
+    return WraithNetModel(
+        scenario=ScenarioConfig(
+            jets=[
+                JetSpec(
+                    agent_id="Evasive",
+                    position=sam_pos,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                    frame_type="INTERCEPTOR",
+                ),
+                JetSpec(
+                    agent_id="Bomber",
+                    position=sam_pos,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                    frame_type="HEAVY_BOMBER",
+                ),
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(90.0, 90.0),
+                    hp_required=5,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+            sam_sites=[
+                SamSiteSpec(
+                    target_id="SAM_Pad",
+                    position=sam_pos,
+                    hp_required=1,
+                    target_type="SAM_SITE",
+                )
+            ],
+        )
+    )
+
+
+def test_evasion_bonus_reduces_sam_damage_vs_zero_evasion_frame(monkeypatch):
+    """Direct before/after: same SAM exposure, INTERCEPTOR (evasion 2) takes
+    less damage than HEAVY_BOMBER (evasion 0). Monkeypatch SAM_DAMAGE_PER_TICK
+    above both bonuses so the interceptor still takes a nonzero hit — otherwise
+    the catalog's INTERCEPTOR bonus (2) already fully negates the default 1."""
+    monkeypatch.setattr(config, "SAM_DAMAGE_PER_TICK", 5)
+    model = _evasion_pair_model()
+    evasive = model.jets["Evasive"]
+    bomber = model.jets["Bomber"]
+    evasive_hp = evasive.hp
+    bomber_hp = bomber.hp
+    model._apply_sam_damage()
+    evasive_taken = evasive_hp - evasive.hp
+    bomber_taken = bomber_hp - bomber.hp
+    assert bomber_taken == 5  # evasion 0
+    assert evasive_taken == 3  # 5 - 2
+    assert evasive_taken < bomber_taken
+    assert_all_jet_ids_intact(model)
+
+
+def test_evasion_bonus_at_or_above_sam_damage_deals_exactly_zero():
+    """INTERCEPTOR evasion 2 > SAM_DAMAGE_PER_TICK 1, and STRIKE_FIGHTER
+    evasion 1 == SAM_DAMAGE_PER_TICK: both take 0, never a negative HP-delta
+    (never healing)."""
+    interceptor = _sam_exposure_model("INTERCEPTOR")
+    jet = interceptor.jets["Victim"]
+    hp_before = jet.hp
+    interceptor._apply_sam_damage()
+    assert jet.hp == hp_before
+    assert_all_jet_ids_intact(interceptor)
+
+    fighter = _sam_exposure_model("STRIKE_FIGHTER")
+    jet = fighter.jets["Victim"]
+    hp_before = jet.hp
+    fighter._apply_sam_damage()
+    assert jet.hp == hp_before
+    assert_all_jet_ids_intact(fighter)
+
+    bomber = _sam_exposure_model("HEAVY_BOMBER")
+    jet = bomber.jets["Victim"]
+    hp_before = jet.hp
+    bomber._apply_sam_damage()
+    assert jet.hp == hp_before - config.SAM_DAMAGE_PER_TICK
+
+
+def test_all_jet_ids_survives_destroyed_fuel_exhausted_and_landed_in_one_run():
+    """Regression for the pre-existing metrics bug: every removal path must
+    leave a JetOutcome so all_jet_ids() never drops an ID."""
+    home = (10.0, 10.0)
+    model = WraithNetModel(
+        scenario=ScenarioConfig(
+            home_base=home,
+            jets=[
+                JetSpec(
+                    agent_id="Lander",
+                    position=home,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+                JetSpec(
+                    agent_id="ShotDown",
+                    position=(80.0, 80.0),
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+                JetSpec(
+                    agent_id="DryTank",
+                    position=(80.0, 20.0),
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(90.0, 90.0),
+                    hp_required=5,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+        )
+    )
+    assert_all_jet_ids_intact(model)
+    model.jets["Lander"].is_rtb = True
+    model.jets["ShotDown"].hp = 0
+    model.jets["DryTank"].fuel = 0.0
+    model.step({})
+    assert set(model.jets) == set()
+    assert model.jet_outcomes["Lander"].outcome == "returned_to_base"
+    assert model.jet_outcomes["ShotDown"].outcome == "destroyed"
+    assert model.jet_outcomes["DryTank"].outcome == "destroyed"
+    assert_all_jet_ids_intact(model)
+    assert not (model.mission_aborted and model.swarm_wiped_out)
+
+
+def test_all_jets_landed_sets_mission_aborted_not_wipeout():
+    home = (20.0, 20.0)
+    model = WraithNetModel(
+        scenario=ScenarioConfig(
+            home_base=home,
+            jets=[
+                JetSpec(
+                    agent_id="Alpha",
+                    position=home,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+                JetSpec(
+                    agent_id="Bravo",
+                    position=home,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(90.0, 90.0),
+                    hp_required=5,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+        )
+    )
+    for jet in model.jets.values():
+        jet.is_rtb = True
+    model.step({})
+    assert model.jets_returned_to_base == {"Alpha", "Bravo"}
+    assert model.jets == {}
+    assert model.running is False
+    assert model.mission_aborted is True
+    assert model.swarm_wiped_out is False
+    assert_all_jet_ids_intact(model)
+
+
+def test_all_jets_destroyed_sets_wipeout_not_mission_aborted():
+    """Unchanged from Phase 8: empty jets_returned_to_base + empty model.jets
+    is a true wipeout."""
+    model = _home_base_model(jet_pos=(80.0, 80.0), home_base=(20.0, 20.0))
+    model.jets["Homebody"].hp = 0
+    model.step({})
+    assert model.jets_returned_to_base == set()
+    assert model.jets == {}
+    assert model.running is False
+    assert model.swarm_wiped_out is True
+    assert model.mission_aborted is False
+    assert_all_jet_ids_intact(model)
+
+
+def test_mission_aborted_and_swarm_wiped_out_never_both_true():
+    """The two failure flags are mutually exclusive by construction. The
+    plausible collision is a mixed run: some jets land, some are destroyed,
+    none remain — that must be mission_aborted, not both."""
+    home = (10.0, 10.0)
+    model = WraithNetModel(
+        scenario=ScenarioConfig(
+            home_base=home,
+            jets=[
+                JetSpec(
+                    agent_id="Lander",
+                    position=home,
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+                JetSpec(
+                    agent_id="Lost",
+                    position=(80.0, 80.0),
+                    payload={"JDAM": 1, "AIM9X": 0},
+                ),
+            ],
+            targets=[
+                TargetSpec(
+                    target_id="Far_Bunker",
+                    position=(90.0, 90.0),
+                    hp_required=5,
+                    target_type="HARDENED_BUNKER",
+                )
+            ],
+        )
+    )
+    model.jets["Lander"].is_rtb = True
+    model.jets["Lost"].hp = 0
+    model.step({})
+    assert model.running is False
+    assert model.mission_aborted is True
+    assert model.swarm_wiped_out is False
+    assert not (model.mission_aborted and model.swarm_wiped_out)
+    assert_all_jet_ids_intact(model)
+
+    # Success path: flags stay both False even if the swarm is still flying.
+    solved = WraithNetModel()
+    for t in solved.targets.values():
+        t.hp_remaining = 0
+    solved.step({})
+    assert solved.running is False
+    assert solved.mission_aborted is False
+    assert solved.swarm_wiped_out is False
+    assert_all_jet_ids_intact(solved)
+

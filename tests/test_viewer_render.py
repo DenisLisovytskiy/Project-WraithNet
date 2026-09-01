@@ -4,7 +4,17 @@ import pytest
 
 from wraithnet.config import SENSOR_RADIUS
 from wraithnet.trace_schemas import JetFrame, TargetFrame, TraceHeader, TraceTick
-from viewer.render import CANVAS_SIZE, HUD_WIDTH, MARGIN, WINDOW_SIZE, world_length_to_screen, world_to_screen
+from viewer.render import (
+    CANVAS_SIZE,
+    FUEL_BAR_WIDTH,
+    HUD_WIDTH,
+    MARGIN,
+    WINDOW_SIZE,
+    fuel_bar_fill_width,
+    heading_indicator_endpoints,
+    world_length_to_screen,
+    world_to_screen,
+)
 from viewer.trace_loader import load_trace
 
 
@@ -103,3 +113,28 @@ def test_load_trace_rejects_header_only(tmp_path):
     path.write_text(_sample_header().model_dump_json() + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no recorded ticks"):
         load_trace(path)
+
+
+def test_heading_indicator_accounts_for_y_flip():
+    header = _sample_header()
+    origin, tip = heading_indicator_endpoints(
+        (50.0, 50.0), 0.0, header, length_world=10.0
+    )
+    # Heading 0° is +y in world space, which is "up" (smaller screen y).
+    assert origin[0] == tip[0]
+    assert tip[1] < origin[1]
+
+    origin90, tip90 = heading_indicator_endpoints(
+        (50.0, 50.0), 90.0, header, length_world=10.0
+    )
+    # Heading 90° is +x, which is right on screen; y-flip does not reverse x.
+    assert tip90[0] > origin90[0]
+    assert tip90[1] == origin90[1]
+
+
+def test_fuel_bar_fill_width_is_proportional():
+    assert fuel_bar_fill_width(0.0, 80.0) == 0
+    assert fuel_bar_fill_width(80.0, 80.0) == FUEL_BAR_WIDTH
+    assert fuel_bar_fill_width(40.0, 80.0) == FUEL_BAR_WIDTH // 2
+    assert fuel_bar_fill_width(100.0, 80.0) == FUEL_BAR_WIDTH
+    assert fuel_bar_fill_width(10.0, 0.0) == 0

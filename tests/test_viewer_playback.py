@@ -1,10 +1,17 @@
 """Pure-logic tests for viewer playback highlights and auto-play stepping."""
 
-from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
 from viewer.playback import (
     advance_playback,
     compute_highlights,
     compute_run_summary,
+)
+from wraithnet.trace_schemas import (
+    JetFrame,
+    JetOutcomeEvent,
+    StrikeEvent,
+    TargetFrame,
+    TraceHeader,
+    TraceTick,
 )
 
 
@@ -159,3 +166,67 @@ def test_compute_run_summary_from_trace():
     assert summary.jets_destroyed == 1
     assert summary.total_missiles_fired == 2
     assert summary.per_weapon_type_missiles_fired == {"JDAM": 1, "AIM9X": 1}
+
+
+def test_rtb_is_not_reported_as_a_destroyed_highlight():
+    prev = _tick(4, jets=[_jet("Lander"), _jet("Doomed", position=(20.0, 20.0))])
+    curr = _tick(
+        5,
+        jets=[],
+        jet_outcomes=[
+            JetOutcomeEvent(agent_id="Lander", tick=5, outcome="returned_to_base"),
+            JetOutcomeEvent(agent_id="Doomed", tick=5, outcome="destroyed"),
+        ],
+    )
+    highlights = compute_highlights(prev, curr)
+    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    assert highlights.newly_destroyed_jet_ids == ["Doomed"]
+
+
+def test_compute_run_summary_three_way_split_and_mission_aborted():
+    header = TraceHeader(
+        grid_width=100.0,
+        grid_height=100.0,
+        sensor_radius=65.0,
+        jam_radius=12.0,
+        sam_engagement_range=15.0,
+        strike_range=1.0,
+        jet_ids=["Lander", "Flyer"],
+        initial_payload={
+            "Lander": {"JDAM": 1, "AIM9X": 0},
+            "Flyer": {"JDAM": 1, "AIM9X": 0},
+        },
+        target_ids=["Target_A"],
+        target_types={"Target_A": "HARDENED_BUNKER"},
+        target_hp_required={"Target_A": 5},
+        sam_site_ids=[],
+        jammer_positions={},
+        target_positions={"Target_A": (75.0, 75.0)},
+    )
+    ticks = [
+        _tick(0, jets=[_jet("Lander"), _jet("Flyer")]),
+        _tick(
+            1,
+            jets=[_jet("Flyer")],
+            jet_outcomes=[
+                JetOutcomeEvent(agent_id="Lander", tick=1, outcome="returned_to_base"),
+            ],
+            mission_aborted=False,
+            running=True,
+        ),
+        _tick(
+            2,
+            jets=[],
+            jet_outcomes=[
+                JetOutcomeEvent(agent_id="Flyer", tick=2, outcome="returned_to_base"),
+            ],
+            mission_aborted=True,
+            running=False,
+        ),
+    ]
+    summary = compute_run_summary(header, ticks)
+    assert summary.jets_destroyed == 0
+    assert summary.jets_returned_to_base == 2
+    assert summary.jets_still_flying == 0
+    assert summary.mission_aborted is True
+    assert summary.swarm_wiped_out is False

@@ -13,6 +13,7 @@ from viewer.render import (
     draw_hud,
     draw_jam_transition_flash,
     draw_jammer,
+    draw_home_base,
     draw_jets,
     draw_strike_highlights,
     draw_targets,
@@ -87,6 +88,7 @@ def main() -> None:
 
         draw_grid_background(screen, header)
         draw_jammer(screen, header)
+        draw_home_base(screen, header)
         draw_targets(screen, header, current)
         draw_jets(screen, header, current, show_sensor_radius)
         draw_strike_highlights(screen, header, current, highlights, previous)
