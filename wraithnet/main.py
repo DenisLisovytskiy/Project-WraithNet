@@ -2,17 +2,19 @@
 
 import argparse
 import asyncio
+from pathlib import Path
 
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
 from wraithnet.metrics import export_results, summarize
+from wraithnet.paths import user_data_dir
 from wraithnet.recorder import TraceRecorder
 from wraithnet.scenario_io import load_scenario
 from wraithnet.scenario_schema import ScenarioConfig
 from wraithnet.trace_sink import TraceSink
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the WraithNet PoC scenario.")
     parser.add_argument(
         "--scenario",
@@ -28,7 +30,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--live-host", type=str, default="127.0.0.1")
     parser.add_argument("--live-port", type=int, default=8765)
-    return parser.parse_args()
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory for trace.jsonl / model_vars.csv / agent_vars.csv. "
+        "Defaults to the user-data results folder. Concurrent runs should "
+        "pass distinct directories so they do not truncate each other's files.",
+    )
+    return parser.parse_args(argv)
+
+
+def _results_dir(output_dir: str | None = None):
+    if output_dir:
+        path = Path(output_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return user_data_dir("results")
 
 
 async def run_scenario(
@@ -36,8 +54,10 @@ async def run_scenario(
     live: bool = False,
     live_host: str = "127.0.0.1",
     live_port: int = 8765,
+    output_dir: str | None = None,
 ) -> WraithNetBridge:
-    recorder = TraceRecorder("results/trace.jsonl")
+    results_dir = _results_dir(output_dir)
+    recorder = TraceRecorder(str(results_dir / "trace.jsonl"))
     sinks: list[TraceSink] = [recorder]
     live_server = None
     if live:
@@ -56,15 +76,17 @@ async def run_scenario(
     return bridge
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     scenario = load_scenario(args.scenario) if args.scenario else None
+    results_dir = _results_dir(args.output_dir)
     bridge = asyncio.run(
         run_scenario(
             scenario,
             live=args.live,
             live_host=args.live_host,
             live_port=args.live_port,
+            output_dir=str(results_dir),
         )
     )
     summary = summarize(bridge.model)
@@ -100,8 +122,8 @@ def main() -> None:
             f"payload_remaining={summary['per_jet_total_payload_remaining'][agent_id]}"
         )
 
-    export_results(bridge.model)
-    print("Results exported to ./results/model_vars.csv and ./results/agent_vars.csv")
+    export_results(bridge.model, output_dir=str(results_dir))
+    print(f"Results exported to {results_dir / 'model_vars.csv'} and {results_dir / 'agent_vars.csv'}")
 
 
 if __name__ == "__main__":

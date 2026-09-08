@@ -55,3 +55,13 @@ def test_headless_viewer3d_modules_do_not_import_panda3d():
     ):
         text = _read(rel)
         assert not _RENDER_IMPORT.search(text), rel
+
+
+def _top_level_source(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if line[:1].strip())
+
+
+def test_launcher_modules_do_not_import_rendering_at_module_level():
+    for path in _py_files("launcher"):
+        top = _top_level_source(path.read_text(encoding="utf-8"))
+        assert not _RENDER_IMPORT.search(top), path.relative_to(ROOT)

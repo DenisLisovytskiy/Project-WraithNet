@@ -173,8 +173,19 @@ def test_compute_run_summary_counts_strikes_and_losses():
     assert summary.swarm_wiped_out is False
 
 
-def test_newly_rtb_jet_ids_mirrors_jam_transition_shape():
-    prev = _tick(4, jets=[_jet("Lander"), _jet("Stay")])
+def test_newly_rtb_jet_ids_is_the_role_transition_not_landing():
+    prev = _tick(4, jets=[_jet("Lander", role="IDLE"), _jet("Stay")])
+    curr = _tick(5, jets=[_jet("Lander", role="RTB"), _jet("Stay")])
+    highlights = compute_highlights(prev, curr)
+    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    already = compute_highlights(curr, _tick(6, jets=[_jet("Lander", role="RTB"), _jet("Stay")]))
+    assert already.newly_rtb_jet_ids == []
+    none_prev = compute_highlights(None, curr)
+    assert none_prev.newly_rtb_jet_ids == []
+
+
+def test_landing_outcome_is_not_an_rtb_highlight():
+    prev = _tick(4, jets=[_jet("Lander", role="RTB"), _jet("Stay")])
     curr = _tick(
         5,
         jets=[_jet("Stay")],
@@ -183,10 +194,8 @@ def test_newly_rtb_jet_ids_mirrors_jam_transition_shape():
         ],
     )
     highlights = compute_highlights(prev, curr)
-    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    assert highlights.newly_rtb_jet_ids == []
     assert highlights.newly_destroyed_jet_ids == []
-    none_prev = compute_highlights(None, curr)
-    assert none_prev.newly_rtb_jet_ids == []
 
 
 def test_compute_run_summary_mission_aborted_split():

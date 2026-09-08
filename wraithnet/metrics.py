@@ -12,16 +12,23 @@ def summarize(model) -> dict:
     ``model.jets`` silently dropped those numbers the moment a jet was
     reaped — a latent bug this phase closes.
     """
-    live_stats = {
-        aid: (jet.distance_traveled, dict(jet.payload)) for aid, jet in model.jets.items()
-    }
-    past_stats = {
-        aid: (o.distance_traveled, dict(o.final_payload_remaining))
-        for aid, o in getattr(model, "jet_outcomes", {}).items()
-    }
-    all_stats = {**past_stats, **live_stats}  # union over every jet that ever existed
+    if hasattr(model, "jet_travel_stats"):
+        all_stats = model.jet_travel_stats()
+    else:
+        live_stats = {
+            aid: (jet.distance_traveled, dict(jet.payload))
+            for aid, jet in model.jets.items()
+        }
+        past_stats = {
+            aid: (o.distance_traveled, dict(o.final_payload_remaining))
+            for aid, o in getattr(model, "jet_outcomes", {}).items()
+        }
+        all_stats = {**past_stats, **live_stats}
 
-    total_distance = sum(d for d, _ in all_stats.values())
+    if hasattr(model, "total_distance_traveled"):
+        total_distance = model.total_distance_traveled()
+    else:
+        total_distance = sum(d for d, _ in all_stats.values())
     contributors_by_target: dict[str, set[str]] = {}
     missiles_by_weapon_type: Counter[str] = Counter()
     for entry in model.strike_log:

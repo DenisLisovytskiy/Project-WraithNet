@@ -145,9 +145,7 @@ class WraithNetModel(mesa.Model):
         self.datacollector = DataCollector(
             model_reporters={
                 "Tick": lambda m: m.tick,
-                "TotalDistanceTraveled": lambda m: sum(
-                    j.distance_traveled for j in m.jets.values()
-                ),
+                "TotalDistanceTraveled": lambda m: m.total_distance_traveled(),
                 # strike_log — correct even if jets die with leftover payload (Phase 8/10)
                 "TotalMissilesFired": lambda m: len(m.strike_log),
                 "TargetsDestroyed": lambda m: sum(
@@ -278,6 +276,27 @@ class WraithNetModel(mesa.Model):
         without a corresponding JetOutcome being recorded, which is exactly the
         class of bug this phase exists to fix. See tests/test_world.py."""
         return set(self.jets) | set(self.jet_outcomes)
+
+    def jet_travel_stats(self) -> dict[str, tuple[float, dict[str, int]]]:
+        """Distance and leftover payload for every jet that has existed this run.
+
+        Live jets contribute their current values; removed jets contribute the
+        snapshot recorded in ``jet_outcomes``. Shared by DataCollector and
+        ``metrics.summarize`` so a landing/destruction cannot drop distance
+        from the exported time series.
+        """
+        live = {
+            aid: (jet.distance_traveled, dict(jet.payload))
+            for aid, jet in self.jets.items()
+        }
+        past = {
+            aid: (o.distance_traveled, dict(o.final_payload_remaining))
+            for aid, o in self.jet_outcomes.items()
+        }
+        return {**past, **live}
+
+    def total_distance_traveled(self) -> float:
+        return sum(distance for distance, _ in self.jet_travel_stats().values())
 
     def _remove_jet(
         self, jet: JetAgent, outcome: Literal["destroyed", "returned_to_base"]

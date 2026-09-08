@@ -10,7 +10,7 @@ venv/
 env/
 ENV/
 
-# Packaging / distribution
+# Packaging / distribution (setuptools + PyInstaller workdirs)
 build/
 dist/
 *.egg-info/

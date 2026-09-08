@@ -65,16 +65,23 @@ def compute_highlights(previous: TraceTick | None, current: TraceTick) -> TickHi
         for j in current.jets
         if not j.jammed and j.agent_id in prev_jets and prev_jets[j.agent_id].jammed
     ]
+    newly_rtb_jet_ids = (
+        [
+            j.agent_id
+            for j in current.jets
+            if j.role == "RTB"
+            and j.agent_id in prev_jets
+            and prev_jets[j.agent_id].role != "RTB"
+        ]
+        if previous is not None
+        else []
+    )
     events = list(getattr(current, "jet_outcomes", None) or [])
     if previous is not None and events:
-        newly_rtb_jet_ids = [
-            e.agent_id for e in events if e.outcome == "returned_to_base"
-        ]
         newly_destroyed_jet_ids = sorted(
             e.agent_id for e in events if e.outcome == "destroyed"
         )
     else:
-        newly_rtb_jet_ids = []
         newly_destroyed_jet_ids = sorted(prev_jet_ids - curr_jet_ids) if previous else []
     return TickHighlights(
         strikes=list(current.strikes),

@@ -43,6 +43,11 @@ def test_single_token_is_usage_error():
     assert USAGE in str(exc_info.value)
 
 
+def test_edit_with_extra_tokens_is_usage_error():
+    with pytest.raises(SystemExit):
+        parse_viewer3d_argv(["--edit", "a", "b"])
+
+
 def test_three_live_tokens_is_usage_error():
     with pytest.raises(SystemExit):
         parse_viewer3d_argv(["127.0.0.1", "8765", "extra"])

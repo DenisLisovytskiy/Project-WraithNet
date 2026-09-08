@@ -28,14 +28,18 @@ def parse_viewer3d_argv(argv: list[str]) -> Viewer3DArgs:
 
     Matches the existing viewer3d.app:main invocations:
     [] or ['--edit'] -> editor, no path
-    ['--edit', 'path.json'] -> editor + path (extra tokens after the path
-    are ignored, same as the previous inline main())
+    ['--edit', 'path.json'] -> editor + path
     ['127.0.0.1', '8765'] -> live host/port
     any other arity -> SystemExit with USAGE
     """
-    if not argv or argv[0] == "--edit":
-        path = argv[1] if argv and argv[0] == "--edit" and len(argv) > 1 else None
-        return Viewer3DArgs(editor_mode=True, edit_path=path)
+    if not argv:
+        return Viewer3DArgs(editor_mode=True, edit_path=None)
+    if argv[0] == "--edit":
+        if len(argv) == 1:
+            return Viewer3DArgs(editor_mode=True, edit_path=None)
+        if len(argv) == 2:
+            return Viewer3DArgs(editor_mode=True, edit_path=argv[1])
+        raise SystemExit(USAGE)
     if len(argv) != 2:
         raise SystemExit(USAGE)
     return Viewer3DArgs(

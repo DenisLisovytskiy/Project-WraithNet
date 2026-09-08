@@ -25,6 +25,7 @@ from panda3d.core import (
     TransparencyAttrib,
 )
 
+from viewer3d.effects import uses_instant_strike_beam
 from viewer3d.flight_dynamics import (
     CRUISE_ALTITUDE,
     GROUND_ALTITUDE,
@@ -90,6 +91,7 @@ class SceneHandles:
     home_base: NodePath | None = None
     fx_root: NodePath | None = None
     highlight_fx: list[_FxItem] = field(default_factory=list)
+    pending_jet_removal: set[str] = field(default_factory=set)
 
 
 def _rgb(rgb: tuple[int, int, int], a: float = 1.0) -> tuple[float, float, float, float]:
@@ -296,6 +298,15 @@ def _pop_jet_state(handles: SceneHandles, aid: str) -> None:
     handles.last_struck_tick.pop(aid, None)
 
 
+def finish_removing_jet(handles: SceneHandles, agent_id: str) -> None:
+    """Remove a jet node and all per-jet bookkeeping (deferred wreck callback)."""
+    handles.pending_jet_removal.discard(agent_id)
+    jet = handles.jets.pop(agent_id, None)
+    if jet is not None and not jet.is_empty():
+        jet.remove_node()
+    _pop_jet_state(handles, agent_id)
+
+
 def _target_points(target_type: str):
     if target_type == "MOBILE_RADAR":
         return _diamond_pts()
@@ -398,15 +409,33 @@ def update_tick(
     seconds_airborne: dict[str, float] | None = None,
     just_struck: set[str] | None = None,
     tick_dt: float = 1.0 / 60.0,
+    on_jet_removed: Callable[[str, tuple[float, float, float]], None] | None = None,
 ) -> None:
     airborne = seconds_airborne or {}
     struck = just_struck or set()
     alive_ids = {frame.agent_id for frame in tick.jets}
     for aid in list(handles.jets):
         if aid not in alive_ids:
-            handles.jets[aid].remove_node()
-            handles.jets.pop(aid)
-            _pop_jet_state(handles, aid)
+            if aid in handles.pending_jet_removal:
+                continue
+            anchor = handles.jets[aid]
+            if on_jet_removed is not None:
+                if anchor is not None and not anchor.is_empty():
+                    p = anchor.get_pos()
+                    last_pos = (float(p.x), float(p.y), float(p.z))
+                else:
+                    xy = handles.last_jet_xy.get(aid, (0.0, 0.0))
+                    z = handles.rendered_altitude.get(
+                        aid, handles.desired_altitude.get(aid, GROUND_ALTITUDE)
+                    )
+                    last_pos = (xy[0], xy[1], z)
+                handles.pending_jet_removal.add(aid)
+                on_jet_removed(aid, last_pos)
+            else:
+                # Default: immediate removal (Phase 16 callers / tests).
+                anchor.remove_node()
+                handles.jets.pop(aid)
+                _pop_jet_state(handles, aid)
 
     for frame in tick.jets:
         aid = frame.agent_id
@@ -599,6 +628,8 @@ def apply_tick_highlights(
         jet_xy[jet.agent_id] = jet.position
 
     for strike in highlights.strikes:
+        if not uses_instant_strike_beam(strike.weapon_type):
+            continue
         origin = jet_xy.get(strike.agent_id)
         target = header.target_positions.get(strike.target_id)
         if origin is None or target is None:

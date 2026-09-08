@@ -11,6 +11,14 @@ from typing import TYPE_CHECKING
 
 from wraithnet.config import JET_HP
 from wraithnet.trace_schemas import TraceHeader, TraceTick
+from viewer.hud_text import (
+    jets_line,
+    overlay_lines,
+    sensor_line,
+    status_line,
+    targets_line,
+    tick_line,
+)
 from viewer.playback import RunSummary, TickHighlights, compute_run_summary
 
 if TYPE_CHECKING:
@@ -390,39 +398,38 @@ def draw_hud(
     y += _blit_text(surface, "WraithNet Replay", (x, y), HUD_TEXT_COLOR, 28) + 8
     y += _blit_text(
         surface,
-        f"Tick {tick.tick}   ({tick_index + 1}/{total_ticks})",
+        tick_line(tick, tick_index, total_ticks),
         (x, y),
         HUD_TEXT_COLOR,
         22,
     ) + 4
-    if ticks_per_second:
-        status = "PLAYING" if playing else "PAUSED"
+    status = status_line(playing, ticks_per_second)
+    if status is not None:
         y += _blit_text(
             surface,
-            f"{status}  {ticks_per_second:.1f} tps",
+            status,
             (x, y),
             HUD_MUTED_COLOR,
             20,
         ) + 4
     y += _blit_text(
         surface,
-        f"Sensor rings: {'ON' if show_sensor_radius else 'OFF'}",
+        sensor_line(show_sensor_radius),
         (x, y),
         HUD_MUTED_COLOR,
         20,
     ) + 12
 
-    targets_destroyed = sum(1 for t in tick.targets if t.hp_remaining <= 0)
     y += _blit_text(
         surface,
-        f"Targets  {targets_destroyed}/{len(tick.targets)} destroyed",
+        targets_line(tick),
         (x, y),
         HUD_TEXT_COLOR,
         20,
     ) + 2
     y += _blit_text(
         surface,
-        f"Jets     {len(tick.jets)}/{len(header.jet_ids)} alive",
+        jets_line(header, tick),
         (x, y),
         HUD_TEXT_COLOR,
         20,
@@ -560,47 +567,21 @@ def draw_end_of_run_overlay(
     pygame.draw.rect(overlay, BORDER_COLOR, overlay.get_rect(), 1)
 
     if summary.swarm_wiped_out:
-        title, title_color = "SWARM WIPED OUT", (220, 80, 80)
+        title_color = (220, 80, 80)
     elif getattr(summary, "mission_aborted", False):
-        title, title_color = "MISSION ABORTED", (220, 180, 80)
+        title_color = (220, 180, 80)
     elif summary.solved:
-        title, title_color = "MISSION COMPLETE", (90, 210, 110)
+        title_color = (90, 210, 110)
     else:
-        title, title_color = "END OF TRACE", HUD_TEXT_COLOR
+        title_color = HUD_TEXT_COLOR
 
-    weapon_bits = ", ".join(
-        f"{k} {v}" for k, v in sorted(summary.per_weapon_type_missiles_fired.items())
-    ) or "none"
-    lines = [
-        (title, title_color, 26),
-        (
-            f"Targets destroyed  {summary.targets_destroyed}/{summary.total_targets}",
-            HUD_TEXT_COLOR,
-            22,
-        ),
-        (
-            f"Jets destroyed     {summary.jets_destroyed}/{summary.total_jets}",
-            HUD_TEXT_COLOR,
-            22,
-        ),
-        (
-            f"Returned to base   {getattr(summary, 'jets_returned_to_base', 0)}",
-            HUD_TEXT_COLOR,
-            22,
-        ),
-        (
-            f"Still flying       {getattr(summary, 'jets_still_flying', len(ticks[-1].jets) if ticks else 0)}",
-            HUD_TEXT_COLOR,
-            22,
-        ),
-        (
-            f"Missiles fired     {summary.total_missiles_fired}  ({weapon_bits})",
-            HUD_TEXT_COLOR,
-            22,
-        ),
-    ]
+    text_lines = overlay_lines(header, ticks, summary=summary)
+    colored = [(text_lines[0], title_color, 26)]
+    for text in text_lines[1:]:
+        colored.append((text, HUD_TEXT_COLOR, 22))
+
     y = 12
-    for text, color, size in lines:
+    for text, color, size in colored:
         rendered = _font(size).render(text, True, color)
         overlay.blit(rendered, (16, y))
         y += rendered.get_height() + 4

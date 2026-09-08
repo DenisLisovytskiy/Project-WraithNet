@@ -88,3 +88,111 @@ def test_main_live_completes_without_a_client(tmp_path):
     assert "Live stream listening on 127.0.0.1:" in result.stdout
     assert "Solved:" in result.stdout
     assert "Near_Bunker" in result.stdout
+
+
+def test_main_explicit_argv_matches_sys_argv(tmp_path, monkeypatch, capsys):
+    custom = ScenarioConfig(
+        jets=[
+            {
+                "agent_id": "Solo_Jet",
+                "position": (20.0, 20.0),
+                "payload": {"JDAM": 1, "AIM9X": 0},
+            }
+        ],
+        targets=[
+            {
+                "target_id": "Near_Bunker",
+                "position": (20.5, 20.0),
+                "hp_required": 1,
+                "target_type": "HARDENED_BUNKER",
+            }
+        ],
+    )
+    path = tmp_path / "custom.json"
+    save_scenario(custom, path)
+
+    from wraithnet.main import main
+
+    monkeypatch.setattr(sys, "argv", ["wraithnet.main", "--scenario", str(path)])
+    main()
+    via_sys_argv = capsys.readouterr().out
+
+    monkeypatch.setattr(sys, "argv", ["wraithnet.main", "--would-fail-if-read"])
+    main(["--scenario", str(path)])
+    via_explicit_argv = capsys.readouterr().out
+
+    assert via_sys_argv == via_explicit_argv
+    assert "Solved:" in via_sys_argv
+    assert "Near_Bunker" in via_sys_argv
+
+
+def test_main_writes_results_via_user_data_dir(tmp_path, monkeypatch):
+    custom = ScenarioConfig(
+        jets=[
+            {
+                "agent_id": "Solo_Jet",
+                "position": (20.0, 20.0),
+                "payload": {"JDAM": 1, "AIM9X": 0},
+            }
+        ],
+        targets=[
+            {
+                "target_id": "Near_Bunker",
+                "position": (20.5, 20.0),
+                "hp_required": 1,
+                "target_type": "HARDENED_BUNKER",
+            }
+        ],
+    )
+    scenario_path = tmp_path / "custom.json"
+    save_scenario(custom, scenario_path)
+
+    def fake_user_data_dir(subdir: str) -> Path:
+        path = tmp_path / subdir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr("wraithnet.main.user_data_dir", fake_user_data_dir)
+
+    from wraithnet.main import main
+
+    main(["--scenario", str(scenario_path)])
+
+    results = tmp_path / "results"
+    assert (results / "trace.jsonl").is_file()
+    assert (results / "model_vars.csv").is_file()
+    assert (results / "agent_vars.csv").is_file()
+
+
+def test_main_output_dir_isolates_results(tmp_path):
+    custom = ScenarioConfig(
+        jets=[
+            {
+                "agent_id": "Solo_Jet",
+                "position": (20.0, 20.0),
+                "payload": {"JDAM": 1, "AIM9X": 0},
+            }
+        ],
+        targets=[
+            {
+                "target_id": "Near_Bunker",
+                "position": (20.5, 20.0),
+                "hp_required": 1,
+                "target_type": "HARDENED_BUNKER",
+            }
+        ],
+    )
+    scenario_path = tmp_path / "custom.json"
+    save_scenario(custom, scenario_path)
+    out_a = tmp_path / "run-a"
+    out_b = tmp_path / "run-b"
+    from wraithnet.main import main
+
+    main(["--scenario", str(scenario_path), "--output-dir", str(out_a)])
+    main(["--scenario", str(scenario_path), "--output-dir", str(out_b)])
+    for folder in (out_a, out_b):
+        assert (folder / "trace.jsonl").is_file()
+        assert (folder / "model_vars.csv").is_file()
+        assert (folder / "agent_vars.csv").is_file()
+    assert (out_a / "trace.jsonl").read_bytes()
+    assert (out_b / "trace.jsonl").read_bytes()

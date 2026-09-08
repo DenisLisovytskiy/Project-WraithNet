@@ -26,7 +26,7 @@ loadPrcFileData("", "notify-level error")
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
 from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
-from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
+from wraithnet.trace_schemas import JetFrame, JetOutcomeEvent, StrikeEvent, TargetFrame, TraceHeader, TraceTick
 from viewer3d.scene import (
     SceneHandles,
     apply_jet_flight_easing,
@@ -38,6 +38,7 @@ from viewer3d.flight_dynamics import (
     CRUISE_ALTITUDE,
     GROUND_ALTITUDE,
     POST_STRIKE_CLIMB_BOOST_ALTITUDE,
+    TAKEOFF_CLIMB_SECONDS,
 )
 from viewer3d.stream_client import DisconnectedEvent, EndEvent, HeaderEvent, TickEvent
 
@@ -854,3 +855,402 @@ def test_window_close_terminates_launched_sim(tmp_path):
         assert handle.is_running() is False
     finally:
         _destroy_app(app)
+
+
+def _fx_child_names(root) -> set[str]:
+    return {child.get_name() for child in root.get_children()}
+
+
+def _advance_intervals(app, seconds: float, step_s: float = 0.05) -> None:
+    """Intervals are wall-clock driven; step the task mgr while sleeping."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        app.task_mgr.step()
+        time.sleep(step_s)
+
+
+def test_weapon_effects_spawn_and_self_cleanup():
+    """Phase 26: each spawn_* attaches a node, then cleans it up after its duration."""
+    from viewer3d import effects
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        root = app.render.attach_new_node("fx-test-root")
+        before = _fx_child_names(root)
+
+        effects.spawn_strike_effect(
+            root, "AIM9X", (0.0, 0.0, 8.0), (10.0, 10.0, 0.25)
+        )
+        effects.spawn_strike_effect(
+            root, "JDAM", (1.0, 1.0, 8.0), (11.0, 11.0, 0.25)
+        )
+        effects.spawn_strike_effect(
+            root, "GUN_POD", (2.0, 2.0, 8.0), (12.0, 12.0, 0.25)
+        )
+        effects.spawn_destruction_explosion(root, (5.0, 5.0, 0.3), scale=1.5)
+        completed: list[bool] = []
+        effects.spawn_jet_wreck(
+            root, (3.0, 3.0, 8.0), on_complete=lambda: completed.append(True)
+        )
+
+        after_spawn = _fx_child_names(root)
+        assert after_spawn - before, "expected effect nodes attached under root"
+        assert any(
+            n.startswith("fx-") or n == "gun-tracer" or "LineSegs" in n or n
+            for n in (after_spawn - before)
+        )
+
+        # Longest archetype is bomb (~1.1s) + wreck (~0.9s); wait generously.
+        _advance_intervals(app, 2.2)
+        remaining = {
+            child.get_name()
+            for child in root.get_children()
+            if not child.is_empty()
+        }
+        assert remaining <= before or remaining == set()
+        assert completed == [True]
+    finally:
+        _destroy_app(app)
+
+
+def test_live_stream_strike_triggers_spawn_strike_effect():
+    """Phase 26 end-to-end: a real tiny scenario produces at least one strike effect."""
+    from viewer3d import effects
+    from viewer3d.app import WraithNetViewer3D
+
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+    port_box: dict = {}
+    error_box: dict = {}
+    strike_calls: list = []
+
+    async def _run_sim() -> None:
+        server = LiveStreamServer(port=0)
+        await server.start()
+        port_box["port"] = server.port
+        ready.set()
+        bridge = WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
+        bridge.start_agent_loops()
+        try:
+            for _ in range(12):
+                await bridge._tick()
+            await asyncio.sleep(1.0)
+        finally:
+            await bridge.stop_agent_loops()
+            await server.close()
+
+    def _thread() -> None:
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run_sim())
+        except Exception as exc:  # pragma: no cover
+            error_box["err"] = exc
+
+    orig = effects.spawn_strike_effect
+
+    def _spy(*args, **kwargs):
+        strike_calls.append((args, kwargs))
+        return orig(*args, **kwargs)
+
+    effects.spawn_strike_effect = _spy  # type: ignore[assignment]
+    thread = threading.Thread(target=_thread, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=10.0)
+
+    app = WraithNetViewer3D("127.0.0.1", port_box["port"])
+    try:
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            app.task_mgr.step()
+            if strike_calls:
+                break
+            if app.view_mode == "finished" and app._latest_tick is not None:
+                # Drain a bit more in case the strike tick just arrived.
+                for _ in range(5):
+                    app.task_mgr.step()
+                break
+            time.sleep(0.05)
+        assert strike_calls, "expected at least one spawn_strike_effect call from a live strike"
+    finally:
+        effects.spawn_strike_effect = orig  # type: ignore[assignment]
+        app._client.stop()
+        try:
+            app.destroy()
+        except Exception:
+            pass
+        thread.join(timeout=10.0)
+    assert "err" not in error_box
+
+
+def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
+    """Phase 26: jet node stays in handles.jets until the wreck effect finishes."""
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        header = _sample_header()
+        app._client.events.put(HeaderEvent(header=header))
+        tick0 = _tick(
+            0,
+            [_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+            _alive_targets(),
+        )
+        app._client.events.put(TickEvent(tick=tick0))
+        app.task_mgr.step()
+        assert "Jet_1" in app._handles.jets
+
+        # Force-destroy Jet_1 by omitting it from the next tick (same as recorder pattern).
+        tick1 = _tick(
+            1,
+            [_jet_frame("Jet_2", (21.0, 20.0))],
+            _alive_targets(),
+        )
+        app._client.events.put(TickEvent(tick=tick1))
+        app.task_mgr.step()
+
+        assert "Jet_1" in app._handles.jets, "jet must still be present during wreck"
+        assert "Jet_1" in app._handles.pending_jet_removal
+        jet_node = app._handles.jets["Jet_1"]
+        assert not jet_node.is_empty()
+
+        _advance_intervals(app, 1.5)
+        assert "Jet_1" not in app._handles.jets
+        assert "Jet_1" not in app._handles.pending_jet_removal
+        assert jet_node.is_empty()
+    finally:
+        _destroy_app(app)
+
+
+def test_current_scenario_path_default_uses_user_data_dir(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from viewer3d.app import WraithNetViewer3D
+
+    def fake_user_data_dir(subdir: str) -> Path:
+        path = tmp_path / subdir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr("viewer3d.app.user_data_dir", fake_user_data_dir)
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        assert app._editor is None
+        assert app._current_scenario_path() == str(tmp_path / "scenarios" / "custom.json")
+    finally:
+        _destroy_app(app)
+
+
+def test_takeoff_continues_after_burst_tick_drain():
+    """Queued ticks sharing one drain timestamp must not freeze takeoff."""
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        header = _sample_header()
+        app._client.events.put(HeaderEvent(header=header))
+        far_targets = _alive_targets()
+        for i in range(8):
+            app._client.events.put(
+                TickEvent(
+                    tick=_tick(i, [_jet_frame("Jet_1", (10.0, 10.0))], far_targets)
+                )
+            )
+        app.task_mgr.step()
+        z_burst = app._handles.rendered_altitude["Jet_1"]
+        assert z_burst < 1.5
+
+        _advance_intervals(app, TAKEOFF_CLIMB_SECONDS + 1.6)
+        z_later = app._handles.rendered_altitude["Jet_1"]
+        assert z_later >= CRUISE_ALTITUDE - 0.6
+    finally:
+        _destroy_app(app)
+
+
+def test_strike_on_same_tick_as_destruction_still_spawns_effect():
+    from viewer3d import effects
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    calls: list = []
+    orig = effects.spawn_strike_effect
+
+    def _spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return orig(*args, **kwargs)
+
+    effects.spawn_strike_effect = _spy  # type: ignore[assignment]
+    try:
+        header = _sample_header()
+        app._client.events.put(HeaderEvent(header=header))
+        app._client.events.put(
+            TickEvent(
+                tick=_tick(
+                    0,
+                    [_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+                    _alive_targets(),
+                )
+            )
+        )
+        app.task_mgr.step()
+        dying = TraceTick(
+            tick=1,
+            jets=[_jet_frame("Jet_2", (21.0, 20.0))],
+            targets=_alive_targets(),
+            strikes=[
+                StrikeEvent(agent_id="Jet_1", target_id="Target_A", weapon_type="AIM9X")
+            ],
+            running=True,
+            swarm_wiped_out=False,
+            jet_outcomes=[
+                JetOutcomeEvent(agent_id="Jet_1", tick=1, outcome="destroyed"),
+            ],
+        )
+        app._client.events.put(TickEvent(tick=dying))
+        app.task_mgr.step()
+        assert calls, "strike must spawn even when the jet is absent this tick"
+        assert calls[0][0][1] == "AIM9X"
+    finally:
+        effects.spawn_strike_effect = orig  # type: ignore[assignment]
+        _destroy_app(app)
+
+
+def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        header = _sample_header()
+        app._client.events.put(HeaderEvent(header=header))
+        app._client.events.put(
+            TickEvent(
+                tick=_tick(
+                    0,
+                    [_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+                    _alive_targets(),
+                )
+            )
+        )
+        app.task_mgr.step()
+        app._client.events.put(
+            TickEvent(
+                tick=_tick(1, [_jet_frame("Jet_2", (21.0, 20.0))], _alive_targets())
+            )
+        )
+        app.task_mgr.step()
+        assert "Jet_1" in app._handles.pending_jet_removal
+
+        app._client.events.put(HeaderEvent(header=header))
+        app._client.events.put(
+            TickEvent(
+                tick=_tick(
+                    0,
+                    [_jet_frame("Jet_1", (12.0, 12.0)), _jet_frame("Jet_2", (22.0, 22.0))],
+                    _alive_targets(),
+                )
+            )
+        )
+        app.task_mgr.step()
+        replacement = app._handles.jets["Jet_1"]
+        assert not replacement.is_empty()
+        _advance_intervals(app, 1.5)
+        assert "Jet_1" in app._handles.jets
+        assert not app._handles.jets["Jet_1"].is_empty()
+    finally:
+        _destroy_app(app)
+
+
+def test_bomb_waypoints_stay_above_ground():
+    from viewer3d.effects import bomb_arc_waypoints, bomb_path_samples
+
+    launch = (0.0, 0.0, 2.0)
+    impact = (10.0, 10.0, 0.25)
+    mid1, mid2 = bomb_arc_waypoints(launch, impact)
+    assert mid1[2] >= impact[2] - 1e-9
+    assert mid2[2] >= impact[2] - 1e-9
+    for x, y, z in bomb_path_samples(launch, impact):
+        assert z >= 0.0
+        assert z >= impact[2] - 1e-9
+
+
+def test_missile_trail_spawns_and_cleans_independently_of_glyph():
+    from viewer3d import effects
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        root = app.render.attach_new_node("fx-missile-trail-root")
+        effects.spawn_strike_effect(root, "AIM9X", (0.0, 0.0, 8.0), (10.0, 10.0, 0.25))
+        app.task_mgr.step()
+        trail = root.find("**/missile-trail")
+        glyph = root.find("**/missile-glyph")
+        assert not trail.is_empty(), "missile effect must attach a trail node"
+        assert not glyph.is_empty()
+        assert trail.get_name() == "missile-trail"
+        _advance_intervals(app, 1.2)
+        assert root.find("**/missile-trail").is_empty()
+        assert root.find("**/missile-glyph").is_empty()
+        assert root.find("**/fx-missile").is_empty()
+    finally:
+        _destroy_app(app)
+
+
+def test_unknown_weapon_falls_back_to_missile_with_trail():
+    from viewer3d import effects
+    from viewer3d.app import WraithNetViewer3D
+
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        root = app.render.attach_new_node("fx-unknown-root")
+        effects.spawn_strike_effect(
+            root, "NO_SUCH_WEAPON", (0.0, 0.0, 8.0), (4.0, 4.0, 0.25)
+        )
+        app.task_mgr.step()
+        assert not root.find("**/fx-missile").is_empty()
+        assert not root.find("**/missile-trail").is_empty()
+        _advance_intervals(app, 1.2)
+        assert root.find("**/missile-trail").is_empty()
+        assert root.find("**/missile-glyph").is_empty()
+        assert root.find("**/fx-missile").is_empty()
+    finally:
+        _destroy_app(app)
+
+
+def test_legacy_strike_beam_reserved_for_gun_tracer():
+    from viewer3d.highlights import compute_highlights
+
+    header = _sample_header()
+    root = NodePath("beam-root")
+    handles = build_static_scene(root, header)
+    prev = _tick(
+        0,
+        [_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+        _alive_targets(),
+    )
+    update_tick(handles, header, prev)
+
+    jdam = TraceTick(
+        tick=1,
+        jets=[_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+        targets=_alive_targets(),
+        strikes=[StrikeEvent(agent_id="Jet_1", target_id="Target_A", weapon_type="JDAM")],
+        running=True,
+        swarm_wiped_out=False,
+    )
+    apply_tick_highlights(handles, header, prev, jdam, compute_highlights(prev, jdam))
+    names = [item.node.get_name() for item in handles.highlight_fx if not item.node.is_empty()]
+    assert not any(n.startswith("strike-") for n in names)
+
+    gun = TraceTick(
+        tick=2,
+        jets=[_jet_frame("Jet_1", (10.0, 10.0)), _jet_frame("Jet_2", (20.0, 20.0))],
+        targets=_alive_targets(),
+        strikes=[
+            StrikeEvent(agent_id="Jet_1", target_id="Target_A", weapon_type="GUN_POD")
+        ],
+        running=True,
+        swarm_wiped_out=False,
+    )
+    apply_tick_highlights(handles, header, jdam, gun, compute_highlights(jdam, gun))
+    names = [item.node.get_name() for item in handles.highlight_fx if not item.node.is_empty()]
+    assert any(n.startswith("strike-") for n in names)

@@ -179,8 +179,17 @@ def test_rtb_is_not_reported_as_a_destroyed_highlight():
         ],
     )
     highlights = compute_highlights(prev, curr)
-    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    assert highlights.newly_rtb_jet_ids == []
     assert highlights.newly_destroyed_jet_ids == ["Doomed"]
+
+
+def test_newly_rtb_jet_ids_is_the_role_transition_not_landing():
+    prev = _tick(4, jets=[_jet("Lander", role="CONTRACTOR"), _jet("Stay")])
+    curr = _tick(5, jets=[_jet("Lander", role="RTB"), _jet("Stay")])
+    highlights = compute_highlights(prev, curr)
+    assert highlights.newly_rtb_jet_ids == ["Lander"]
+    already = compute_highlights(curr, _tick(6, jets=[_jet("Lander", role="RTB"), _jet("Stay")]))
+    assert already.newly_rtb_jet_ids == []
 
 
 def test_compute_run_summary_three_way_split_and_mission_aborted():

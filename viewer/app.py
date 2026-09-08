@@ -1,41 +1,84 @@
 """python -m viewer.app <path-to-trace.jsonl>"""
 
+from __future__ import annotations
+
 import sys
 
-import pygame
-
-from viewer.playback import advance_playback, compute_highlights
-from viewer.render import (
-    WINDOW_SIZE,
-    draw_destruction_pulses,
-    draw_end_of_run_overlay,
-    draw_grid_background,
-    draw_hud,
-    draw_jam_transition_flash,
-    draw_jammer,
-    draw_home_base,
-    draw_jets,
-    draw_strike_highlights,
-    draw_targets,
+from viewer.controls import (
+    DEFAULT_TPS,
+    ReplayViewState,
+    apply_keydown,
 )
+from viewer.playback import advance_playback, compute_highlights
 from viewer.trace_loader import load_trace
 
-MIN_TPS = 0.5
-MAX_TPS = 20.0
+USAGE = "Usage: python -m viewer.app <path-to-trace.jsonl>"
 
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python -m viewer.app <path-to-trace.jsonl>")
+def parse_viewer_argv(argv: list[str]) -> str:
+    """Return the trace-file path. Raise SystemExit if len(argv) != 1 after
+    the script name has been stripped -- same usage string main() already prints.
+    """
+    if len(argv) != 1:
+        raise SystemExit(USAGE)
+    return argv[0]
+
+
+def _key_name(pygame_module, key: int) -> str | None:
+    """Map K_* codes onto the closed string set understood by apply_keydown."""
+    mapping = {
+        pygame_module.K_RIGHT: "right",
+        pygame_module.K_LEFT: "left",
+        pygame_module.K_SPACE: "space",
+        pygame_module.K_PLUS: "plus",
+        pygame_module.K_EQUALS: "plus",
+        pygame_module.K_KP_PLUS: "plus",
+        pygame_module.K_MINUS: "minus",
+        pygame_module.K_KP_MINUS: "minus",
+        pygame_module.K_s: "s",
+        pygame_module.K_r: "r",
+        pygame_module.K_ESCAPE: "escape",
+    }
+    return mapping.get(key)
+
+
+def main(argv: list[str] | None = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
+    try:
+        path = parse_viewer_argv(argv)
+    except SystemExit as exc:
+        print(exc.code if isinstance(exc.code, str) else USAGE)
         sys.exit(1)
 
-    header, ticks = load_trace(sys.argv[1])
+    # Pygame is imported only when actually launching the window so
+    # parse_viewer_argv (and Layer-1 CLI tests) stay pygame-free.
+    import pygame
+
+    from viewer.render import (
+        WINDOW_SIZE,
+        draw_destruction_pulses,
+        draw_end_of_run_overlay,
+        draw_grid_background,
+        draw_hud,
+        draw_jam_transition_flash,
+        draw_jammer,
+        draw_home_base,
+        draw_jets,
+        draw_strike_highlights,
+        draw_targets,
+    )
+
+    header, ticks = load_trace(path)
     last_index = len(ticks) - 1
-    tick_index = 0
-    show_sensor_radius = False
-    playing = False
-    ticks_per_second = 4.0
-    playback_accumulator_ms = 0.0
+    state = ReplayViewState(
+        tick_index=0,
+        last_index=last_index,
+        playing=False,
+        ticks_per_second=DEFAULT_TPS,
+        show_sensor_radius=False,
+        playback_accumulator_ms=0.0,
+    )
 
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -49,48 +92,39 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                elif event.key == pygame.K_RIGHT:
-                    playing = False
-                    playback_accumulator_ms = 0.0
-                    tick_index = min(tick_index + 1, last_index)
-                elif event.key == pygame.K_LEFT:
-                    playing = False
-                    playback_accumulator_ms = 0.0
-                    tick_index = max(tick_index - 1, 0)
-                elif event.key == pygame.K_SPACE:
-                    playing = not playing
-                    playback_accumulator_ms = 0.0
-                elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
-                    ticks_per_second = min(MAX_TPS, ticks_per_second * 1.5)
-                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                    ticks_per_second = max(MIN_TPS, ticks_per_second / 1.5)
-                elif event.key == pygame.K_s:
-                    show_sensor_radius = not show_sensor_radius
-                elif event.key == pygame.K_r:
-                    tick_index = 0
-                    playing = False
-                    playback_accumulator_ms = 0.0
+                name = _key_name(pygame, event.key)
+                if name is not None:
+                    state = apply_keydown(state, name)
+                    if state.quit_requested:
+                        running = False
 
         tick_index, playing, playback_accumulator_ms = advance_playback(
-            tick_index,
-            playing,
-            playback_accumulator_ms,
+            state.tick_index,
+            state.playing,
+            state.playback_accumulator_ms,
             dt_ms,
-            ticks_per_second,
-            last_index,
+            state.ticks_per_second,
+            state.last_index,
+        )
+        state = ReplayViewState(
+            tick_index=tick_index,
+            last_index=state.last_index,
+            playing=playing,
+            ticks_per_second=state.ticks_per_second,
+            show_sensor_radius=state.show_sensor_radius,
+            playback_accumulator_ms=playback_accumulator_ms,
+            quit_requested=state.quit_requested,
         )
 
-        current = ticks[tick_index]
-        previous = ticks[tick_index - 1] if tick_index > 0 else None
+        current = ticks[state.tick_index]
+        previous = ticks[state.tick_index - 1] if state.tick_index > 0 else None
         highlights = compute_highlights(previous, current)
 
         draw_grid_background(screen, header)
         draw_jammer(screen, header)
         draw_home_base(screen, header)
         draw_targets(screen, header, current)
-        draw_jets(screen, header, current, show_sensor_radius)
+        draw_jets(screen, header, current, state.show_sensor_radius)
         draw_strike_highlights(screen, header, current, highlights, previous)
         draw_destruction_pulses(screen, header, current, highlights, previous)
         draw_jam_transition_flash(screen, header, current, highlights)
@@ -98,13 +132,13 @@ def main() -> None:
             screen,
             header,
             current,
-            tick_index,
+            state.tick_index,
             len(ticks),
-            show_sensor_radius,
-            playing=playing,
-            ticks_per_second=ticks_per_second,
+            state.show_sensor_radius,
+            playing=state.playing,
+            ticks_per_second=state.ticks_per_second,
         )
-        if tick_index == last_index:
+        if state.tick_index == state.last_index:
             draw_end_of_run_overlay(screen, header, ticks)
         pygame.display.flip()
 

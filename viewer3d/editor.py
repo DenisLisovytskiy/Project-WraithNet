@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from viewer3d.cameras import _camera_node
 from viewer3d.scene import build_static_scene, jet_altitude
 from wraithnet import config as wn_config
+from wraithnet.paths import user_data_dir
 from wraithnet.scenario_io import load_scenario, save_scenario
 from wraithnet.scenario_schema import ScenarioConfig
 from wraithnet.trace_builders import catalog_header_fields
@@ -253,7 +254,7 @@ class ScenarioEditor:
         self._handles = None
         self._list_buttons: list = []
         self.banner_messages: list[str] = []
-        self._path = "scenarios/custom.json"
+        self._path = str(user_data_dir("scenarios") / "custom.json")
         self._build_panels()
         self.rebuild_scene()
 
@@ -374,8 +375,41 @@ class ScenarioEditor:
             text_align=TextNode.ALeft,
             frameColor=(0, 0, 0, 0),
         )
+        self._payload_entries: dict[str, DirectEntry] = {}
+        self._payload_labels: dict[str, DirectLabel] = {}
+        weapons = list(wn_config.WEAPON_CATALOG)
+        for i, weapon in enumerate(weapons):
+            row, col = divmod(i, 2)
+            z = -1.14 - 0.06 * row
+            x_label = 0.10 if col == 0 else 0.48
+            x_entry = 0.28 if col == 0 else 0.66
+            label = DirectLabel(
+                parent=self._form_frame,
+                text=weapon,
+                pos=(x_label, 0, z),
+                scale=0.028,
+                text_fg=CYAN,
+                text_align=TextNode.ALeft,
+                frameColor=(0, 0, 0, 0),
+            )
+            entry = DirectEntry(
+                parent=self._form_frame,
+                pos=(x_entry, 0, z),
+                scale=0.032,
+                width=6,
+                initialText="0",
+                numLines=1,
+                focus=0,
+            )
+            entry["command"] = self._on_payload_typed
+            label.hide()
+            entry.hide()
+            self._payload_labels[weapon] = label
+            self._payload_entries[weapon] = entry
+        n_payload_rows = max(1, (len(weapons) + 1) // 2)
+        frame_z = -1.14 - 0.06 * n_payload_rows
         self._frame_btn = _btn(
-            self._form_frame, "Frame: STRIKE_FIGHTER", (0.46, 0, -1.26), self._cycle_frame_type
+            self._form_frame, "Frame: STRIKE_FIGHTER", (0.46, 0, frame_z), self._cycle_frame_type
         )
         self._slots_label = DirectLabel(
             parent=self._form_frame,
@@ -604,18 +638,18 @@ class ScenarioEditor:
         kind = self._kind_of(entity)
         self._id_entry.enterText(self._id_of(kind, entity))
         if kind == "jet":
-            self._field_a_label["text"] = "JDAM"
-            self._field_b_label["text"] = "AIM9X"
+            self._show_payload_fields(True)
+            self._show_generic_fields(False)
             payload = entity.get("payload") or {}
-            self._field_a_entry.enterText(str(payload.get("JDAM", 0)))
-            self._field_b_entry.enterText(str(payload.get("AIM9X", 0)))
-            self._field_a_entry.show()
-            self._field_b_entry.show()
+            for weapon, entry in self._payload_entries.items():
+                entry.enterText(str(int(payload.get(weapon, 0))))
             self._frame_btn.show()
             self._slots_label.show()
             self._set_frame_button_label(entity.get("frame_type", "STRIKE_FIGHTER"))
             self._refresh_slots_preview()
         elif kind == "target":
+            self._show_payload_fields(False)
+            self._show_generic_fields(True)
             self._field_a_label["text"] = "type"
             self._field_b_label["text"] = "hp"
             self._field_a_entry.enterText(str(entity.get("target_type", "HARDENED_BUNKER")))
@@ -625,21 +659,42 @@ class ScenarioEditor:
             self._frame_btn.hide()
             self._slots_label.hide()
         elif kind == "sam_site":
+            self._show_payload_fields(False)
+            self._show_generic_fields(True)
             self._field_a_label["text"] = "hp"
             self._field_b_label["text"] = ""
             self._field_a_entry.enterText(str(entity.get("hp_required", 1)))
             self._field_b_entry.enterText("")
             self._field_a_entry.show()
             self._field_b_entry.hide()
+            self._field_b_label.hide()
             self._frame_btn.hide()
             self._slots_label.hide()
         else:
-            self._field_a_label["text"] = ""
-            self._field_b_label["text"] = ""
-            self._field_a_entry.hide()
-            self._field_b_entry.hide()
+            self._show_payload_fields(False)
+            self._show_generic_fields(False)
             self._frame_btn.hide()
             self._slots_label.hide()
+
+    def _show_generic_fields(self, visible: bool) -> None:
+        widgets = (
+            self._field_a_entry,
+            self._field_a_label,
+            self._field_b_entry,
+            self._field_b_label,
+        )
+        for widget in widgets:
+            if visible:
+                widget.show()
+            else:
+                widget.hide()
+
+    def _show_payload_fields(self, visible: bool) -> None:
+        for widget in (*self._payload_entries.values(), *self._payload_labels.values()):
+            if visible:
+                widget.show()
+            else:
+                widget.hide()
 
     def _set_frame_button_label(self, frame_type: str) -> None:
         self._frame_btn["text"] = f"Frame: {frame_type}"
@@ -662,13 +717,14 @@ class ScenarioEditor:
         nxt = _FRAME_TYPES[(idx + 1) % len(_FRAME_TYPES)]
         self.set_frame_type(nxt)
 
-    def _payload_from_form(self) -> dict[str, int]:
-        try:
-            jdam = int(self._field_a_entry.get().strip() or "0")
-            aim = int(self._field_b_entry.get().strip() or "0")
-        except ValueError:
-            return {}
-        return {"JDAM": jdam, "AIM9X": aim}
+    def _payload_from_form(self) -> dict[str, int] | None:
+        counts: dict[str, int] = {}
+        for weapon, entry in self._payload_entries.items():
+            try:
+                counts[weapon] = int(entry.get().strip() or "0")
+            except ValueError:
+                return None
+        return counts
 
     def _on_payload_typed(self, _text: str = "") -> None:
         self._refresh_slots_preview()
@@ -677,7 +733,9 @@ class ScenarioEditor:
         if self._selected is None or self._kind_of(self._selected) != "jet":
             self._slots_label["text"] = ""
             return
-        payload = self._payload_from_form() or (self._selected.get("payload") or {})
+        payload = self._payload_from_form()
+        if payload is None:
+            payload = dict(self._selected.get("payload") or {})
         frame_type = self._selected.get("frame_type", "STRIKE_FIGHTER")
         self._slots_label["text"] = slots_usage_text(payload, frame_type)
 
@@ -702,13 +760,13 @@ class ScenarioEditor:
         if kind == "jet":
             if new_id:
                 entity["agent_id"] = new_id
-            try:
-                jdam = int(self._field_a_entry.get().strip() or "0")
-                aim = int(self._field_b_entry.get().strip() or "0")
-            except ValueError:
+            parsed = self._payload_from_form()
+            if parsed is None:
                 self._set_banner(["Payload counts must be integers."])
                 return
-            entity["payload"] = {"JDAM": jdam, "AIM9X": aim}
+            merged = dict(entity.get("payload") or {})
+            merged.update(parsed)
+            entity["payload"] = merged
             entity["frame_type"] = entity.get("frame_type", "STRIKE_FIGHTER")
             self._refresh_slots_preview()
         elif kind == "target":
@@ -847,7 +905,14 @@ class ScenarioEditor:
             sam_engagement_range=wn_config.SAM_ENGAGEMENT_RANGE,
             strike_range=wn_config.WEAPON_CATALOG["JDAM"].range,
             jet_ids=[j["agent_id"] for j in jets],
-            initial_payload={j["agent_id"]: dict(j.get("payload") or {}) for j in jets},
+            initial_payload={
+                j["agent_id"]: {
+                    k: v
+                    for k, v in dict(j.get("payload") or {}).items()
+                    if k in wn_config.WEAPON_CATALOG
+                }
+                for j in jets
+            },
             target_ids=[t["target_id"] for t in all_targets],
             target_types={t["target_id"]: t.get("target_type", "HARDENED_BUNKER") for t in all_targets},
             # Data plumbing only -- an in-progress draft may be invalid (e.g.

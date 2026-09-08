@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from wraithnet import config
 from wraithnet.metrics import summarize
 from wraithnet.scenario_schema import JetSpec, SamSiteSpec, ScenarioConfig, TargetSpec
@@ -281,3 +283,48 @@ def test_legacy_survived_metric_key_is_gone():
             if needle in path.read_text(encoding="utf-8"):
                 hits.append(str(path.relative_to(REPO_ROOT)).replace("\\", "/"))
     assert hits == [], f"stale {needle} references remain: {hits}"
+
+
+def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
+    """model_vars.csv must not drop a landed/destroyed jet's distance."""
+    home = (20.0, 20.0)
+    model = WraithNetModel(
+        scenario=_far_bunker_scenario(
+            [
+                JetSpec(
+                    agent_id="Lander",
+                    position=(25.0, 20.0),
+                    payload={"JDAM": 1, "AIM9X": 0},
+                )
+            ],
+            home_base=home,
+        )
+    )
+    model.step(
+        {
+            "Lander": ActionIntent(
+                agent_id="Lander",
+                tick=0,
+                action_type="MOVE",
+                target_position=home,
+            )
+        }
+    )
+    assert "Lander" in model.jets
+    model.jets["Lander"].distance_traveled = 12.0
+    model.datacollector.collect(model)
+    before_rows = model.datacollector.get_model_vars_dataframe()[
+        "TotalDistanceTraveled"
+    ].tolist()
+    assert before_rows[-1] == pytest.approx(12.0)
+
+    model.jets["Lander"].is_rtb = True
+    model.step({})
+    assert "Lander" not in model.jets
+    assert model.jet_outcomes["Lander"].distance_traveled == pytest.approx(12.0)
+
+    after_rows = model.datacollector.get_model_vars_dataframe()[
+        "TotalDistanceTraveled"
+    ].tolist()
+    assert after_rows[-1] == pytest.approx(12.0)
+    assert after_rows == sorted(after_rows)

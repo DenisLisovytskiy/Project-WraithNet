@@ -179,3 +179,12 @@ def test_engagement_radius_uses_strike_range_multiplier():
     header = _header(strike_range=2.0)
     threshold = header.strike_range * ENGAGEMENT_RADIUS_MULTIPLIER
     assert threshold == pytest.approx(6.0)
+
+
+def test_desired_altitude_near_target_at_takeoff_stays_on_ground():
+    header = _header(strike_range=1.0)
+    tick = _tick()
+    near_pos = (20.0, 20.0)
+    at_spawn = desired_altitude(0.0, near_pos, header, tick, just_struck=False)
+    assert at_spawn == pytest.approx(GROUND_ALTITUDE, abs=0.05)
+    assert at_spawn < ATTACK_ALTITUDE

@@ -22,12 +22,14 @@ from direct.showbase.ShowBase import ShowBase
 
 from viewer3d.argv import USAGE, parse_viewer3d_argv
 from viewer3d.cameras import ChaseCamera, MissionBriefCamera, OrbitCamera
+from viewer3d import effects
 from viewer3d.highlights import compute_highlights
 from viewer3d.hud import Hud
 from viewer3d.launch import SimLaunchHandle, launch_scenario
 from viewer3d.flight_dynamics import (
     CRUISE_ALTITUDE,
     GROUND_ALTITUDE,
+    desired_altitude,
     strike_boost_active,
 )
 from viewer3d.scene import (
@@ -35,6 +37,7 @@ from viewer3d.scene import (
     apply_tick_highlights,
     build_static_scene,
     decay_highlights,
+    finish_removing_jet,
     update_tick,
 )
 from viewer3d.stream_client import (
@@ -44,6 +47,7 @@ from viewer3d.stream_client import (
     StreamClient,
     TickEvent,
 )
+from wraithnet.paths import user_data_dir
 
 # view_mode transitions:
 #   "connecting"  -- no header yet (live mode only)
@@ -180,7 +184,7 @@ class WraithNetViewer3D(ShowBase):
 
     def _current_scenario_path(self) -> str:
         if self._editor is None:
-            return "scenarios/custom.json"
+            return str(user_data_dir("scenarios") / "custom.json")
         return self._editor.current_path()
 
     def on_launch_clicked(self) -> None:
@@ -306,6 +310,7 @@ class WraithNetViewer3D(ShowBase):
         if dt <= 0.0:
             dt = 1.0 / 60.0
         self._drain_events()
+        self._refresh_flight_targets()
         self._poll_sim_health()
         self._update_camera(dt)
         if self._handles is not None:
@@ -381,9 +386,29 @@ class WraithNetViewer3D(ShowBase):
 
         highlights = compute_highlights(self._previous_tick, tick)
         if self._handles is not None and self._header is not None:
+            self._spawn_weapon_effects(tick, highlights)
             apply_tick_highlights(
                 self._handles, self._header, self._previous_tick, tick, highlights
             )
+            destroyed = set(highlights.newly_destroyed_jet_ids)
+
+            def _on_jet_removed(aid: str, last_pos: tuple[float, float, float]) -> None:
+                handles = self._handles
+                if aid in destroyed:
+                    jet = handles.jets.get(aid) if handles is not None else None
+                    if jet is not None and not jet.is_empty():
+                        jet.hide()
+                    effects.spawn_jet_wreck(
+                        self.render,
+                        last_pos,
+                        on_complete=lambda agent_id=aid, scene=handles: (
+                            self._finish_removing_jet(agent_id, scene)
+                        ),
+                    )
+                else:
+                    # RTB / non-destruction exit: remove immediately.
+                    self._finish_removing_jet(aid, handles)
+
             update_tick(
                 self._handles,
                 self._header,
@@ -391,12 +416,90 @@ class WraithNetViewer3D(ShowBase):
                 seconds_airborne=seconds_airborne,
                 just_struck=just_struck,
                 tick_dt=tick_dt,
+                on_jet_removed=_on_jet_removed,
             )
         self._previous_tick = tick
         self._latest_tick = tick
         self._ticks.append(tick)
         if not tick.running:
             self.view_mode = "finished"
+
+    def _spawn_weapon_effects(self, tick, highlights) -> None:
+        """Spawn cosmetic strike / destruction effects from this tick's highlights."""
+        if self._header is None:
+            return
+        jets_now = {j.agent_id: j for j in tick.jets}
+        jets_prev = (
+            {j.agent_id: j for j in self._previous_tick.jets}
+            if self._previous_tick is not None
+            else {}
+        )
+        for strike in highlights.strikes:
+            frame = jets_now.get(strike.agent_id) or jets_prev.get(strike.agent_id)
+            if frame is None:
+                continue
+            target_xy = self._header.target_positions.get(strike.target_id)
+            if target_xy is None:
+                continue
+            z = CRUISE_ALTITUDE
+            if self._handles is not None:
+                z = self._handles.rendered_altitude.get(
+                    strike.agent_id,
+                    self._handles.desired_altitude.get(strike.agent_id, CRUISE_ALTITUDE),
+                )
+            launch_pos = (float(frame.position[0]), float(frame.position[1]), float(z))
+            impact_pos = (float(target_xy[0]), float(target_xy[1]), 0.25)
+            effects.spawn_strike_effect(
+                self.render, strike.weapon_type, launch_pos, impact_pos
+            )
+        for tid in highlights.newly_destroyed_target_ids:
+            pos = self._header.target_positions.get(tid)
+            if pos is None:
+                continue
+            effects.spawn_destruction_explosion(
+                self.render, (float(pos[0]), float(pos[1]), 0.3), scale=1.5
+            )
+
+    def _finish_removing_jet(self, agent_id: str, handles=None) -> None:
+        """Deferred cleanup after a jet wreck effect (or immediate RTB exit).
+
+        ``handles`` is the scene that spawned the wreck. A later header/preview
+        can replace ``self._handles`` before the 0.9s interval fires; cleaning
+        only the originating scene avoids deleting a replacement jet.
+        """
+        target = handles if handles is not None else self._handles
+        if target is None:
+            return
+        finish_removing_jet(target, agent_id)
+
+    def _refresh_flight_targets(self) -> None:
+        """Recompute takeoff/attack altitude from wall-clock time every frame.
+
+        Tick-drain can assign every queued tick the same ``time.monotonic()``
+        value (late-connect backfill). Desired altitude must keep advancing
+        after the queue empties, or takeoff freezes near the ground.
+        """
+        if self._handles is None or self._header is None or self._latest_tick is None:
+            return
+        now = time.monotonic()
+        tick = self._latest_tick
+        header = self._header
+        handles = self._handles
+        for frame in tick.jets:
+            aid = frame.agent_id
+            first = self._first_seen_wallclock.get(aid)
+            if first is None:
+                continue
+            just_struck = strike_boost_active(
+                handles.last_struck_tick.get(aid), tick.tick
+            )
+            handles.desired_altitude[aid] = desired_altitude(
+                now - first,
+                frame.position,
+                header,
+                tick,
+                just_struck,
+            )
 
     def _selected_jet_pose(self):
         if self._latest_tick is None or self.selected_jet_id is None:
@@ -452,9 +555,11 @@ class WraithNetViewer3D(ShowBase):
         )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
     try:
-        parsed = parse_viewer3d_argv(sys.argv[1:])
+        parsed = parse_viewer3d_argv(argv)
     except SystemExit as exc:
         print(exc.code if isinstance(exc.code, str) else USAGE)
         sys.exit(1)

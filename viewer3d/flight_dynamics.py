@@ -68,7 +68,11 @@ def desired_altitude(
     altitude = baseline
     if nearest is not None and threshold > 0.0 and nearest < threshold:
         proximity = (threshold - nearest) / threshold
-        altitude = baseline + proximity * (ATTACK_ALTITUDE - baseline)
+        # A nearby target must not lift a jet that has not yet climbed: dive
+        # toward min(ATTACK_ALTITUDE, baseline) so seconds_airborne=0 stays
+        # on the ground even when a bunker is inside the engagement zone.
+        attack_target = min(ATTACK_ALTITUDE, baseline)
+        altitude = baseline + proximity * (attack_target - baseline)
     if just_struck:
         altitude += POST_STRIKE_CLIMB_BOOST_ALTITUDE
     return max(GROUND_ALTITUDE, min(altitude, _MAX_ALTITUDE))

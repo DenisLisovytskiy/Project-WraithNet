@@ -481,12 +481,13 @@ def test_property_form_apply_updates_payload():
         editor.begin_placement("jet")
         editor.on_ground_clicked((12.0, 13.0))
         editor._id_entry.enterText("Renamed_Jet")
-        editor._field_a_entry.enterText("3")
-        editor._field_b_entry.enterText("2")
+        editor._payload_entries["JDAM"].enterText("3")
+        editor._payload_entries["AIM9X"].enterText("2")
         _invoke(editor._btn_apply)
         jet = editor.scenario_draft["jets"][0]
         assert jet["agent_id"] == "Renamed_Jet"
-        assert jet["payload"] == {"JDAM": 3, "AIM9X": 2}
+        assert jet["payload"]["JDAM"] == 3
+        assert jet["payload"]["AIM9X"] == 2
     finally:
         _destroy_app(app)
 
@@ -634,8 +635,8 @@ def test_slots_preview_updates_when_payload_or_frame_changes():
         editor.on_ground_clicked((12.0, 13.0))
         assert editor._slots_label["text"] == "1 / 7 slots"
 
-        editor._field_a_entry.enterText("8")
-        editor._field_b_entry.enterText("0")
+        editor._payload_entries["JDAM"].enterText("8")
+        editor._payload_entries["AIM9X"].enterText("0")
         editor._refresh_slots_preview()
         assert editor._slots_label["text"] == "8 / 7 slots"
 
@@ -643,8 +644,55 @@ def test_slots_preview_updates_when_payload_or_frame_changes():
         assert editor._slots_label["text"] == "8 / 4 slots"
 
         editor.set_frame_type("HEAVY_BOMBER")
-        editor._field_a_entry.enterText("1")
+        editor._payload_entries["JDAM"].enterText("1")
         editor._refresh_slots_preview()
         assert editor._slots_label["text"] == "1 / 10 slots"
+    finally:
+        _destroy_app(app)
+
+
+def test_payload_round_trip_keeps_amraam_and_gun_pod(tmp_path):
+    dest = tmp_path / "full_payload.json"
+    save_scenario(
+        ScenarioConfig.model_validate(
+            _valid_kwargs(
+                jets=[
+                    {
+                        "agent_id": "Jet_1",
+                        "position": (10.0, 10.0),
+                        "payload": {
+                            "JDAM": 1,
+                            "AIM9X": 0,
+                            "AMRAAM": 1,
+                            "GUN_POD": 1,
+                        },
+                    }
+                ]
+            )
+        ),
+        dest,
+    )
+    app = _editor_app()
+    try:
+        editor = app._editor
+        editor.load(str(dest))
+        jet = editor.scenario_draft["jets"][0]
+        editor.open_property_form(jet)
+        assert set(editor._payload_entries) == set(wn_config.WEAPON_CATALOG)
+        editor._payload_entries["JDAM"].enterText("2")
+        jet["payload"]["FUTURE_WPN"] = 4
+        _invoke(editor._btn_apply)
+        assert jet["payload"]["AMRAAM"] == 1
+        assert jet["payload"]["GUN_POD"] == 1
+        assert jet["payload"]["JDAM"] == 2
+        assert jet["payload"]["FUTURE_WPN"] == 4
+        dest2 = tmp_path / "full_payload_saved.json"
+        # Drop the unknown key before schema validation on Save.
+        jet["payload"].pop("FUTURE_WPN")
+        assert editor.save(str(dest2)) is None
+        loaded = load_scenario(dest2)
+        assert loaded.jets[0].payload["AMRAAM"] == 1
+        assert loaded.jets[0].payload["GUN_POD"] == 1
+        assert loaded.jets[0].payload["JDAM"] == 2
     finally:
         _destroy_app(app)
