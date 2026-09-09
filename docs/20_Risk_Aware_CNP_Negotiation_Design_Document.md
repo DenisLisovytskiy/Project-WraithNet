@@ -298,6 +298,19 @@ Direct-fire weapons use their catalog accuracy and zero interception unless a de
 
 Weights live in a typed immutable `BidUtilityWeights` config and are covered by sensitivity tests. `coverage_reserve_factor: float = Field(default=1.25, ge=1.0, le=3.0)` belongs to the award config. Do not let one unnormalized world-unit value dominate.
 
+### Default weight rationale (shipped)
+
+Implemented `score_bid` defaults `(capability=0.35, reach=0.25, survival=0.25, recovery=0.15)`:
+
+| Weight | Value | Rationale |
+|---|---|---|
+| capability | 0.35 | Suitability/payload must lead so a uniquely armed jet still wins |
+| reach | 0.25 | Geometry/travel matter without dominating survival |
+| survival | 0.25 | Countermeasure-weighted IR/radar/gun risk is first-class |
+| recovery | 0.15 | Soft preference; impossible recovery is a hard no-bid |
+
+Award-side defaults: `coverage_reserve_factor=1.25`, `overkill_penalty_weight=0.20`, `team_size_penalty_weight=0.05`. Mitigation caps remain below one (`MAX_IR=0.80`, `MAX_RADAR=0.75`, `MAX_GUN=0.50`) so readiness reduces but never erases exposure.
+
 Hard no-bid conditions:
 
 * no legal weapon/rounds;

@@ -20,6 +20,7 @@ from direct.interval.IntervalGlobal import (
     LerpScaleInterval,
     Parallel,
     Sequence,
+    Wait,
 )
 from panda3d.core import (
     Geom,
@@ -42,12 +43,27 @@ WEAPON_EFFECT_STYLES: dict[str, tuple[str, float]] = {
     "JDAM": ("bomb", 1.1),
     "AIM9X": ("missile", 0.65),
     "AMRAAM": ("missile", 0.7),
+    "AGM65": ("missile", 0.65),
+    "AGM88": ("missile", 0.7),
+    "AGM84": ("missile", 0.75),
+    "SAM_IR": ("missile", 0.6),
+    "SAM_RADAR": ("missile", 0.6),
     "GUN_POD": ("gun_tracer", 0.12),
+    "CIWS": ("gun_tracer", 0.1),
+    "DECK_GUN": ("gun_tracer", 0.15),
+    "AAA": ("gun_tracer", 0.1),
+    "AAA_TURRETED": ("gun_tracer", 0.1),
+    "TANK_CANNON": ("gun_tracer", 0.14),
 }
 DEFAULT_EFFECT_STYLE: tuple[str, float] = ("missile", 0.65)
 GROUND_Z = 0.0
 _TRAIL_HISTORY = 8
 _TRAIL_SPAN = 0.22
+
+# Weapons that use authoritative MissileFrame tracks (skip cosmetic travel).
+GUIDED_WEAPON_TYPES: frozenset[str] = frozenset(
+    {"AIM9X", "AMRAAM", "AGM65", "AGM88", "AGM84", "SAM_IR", "SAM_RADAR"}
+)
 
 
 def weapon_effect_style(weapon_type: str) -> tuple[str, float]:
@@ -284,6 +300,35 @@ def spawn_strike_effect(
         _spawn_bomb(root, launch_position, impact_position, duration)
     else:
         _spawn_missile(root, launch_position, impact_position, duration)
+
+
+_FLARE_COLOR = (1.0, 0.85, 0.2, 0.95)
+
+
+def spawn_flare_burst(
+    root: NodePath,
+    position: tuple[float, float, float],
+    *,
+    duration: float = 0.55,
+) -> None:
+    """Cosmetic IR flare particles — does not imply decoy success."""
+    holder = root.attach_new_node("fx-flare-burst")
+    holder.set_pos(position[0], position[1], position[2])
+    for i, offset in enumerate(
+        ((0.4, 0.0, 0.2), (-0.3, 0.3, 0.1), (0.1, -0.4, 0.25), (-0.2, -0.1, 0.35))
+    ):
+        mote = holder.attach_new_node(f"flare-mote-{i}")
+        start = offset
+        mote.set_pos(*start)
+        glyph = _attach_billboard_disc(mote, f"flare-disc-{i}", 0.22, _FLARE_COLOR)
+        end = (offset[0] * 2.5, offset[1] * 2.5, offset[2] + 1.2)
+        Sequence(
+            Parallel(
+                LerpPosInterval(mote, duration, end, startPos=start, blendType="easeOut"),
+                LerpColorScaleInterval(glyph, duration, (1.0, 1.0, 1.0, 0.0)),
+            ),
+        ).start()
+    Sequence(Wait(duration + 0.05), Func(_safe_remove, holder)).start()
 
 
 def spawn_jet_wreck(

@@ -164,7 +164,7 @@ def test_compute_bid_selects_only_suitable_weapon_from_mixed_loadout():
     assert offered == 3  # not 10 from AIM9X
 
 
-def test_compute_bid_mobile_radar_requires_aim9x():
+def test_compute_bid_mobile_radar_requires_agm65():
     target = TargetInfo(
         target_id="Target_B",
         position=(25.0, 25.0),
@@ -174,16 +174,16 @@ def test_compute_bid_mobile_radar_requires_aim9x():
         claimed=False,
     )
     jdam_only = _observation(
-        "Jet_2", target.position, payload={"JDAM": 4, "AIM9X": 0}, targets=[target]
+        "Jet_2", target.position, payload={"JDAM": 4, "AGM65": 0}, targets=[target]
     )
     assert compute_bid(jdam_only, target) is None
     mixed = _observation(
-        "Jet_3", target.position, payload={"JDAM": 3, "AIM9X": 2}, targets=[target]
+        "Jet_3", target.position, payload={"JDAM": 3, "AGM65": 2}, targets=[target]
     )
     result = compute_bid(mixed, target)
     assert result is not None
     _, offered, weapon_type = result
-    assert weapon_type == "AIM9X"
+    assert weapon_type == "AGM65"
     assert offered == 1
 
 

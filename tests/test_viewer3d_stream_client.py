@@ -16,7 +16,7 @@ import pytest
 from wraithnet import config
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from viewer3d.stream_client import (
     DisconnectedEvent,
     HeaderEvent,
@@ -32,7 +32,7 @@ def fast_cnp(monkeypatch):
 
 
 def _tiny_scenario() -> ScenarioConfig:
-    return ScenarioConfig(
+    return scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Solo_Jet",
@@ -48,7 +48,7 @@ def _tiny_scenario() -> ScenarioConfig:
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
 
 
 async def _drain_events(client: StreamClient, min_count: int, timeout: float = 5.0):

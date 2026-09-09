@@ -38,3 +38,19 @@ def test_explicit_non_default_frame_type_round_trips(tmp_path):
     assert loaded.jets[1].frame_type == "STRIKE_FIGHTER"
     assert loaded == original
     assert loaded.model_dump() == original.model_dump()
+
+
+def test_generation_metadata_round_trips(tmp_path):
+    from wraithnet.generation_presets import parameters_for_preset
+    from wraithnet.scenario_generator import generate_scenario
+
+    result = generate_scenario(parameters_for_preset("TRAINING", seed=99))
+    path = tmp_path / "generated_meta.json"
+    save_scenario(result.scenario, path)
+    loaded = load_scenario(path)
+    assert loaded.generation is not None
+    assert loaded.generation.seed == 99
+    assert loaded.generation.preset == "TRAINING"
+    assert loaded.generation.modified_after_generation is False
+    assert loaded.generation.resolved_parameters.seed == 99
+    assert loaded.model_dump() == result.scenario.model_dump()

@@ -11,7 +11,7 @@ from wraithnet.agents import JetAgentRuntime, compute_bid
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
 from wraithnet.geometry import is_in_firing_arc
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.schemas import Message, Observation, TargetInfo
 from wraithnet.world import WraithNetModel
 
@@ -142,7 +142,7 @@ def test_compute_bid_jdam_against_bunker_matches_pre_catalog_formula():
     assert weapon_type == "JDAM"
 
 
-def test_compute_bid_aim9x_still_required_for_mobile_radar():
+def test_compute_bid_agm65_still_required_for_mobile_radar():
     target = _bunker(
         target_id="Radar",
         position=(25.0, 25.0),
@@ -150,12 +150,12 @@ def test_compute_bid_aim9x_still_required_for_mobile_radar():
         hp_required=1,
         hp_remaining=1,
     )
-    jdam_only = _gunner_obs(target.position, 0.0, {"JDAM": 4, "AIM9X": 0}, [target])
-    mixed = _gunner_obs(target.position, 0.0, {"JDAM": 3, "AIM9X": 2}, [target])
+    jdam_only = _gunner_obs(target.position, 0.0, {"JDAM": 4, "AGM65": 0}, [target])
+    mixed = _gunner_obs(target.position, 0.0, {"JDAM": 3, "AGM65": 2}, [target])
     assert compute_bid(jdam_only, target) is None
     result = compute_bid(mixed, target)
     assert result is not None
-    assert result[2] == "AIM9X"
+    assert result[2] == "AGM65"
 
 
 def test_decide_intent_rotates_to_bear_when_in_range_but_outside_arc():
@@ -209,7 +209,7 @@ def test_agents_and_world_agree_on_firing_arc_gate():
     edge_dx = dy * math.tan(math.radians(30.0))
     out_dx = dy * math.tan(math.radians(31.0))
     model = WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             jets=[
                 JetSpec(
                     agent_id="Gunner",
@@ -226,7 +226,7 @@ def test_agents_and_world_agree_on_firing_arc_gate():
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
     jet = model.jets["Gunner"]
     target = model.targets["Bunker"]
@@ -268,7 +268,7 @@ def test_narrow_arc_weapon_rotates_into_arc_before_first_strike():
     jet_pos = (50.0, 50.0)
     target_pos = (50.3, 50.0)
     model = WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             jets=[
                 JetSpec(
                     agent_id="Gunner",
@@ -285,7 +285,7 @@ def test_narrow_arc_weapon_rotates_into_arc_before_first_strike():
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
     runtime = JetAgentRuntime("Gunner", MessageBroker())
     runtime._commit("Bunker", 1, "GUN_POD")
@@ -436,3 +436,65 @@ async def test_rtb_jet_never_bids_on_cfp_or_becomes_manager():
         for jet in (manager, rtb):
             jet.stop()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+def test_stable_id_same_inputs_same_output():
+    from wraithnet.agents import stable_id
+
+    a = stable_id("Jet_1", "Target_A", 3, "CONTRACT", 1)
+    b = stable_id("Jet_1", "Target_A", 3, "CONTRACT", 1)
+    c = stable_id("Jet_1", "Target_A", 3, "CONTRACT", 2)
+    assert a == b
+    assert a != c
+    assert len(a) == 32
+    assert all(ch in "0123456789abcdef" for ch in a)
+
+
+@pytest.mark.asyncio
+async def test_contract_ids_deterministic_for_same_seq(monkeypatch):
+    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
+    target = TargetInfo(
+        target_id="Target_A",
+        position=(75.0, 75.0),
+        target_type="HARDENED_BUNKER",
+        hp_required=1,
+        hp_remaining=1,
+        claimed=False,
+    )
+
+    async def _open_once(agent_id: str) -> str:
+        broker = MessageBroker()
+        jet = JetAgentRuntime(agent_id, broker)
+        jet._msg_seq = 0
+        obs = Observation(
+            agent_id=agent_id,
+            tick=7,
+            current_position=(70.0, 70.0),
+            sensor_radius=config.SENSOR_RADIUS,
+            payload={"JDAM": 1, "AIM9X": 0},
+            known_targets=[target],
+            comms_jammed=False,
+        )
+        jet.set_observation(obs)
+        jet.refresh_world_view()
+        task = jet.start()
+        try:
+            original = jet.broker.try_open_contract
+            captured: list[str] = []
+
+            def tracking(tid, cid, mid, tick):
+                captured.append(cid)
+                return original(tid, cid, mid, tick)
+
+            jet.broker.try_open_contract = tracking  # type: ignore[method-assign]
+            assert await jet.try_become_manager(target) is True
+            assert captured
+            return captured[0]
+        finally:
+            jet.stop()
+            await asyncio.gather(task, return_exceptions=True)
+
+    c1 = await _open_once("Jet_1")
+    c2 = await _open_once("Jet_1")
+    assert c1 == c2
+    c3 = await _open_once("Jet_2")
+    assert c3 != c1

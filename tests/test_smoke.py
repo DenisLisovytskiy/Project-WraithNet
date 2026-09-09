@@ -34,11 +34,14 @@ def test_scenario_no_single_jet_can_solo_target_a():
     assert max_single_jdam < targets["Target_A"]["hp_required"]
 
 
-def test_scenario_target_b_requires_aim9x_and_is_soloable():
+def test_scenario_target_b_requires_agm65_and_is_soloable():
+    """Literal SCENARIO still lists AIM9X; migration converts to AGM65."""
+    from wraithnet.scenario_schema import scenario_from_data
+
     targets = {t["target_id"]: t for t in config.SCENARIO["targets"]}
-    jets = config.SCENARIO["jets"]
     assert targets["Target_B"]["target_type"] == "MOBILE_RADAR"
     assert targets["Target_B"]["hp_required"] == 1
-    aim9x_carriers = [j for j in jets if j["payload"].get("AIM9X", 0) > 0]
-    assert len(aim9x_carriers) == 1
-    assert aim9x_carriers[0]["payload"]["AIM9X"] >= targets["Target_B"]["hp_required"]
+    scenario = scenario_from_data(config.SCENARIO)
+    agm_carriers = [j for j in scenario.jets if j.payload.get("AGM65", 0) > 0]
+    assert len(agm_carriers) == 1
+    assert agm_carriers[0].payload["AGM65"] >= targets["Target_B"]["hp_required"]

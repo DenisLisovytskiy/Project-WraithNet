@@ -188,3 +188,17 @@ def test_desired_altitude_near_target_at_takeoff_stays_on_ground():
     at_spawn = desired_altitude(0.0, near_pos, header, tick, just_struck=False)
     assert at_spawn == pytest.approx(GROUND_ALTITUDE, abs=0.05)
     assert at_spawn < ATTACK_ALTITUDE
+
+
+def test_desired_altitude_prefers_authoritative_trace_altitude():
+    header = _header()
+    tick = _tick()
+    auth = desired_altitude(
+        0.0,
+        (5.0, 5.0),
+        header,
+        tick,
+        just_struck=True,
+        authoritative_altitude=20.0,
+    )
+    assert auth == pytest.approx(20.0)

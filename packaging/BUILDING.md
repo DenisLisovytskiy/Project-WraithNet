@@ -208,3 +208,52 @@ exercised as follows.
 Rebuilding the onedir tree is the remaining step before those same
 frozen clicks would also pick up `--output-dir` isolation and verbatim
 `--headless` forwarding.
+
+## Phase 33 — Quick Generate packaging note
+
+Random-scenario modules (`wraithnet.generation_schemas`,
+`wraithnet.generation_presets`, `wraithnet.generation_rng`,
+`wraithnet.scenario_feasibility`, `wraithnet.scenario_generator`) are pure
+Python and are pulled in through `viewer3d.editor` → PyInstaller analysis.
+No new hiddenimports are required for the existing `packaging/wraithnet.spec`.
+
+Packaged smoke (after `python packaging/build.py`):
+
+1. Launch `dist\WraithNet\WraithNet.exe`.
+2. **Standard → Generate → Save → Launch**.
+3. Confirm the scenario lands under `%LOCALAPPDATA%\WraithNet\scenarios`.
+4. Confirm Generate does not freeze (synchronous generation; Phase 32 is
+   typically well under 100 ms).
+
+## Phase 44 — Combined-arms packaging checklist
+
+After `python packaging/build.py`, verify in `dist\WraithNet\WraithNet.exe`:
+
+1. Paint / generate terrain (water for naval presets).
+2. Place AAA, tanks, carriers, corvettes; edit SAM IR/RADAR and jet flares.
+3. Generate with Contested/Nightmare (combined-arms counts) → Save → Preview → Launch.
+4. Confirm traces under `%LOCALAPPDATA%\WraithNet` still replay without crash.
+5. Headless PoC: `dist\WraithNet\WraithNet.exe --headless` matches source summary fields.
+
+No new PyInstaller hiddenimports are required for `bid_utility` / `bid_schemas` (imported via agents).
+
+## Phase 45 — Risk-aware CNP packaging note
+
+`wraithnet.bid_utility` and `wraithnet.bid_schemas` are pure Python and pulled
+through `wraithnet.agents` → no new hiddenimports. After rebuild, confirm a
+Contested Generate → Launch still awards contracts (negotiation events appear
+in `trace.jsonl` as `negotiation` / award summaries when present).
+
+## Deterministic generation matrices (source)
+
+Verified green on this checkout:
+
+* `test_auto_balanced_feasible_over_seed_matrix` — **100 seeds × 4 presets**
+  (TRAINING/STANDARD/CONTESTED/NIGHTMARE) with Contested/Nightmare non-zero
+  tank/naval counts.
+* `test_standard_100_seed_matrix` — **100 STANDARD** terrain/placement.
+* Contested combined-arms smoke in `tests/test_phase44_combined_arms.py`
+  (≥25 seeds expecting tanks or naval when counts draw >0).
+
+Rebuild the frozen tree with `python packaging/build.py` before treating
+packaged Contested/Nightmare Generate as verified on a given machine.

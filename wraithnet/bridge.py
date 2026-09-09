@@ -22,10 +22,18 @@ class WraithNetBridge:
     ) -> None:
         self.broker = MessageBroker()
         self.model = WraithNetModel(scenario=scenario)
+        # combat_seed is loaded on the model from the scenario (Phase 37).
+        assert self.model.combat_seed == int(
+            getattr(self.model._scenario, "combat_seed", 0) or 0
+        )
+        # Jetless scenarios: zero CNP runtimes; world still ticks via step().
         self.agents: dict[str, JetAgentRuntime] = {
             agent_id: JetAgentRuntime(agent_id, self.broker)
             for agent_id in self.model.jets
         }
+        for agent in self.agents.values():
+            agent._model = self.model
+            agent._use_tick_bid_timeout = True
         self._tasks: list[asyncio.Task] = []
         self.sinks: list[TraceSink] = sinks or []
         for sink in self.sinks:
@@ -56,32 +64,46 @@ class WraithNetBridge:
         finally:
             await self.stop_agent_loops()
 
+    def _agents_in_id_order(self) -> list[JetAgentRuntime]:
+        return [self.agents[aid] for aid in sorted(self.agents)]
+
     async def _tick(self) -> None:
+        # Jetless / no CNP runtimes: still advance the staged world wrapper.
+        if not self.agents:
+            self.model.step({})
+            for sink in self.sinks:
+                sink.record_tick(self)
+            return
+
         # 1. Broadcast state (+ push jamming status to the Broker — Phase 9)
-        for agent_id, agent in self.agents.items():
+        for agent_id in sorted(self.agents):
+            agent = self.agents[agent_id]
             obs = self.model.build_observation(agent_id, self.broker)
             agent.set_observation(obs)
             self.broker.set_jammed(agent_id, obs.comms_jammed)
 
         # 1b. Refresh world-view memory and share new contacts (Phase 7 — all agents)
-        await asyncio.gather(*(a.share_new_contacts() for a in self.agents.values()))
+        await asyncio.gather(
+            *(a.share_new_contacts() for a in self._agents_in_id_order())
+        )
         await asyncio.sleep(0)  # let run() loops drain freshly-broadcast DATALINK_CONTACTs
 
         # 1c. Self-heal any CONTRACTOR_PENDING bid that's timed out (Phase 9)
-        for agent in self.agents.values():
+        for agent in self._agents_in_id_order():
             agent.check_pending_bid_timeout()
 
         # 1d. Bingo-fuel check — before negotiation so a jet that just decided
         # to RTB this tick doesn't also try to bid/manage this same tick.
         began_rtb_this_tick: set[str] = set()
-        for agent_id, agent in self.agents.items():
+        for agent_id in sorted(self.agents):
+            agent = self.agents[agent_id]
             if agent.bingo_fuel_reached():
                 agent.begin_rtb()
                 self.model.jets[agent_id].is_rtb = True
                 began_rtb_this_tick.add(agent_id)
 
         # 2. Negotiate (idle agents only), bounded by MAX_TICK_WAIT_SECONDS
-        idle_agents = [a for a in self.agents.values() if a.role == "IDLE"]
+        idle_agents = [a for a in self._agents_in_id_order() if a.role == "IDLE"]
         if idle_agents:
             try:
                 await asyncio.wait_for(
@@ -91,12 +113,13 @@ class WraithNetBridge:
             except asyncio.TimeoutError:
                 pass  # any agent still IDLE will just decide_intent() -> IDLE below
 
-        # 3. Collect intents (pull, synchronous)
+        # 3. Collect intents (pull, synchronous) in stable agent-id order
         intents = {
-            agent_id: agent.decide_intent() for agent_id, agent in self.agents.items()
+            agent_id: self.agents[agent_id].decide_intent()
+            for agent_id in sorted(self.agents)
         }
 
-        # 4. Physics tick
+        # 4. Physics tick — staged methods already run inside step()
         alive_before = set(self.model.jets)
         self.model.step(intents)
         destroyed_this_tick = alive_before - set(self.model.jets)
@@ -133,7 +156,7 @@ class WraithNetBridge:
         # reclaims the claim after CONTRACT_CLAIM_TTL_TICKS.
         notifications = [
             manager.notify_contractor_lost(lost_id, target_id)
-            for manager_id, manager in self.agents.items()
+            for manager_id, manager in sorted(self.agents.items())
             if manager_id not in destroyed_agent_ids
             for target_id, contractor_ids in manager.managed_contracts.items()
             for lost_id in destroyed_agent_ids & contractor_ids

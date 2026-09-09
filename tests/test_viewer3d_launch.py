@@ -15,7 +15,7 @@ import pytest
 from viewer3d.launch import build_sim_worker_argv, launch_scenario
 from viewer3d.stream_client import HeaderEvent, StreamClient
 from wraithnet.scenario_io import save_scenario
-from wraithnet.scenario_schema import ScenarioConfig
+from wraithnet.scenario_schema import ScenarioConfig, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 DEFAULT_SCENARIO = Path(__file__).resolve().parent.parent / "scenarios" / "default.json"
@@ -113,7 +113,7 @@ def test_sequential_launches_get_distinct_ports():
 
 
 def _tiny_launch_scenario(tmp_path):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -129,7 +129,7 @@ def _tiny_launch_scenario(tmp_path):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     path = tmp_path / "tiny.json"
     save_scenario(custom, path)
     return path

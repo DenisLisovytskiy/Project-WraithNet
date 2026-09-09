@@ -1,8 +1,8 @@
-"""Pure functions computing a jet's cosmetic flight altitude and bank angle
-from data already present in TraceHeader/TraceTick -- no wraithnet change,
-no new trace field. See docs/12_Flight_Dynamics_and_Weapon_Effects_Design_Document.md
-§4. Altitude/bank here are a rendering-only fiction; nothing here is read by
-any gameplay logic, and nothing in wraithnet/ imports this module.
+"""Pure functions computing a jet's flight altitude baseline and bank angle
+from TraceHeader/TraceTick data. Phase 37: when JetFrame.altitude is set,
+it is the authoritative desired Z; takeoff/dive cosmetics apply only as a
+legacy fallback for traces that omit altitude. Bank easing remains cosmetic.
+Nothing in wraithnet/ imports this module.
 """
 
 from __future__ import annotations
@@ -54,14 +54,14 @@ def _takeoff_baseline(seconds_airborne: float) -> float:
     return GROUND_ALTITUDE + frac * (CRUISE_ALTITUDE - GROUND_ALTITUDE)
 
 
-def desired_altitude(
+def _legacy_cosmetic_altitude(
     seconds_airborne: float,
     jet_position: tuple[float, float],
     header: TraceHeader,
     tick: TraceTick,
     just_struck: bool,
 ) -> float:
-    """Combine takeoff climb, proximity dive, and post-strike boost."""
+    """Pre-Phase-37 takeoff/dive fiction for traces without JetFrame.altitude."""
     baseline = _takeoff_baseline(seconds_airborne)
     threshold = header.strike_range * ENGAGEMENT_RADIUS_MULTIPLIER
     nearest = nearest_alive_target_distance(jet_position, header, tick)
@@ -76,6 +76,23 @@ def desired_altitude(
     if just_struck:
         altitude += POST_STRIKE_CLIMB_BOOST_ALTITUDE
     return max(GROUND_ALTITUDE, min(altitude, _MAX_ALTITUDE))
+
+
+def desired_altitude(
+    seconds_airborne: float,
+    jet_position: tuple[float, float],
+    header: TraceHeader,
+    tick: TraceTick,
+    just_struck: bool,
+    *,
+    authoritative_altitude: float | None = None,
+) -> float:
+    """Prefer trace JetFrame.altitude; else legacy takeoff/dive cosmetics."""
+    if authoritative_altitude is not None:
+        return max(GROUND_ALTITUDE, float(authoritative_altitude))
+    return _legacy_cosmetic_altitude(
+        seconds_airborne, jet_position, header, tick, just_struck
+    )
 
 
 def desired_bank_deg(

@@ -30,7 +30,33 @@ python -m wraithnet.main
 
 This runs the fixed PoC scenario to completion, prints a summary (targets destroyed, contributors, distance, missiles), and writes CSV time series under `./results/`.
 
+## Quick random scenario
+
+```bash
+python -m launcher
+```
+
+1. Choose a difficulty preset (Training / Standard / Contested / Nightmare) and optionally a seed or **New Seed**.
+2. Pick friendly forces: **Auto-balanced** (default), **Experimental random**, or **Custom roster**.
+3. Click **Generate** — the map fills with jets, objectives, SAMs/jammers, and (by preset) AAA, tanks, and optional naval units.
+4. Inspect, then optionally edit entities (SAM IR/RADAR loadouts, jet flares, tank orders) with the manual editor.
+5. **Save**, **Preview**, and **Launch** as usual.
+
+Same seed + same resolved parameters reproduce the same scenario (generator v3). Changing tank counts uses a separate RNG stream and does not reshuffle terrain. Auto-balanced aims for static feasibility, not a guaranteed win. Experimental random and custom roster can be statically unwinnable; the UI warns before installing.
+
+## Combined arms (Phases 40–44)
+
+Land: tanks (HOLD/PATROL/ADVANCE), AAA gun sites, city LOS. Naval: carriers and corvettes when counts/presets enable water. Metrics export tank/AAA/CIWS/carrier recovery fields. Feasibility codes cover domain spawn, anti-armor/anti-ship, and ground discovery deadlock.
+
+## Risk-aware CNP (Phase 45)
+
+Bids include flare/IR risk when known IR threats exist; with no threat exposure, utilities match the legacy PoC scoring so default assignments stay stable. Managers broadcast `RISK_UPDATE` before collecting BIDs.
+
 ## Documentation
 
 - Authoritative design: [`docs/6th-Gen_Warfare_Sim_Design_Document_v2.md`](docs/6th-Gen_Warfare_Sim_Design_Document_v2.md)
-- Build plan (phases 0–5): [`docs/phases/`](docs/phases/)
+- Build plan (phases): [`docs/phases/`](docs/phases/)
+- Random scenario generation: [`docs/18_Random_Scenario_Generation_Design_Document.md`](docs/18_Random_Scenario_Generation_Design_Document.md)
+- Terrain / combined arms: [`docs/19_Terrain_Naval_and_Combined_Arms_Design_Document.md`](docs/19_Terrain_Naval_and_Combined_Arms_Design_Document.md)
+- Risk-aware CNP: [`docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md`](docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md)
+- Smooth live motion (dual-clock interpolation, Phases 46–49): [`docs/21_Smooth_Live_Motion_Design_Document.md`](docs/21_Smooth_Live_Motion_Design_Document.md)

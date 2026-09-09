@@ -12,6 +12,8 @@ from wraithnet.scenario_schema import (
     ScenarioConfig,
     TargetSpec,
     _default_scenario,
+    new_scenario_data,
+    scenario_from_data
 )
 from wraithnet.schemas import ActionIntent
 from wraithnet.world import WraithNetModel
@@ -28,16 +30,17 @@ def assert_all_jet_ids_intact(model: WraithNetModel) -> None:
 
 def test_model_spawns_exact_scenario():
     model = WraithNetModel()
+    scenario = _default_scenario()
     assert len(model.jets) == 3
     assert len(model.targets) == 3  # Target_A, Target_B, SAM_Site_1
     assert len(model.sam_sites) == 1
     assert len(model.jammers) == 1
     assert "EW_Jammer_1" in model.jammers
 
-    for j in config.SCENARIO["jets"]:
-        jet = model.jets[j["agent_id"]]
-        assert jet.payload == j["payload"]
-        assert jet.pos == j["position"]
+    for j in scenario.jets:
+        jet = model.jets[j.agent_id]
+        assert jet.payload == j.payload
+        assert jet.pos == j.position
         assert jet.hp == config.JET_HP
         assert jet.is_destroyed is False
 
@@ -52,11 +55,12 @@ def test_model_spawns_exact_scenario():
     assert sam.target_type == "SAM_SITE"
     assert sam.hp_required == 1
     assert "SAM_Site_1" in model.sam_sites
+    assert model.sam_sites["SAM_Site_1"].missile_loadout.get("SAM_RADAR", 0) > 0
 
 
 def test_jet1_payload_and_target_a_hp():
     model = WraithNetModel()
-    assert model.jets["Jet_1"].payload == {"JDAM": 1, "AIM9X": 0}
+    assert model.jets["Jet_1"].payload == {"JDAM": 1}
     assert model.targets["Target_A"].hp_required == 5
     assert model.targets["Target_A"].hp_remaining == 5
     assert model.targets["Target_A"].target_type == "HARDENED_BUNKER"
@@ -70,7 +74,7 @@ def test_build_observation_for_jet1():
     assert obs.current_position == (70.0, 70.0)
     assert obs.sensor_radius == config.SENSOR_RADIUS
     assert obs.comms_jammed is False
-    assert obs.payload == {"JDAM": 1, "AIM9X": 0}
+    assert obs.payload == {"JDAM": 1}
     by_id = {t.target_id: t for t in obs.known_targets}
     # Jet_1 is within SENSOR_RADIUS of Target_A, Target_B, and SAM_Site_1
     assert set(by_id) == {"Target_A", "Target_B", "SAM_Site_1"}
@@ -171,7 +175,7 @@ def test_strike_out_of_range_is_noop():
         weapon_type="JDAM",
     )
     model.step({"Jet_1": intent})
-    assert jet.payload == {"JDAM": 1, "AIM9X": 0}
+    assert jet.payload == {"JDAM": 1}
     assert target.hp_remaining == 5
     assert model.strike_log == []
 
@@ -189,7 +193,7 @@ def test_strike_in_range_damages_and_logs():
         weapon_type="JDAM",
     )
     model.step({"Jet_1": intent})
-    assert jet.payload == {"JDAM": 0, "AIM9X": 0}
+    assert jet.payload == {"JDAM": 0}
     assert target.hp_remaining == 4
     assert model.strike_log == [
         {"tick": 1, "agent_id": "Jet_1", "target_id": "Target_A", "weapon_type": "JDAM"}
@@ -197,11 +201,13 @@ def test_strike_in_range_damages_and_logs():
 
 
 def test_strike_unsuitable_weapon_is_noop():
-    """World-layer suitability guard: AIM9X cannot damage HARDENED_BUNKER."""
+    """World-layer suitability/taxonomy guard: AIM9X cannot damage installations."""
     model = WraithNetModel()
     jet = model.jets["Jet_3"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    # Give the jet an air-to-air missile that taxonomy rejects vs INSTALLATION.
+    jet.payload = {"AIM9X": 1, "AGM65": 0, "JDAM": 0}
     payload_before = dict(jet.payload)
     hp_before = target.hp_remaining
     intent = ActionIntent(
@@ -254,7 +260,7 @@ def test_strike_with_zero_payload_in_range_is_noop():
     jet = model.jets["Jet_1"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
-    jet.payload = {"JDAM": 0, "AIM9X": 0}
+    jet.payload = {"JDAM": 0}
     intent = ActionIntent(
         agent_id="Jet_1",
         tick=0,
@@ -272,22 +278,22 @@ def test_strike_on_destroyed_target_clamps_hp_but_consumes_payload():
     hp_remaining stays clamped at 0 even if the target is already dead."""
     model = WraithNetModel()
     jet = model.jets["Jet_3"]
-    target = model.targets["Target_B"]  # MOBILE_RADAR — needs AIM9X
+    target = model.targets["Target_B"]  # MOBILE_RADAR — needs AGM65
     model.space.move_agent(jet, target.position)
     target.hp_remaining = 0
-    aim9x_before = jet.payload["AIM9X"]
+    agm_before = jet.payload["AGM65"]
     intent = ActionIntent(
         agent_id="Jet_3",
         tick=0,
         action_type="STRIKE",
         target_id="Target_B",
-        weapon_type="AIM9X",
+        weapon_type="AGM65",
     )
     model.step({"Jet_3": intent})
     assert target.hp_remaining == 0
-    assert jet.payload["AIM9X"] == aim9x_before - 1
+    assert jet.payload["AGM65"] == agm_before - 1
     assert len(model.strike_log) == 1
-    assert model.strike_log[0]["weapon_type"] == "AIM9X"
+    assert model.strike_log[0]["weapon_type"] == "AGM65"
 
 
 def test_idle_intent_changes_nothing():
@@ -385,46 +391,106 @@ def test_step_advances_mesa_time_so_agenttype_records_are_not_collapsed():
     )
 
 
-def test_sam_damage_in_range_and_out_of_range():
+def _sam_combat_tick(model: WraithNetModel) -> None:
+    """One SAM engagement cycle: launch + flyout/impact (Phase 38)."""
+    model.tick += 1
+    model._register_sam_launches()
+    model._advance_and_resolve_missiles()
+
+
+def test_sam_damage_in_range_and_out_of_range(monkeypatch):
+    """SAM sites no longer apply passive HP drain; damage requires a missile HIT.
+
+    STRIKE_FIGHTER evasion equals SAM_RADAR damage_per_hit, so net damage is 0
+    even on a guaranteed hit — matching the pre-Phase-38 PoC invariant.
+    """
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "SAM_RADAR",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["SAM_RADAR"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+        ),
+    )
     model = WraithNetModel()
     jet = model.jets["Jet_1"]
     sam = model.sam_sites["SAM_Site_1"]
     hp_before = jet.hp
     evasion = config.JET_FRAME_CATALOG[jet.frame_type].evasion_bonus
-    expected = max(0, config.SAM_DAMAGE_PER_TICK - evasion)
-    # Place jet inside engagement range
+    expected = max(0, config.WEAPON_CATALOG["SAM_RADAR"].damage_per_hit - evasion)
     model.space.move_agent(jet, sam.position)
-    model._apply_sam_damage()
+    _sam_combat_tick(model)
+    assert any(e.get("event") == "launch" for e in model.missile_events)
     assert jet.hp == hp_before - expected
 
-    # Outside range — unaffected
     far = model.jets["Jet_3"]
     far_hp = far.hp
     assert math.dist(far.pos, sam.position) > config.SAM_ENGAGEMENT_RANGE
-    model._apply_sam_damage()
+    launches_before = sum(1 for e in model.missile_events if e.get("event") == "launch")
+    _sam_combat_tick(model)
+    # Cooldown may block a second launch; either way far jet is untouched.
     assert far.hp == far_hp
     assert_all_jet_ids_intact(model)
 
 
-def test_destroyed_sam_deals_no_damage():
+def test_destroyed_sam_deals_no_damage(monkeypatch):
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "SAM_RADAR",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["SAM_RADAR"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+        ),
+    )
     model = WraithNetModel()
     jet = model.jets["Jet_1"]
     sam = model.sam_sites["SAM_Site_1"]
     model.space.move_agent(jet, sam.position)
     model.targets["SAM_Site_1"].hp_remaining = 0
     hp_before = jet.hp
-    model._apply_sam_damage()
+    _sam_combat_tick(model)
     assert jet.hp == hp_before
+    assert not any(
+        e.get("event") == "launch" and e.get("shooter_id") == "SAM_Site_1"
+        for e in model.missile_events
+    )
 
 
-def test_jet_destroyed_removed_from_jets_and_space():
-    """HEAVY_BOMBER (evasion 0) still dies to repeated SAM ticks; the
-    STRIKE_FIGHTER default frame's evasion equals SAM_DAMAGE_PER_TICK, so
-    it would never be reaped this way."""
+def test_jet_destroyed_removed_from_jets_and_space(monkeypatch):
+    """HEAVY_BOMBER (evasion 0) dies to repeated SAM missile HITs."""
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "SAM_RADAR",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["SAM_RADAR"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+            requires_support=False,
+        ),
+    )
     model = _sam_exposure_model("HEAVY_BOMBER")
+    # Zero cooldown so every tick can launch.
+    model.sam_sites["SAM_Pad"].cooldown_ticks = 0
     jet = model.jets["Victim"]
+    guard = 0
     while "Victim" in model.jets:
-        model._apply_sam_damage()
+        _sam_combat_tick(model)
+        guard += 1
+        assert guard < 50, "SAM missiles failed to destroy HEAVY_BOMBER"
     assert "Victim" not in model.jets
     assert jet not in model.space.agents
     assert model.jet_outcomes["Victim"].outcome == "destroyed"
@@ -530,7 +596,7 @@ def test_bare_model_still_spawns_the_builtin_poc_scenario():
 
 
 def test_model_spawns_custom_scenario_not_default():
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Solo_Jet",
@@ -546,7 +612,7 @@ def test_model_spawns_custom_scenario_not_default():
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     model = WraithNetModel(scenario=custom)
 
     assert set(model.jets) == {"Solo_Jet"}
@@ -568,7 +634,7 @@ def test_model_spawns_custom_scenario_not_default():
 
 
 def test_model_uses_scenario_grid_size_not_config_constants():
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         grid_width=40.0,
         grid_height=60.0,
         jets=[
@@ -586,7 +652,7 @@ def test_model_uses_scenario_grid_size_not_config_constants():
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     model = WraithNetModel(scenario=custom)
     assert model.space.x_max == 40.0
     assert model.space.y_max == 60.0
@@ -632,7 +698,7 @@ def test_default_scenario_jets_match_historical_speed_and_hp():
 def test_different_frames_move_at_different_max_speeds():
     start = (10.0, 10.0)
     destination = (90.0, 10.0)
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Fast",
@@ -655,7 +721,7 @@ def test_different_frames_move_at_different_max_speeds():
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     model = WraithNetModel(scenario=custom)
     model.step(
         {
@@ -703,7 +769,7 @@ def test_heading_rotation_advances_by_turn_rate_when_farther():
 
 def test_heading_rotation_takes_shorter_clockwise_path():
     """10° → 80° is 70° clockwise, not 290° counter-clockwise."""
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Bomber",
@@ -721,7 +787,7 @@ def test_heading_rotation_takes_shorter_clockwise_path():
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     model = WraithNetModel(scenario=custom)
     jet = model.jets["Bomber"]
     turn_rate = config.JET_FRAME_CATALOG["HEAVY_BOMBER"].turn_rate_deg_per_tick
@@ -734,7 +800,7 @@ def test_heading_rotation_takes_shorter_counterclockwise_path_through_zero():
     """10° → 350° is 20° backward through 0°, not 340° forward through 180°.
     HEAVY_BOMBER turn_rate (12) is less than 20, so we observe the increment
     rather than a snap — heading should go 10 → 358, wrapping through 0."""
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Bomber",
@@ -752,7 +818,7 @@ def test_heading_rotation_takes_shorter_counterclockwise_path_through_zero():
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     model = WraithNetModel(scenario=custom)
     jet = model.jets["Bomber"]
     turn_rate = config.JET_FRAME_CATALOG["HEAVY_BOMBER"].turn_rate_deg_per_tick
@@ -826,8 +892,9 @@ def _heading_geometry_model(
     heading: float,
     target_pos: tuple[float, float],
     payload: dict[str, int] | None = None,
+    target_type: str = "HARDENED_BUNKER",
 ):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Gunner",
@@ -841,10 +908,10 @@ def _heading_geometry_model(
                 target_id="Bunker",
                 position=target_pos,
                 hp_required=5,
-                target_type="HARDENED_BUNKER",
+                target_type=target_type,  # type: ignore[arg-type]
             )
         ],
-    )
+    ))
     return WraithNetModel(scenario=custom)
 
 
@@ -898,17 +965,36 @@ def test_strike_in_range_but_outside_narrow_arc_is_noop():
     assert model.strike_log == []
 
 
-def test_amraam_strikes_a_target_behind_the_jet():
-    """All-aspect demonstration: facing +y, target due south, still a hit."""
+def test_amraam_is_air_to_air_agm88_strikes_emitter_behind_the_jet(monkeypatch):
+    """All-aspect A2G demo: AGM88 (radar) engages an emitter behind the jet."""
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "AGM88",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["AGM88"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+        ),
+    )
     model = _heading_geometry_model(
-        (50.0, 50.0), 0.0, (50.0, 40.0), payload={"AMRAAM": 1}
+        (50.0, 50.0),
+        0.0,
+        (50.0, 40.0),
+        payload={"AGM88": 1},
+        target_type="MOBILE_RADAR",
     )
     jet = model.jets["Gunner"]
     target = model.targets["Bunker"]
-    model._apply_strike(jet, "Bunker", "AMRAAM")
-    assert jet.payload["AMRAAM"] == 0
+    ack = model.try_launch_from_jet(jet, "Bunker", "AGM88")
+    assert ack.accepted
+    model._advance_and_resolve_missiles()
+    assert jet.payload.get("AGM88", 0) == 0
     assert target.hp_remaining == 4
-    assert model.strike_log[-1]["weapon_type"] == "AMRAAM"
+    assert model.strike_log[-1]["weapon_type"] == "AGM88"
 
 
 def test_strike_damage_per_hit_greater_than_one_floors_at_zero():
@@ -933,7 +1019,7 @@ def _home_base_model(
     payload: dict[str, int] | None = None,
 ) -> WraithNetModel:
     return WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             home_base=home_base,
             jets=[
                 JetSpec(
@@ -950,7 +1036,7 @@ def _home_base_model(
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
 
 
@@ -1043,6 +1129,81 @@ def test_observation_exposes_fuel_frame_and_home_base():
     assert obs.frame_type == "STRIKE_FIGHTER"
     assert obs.fuel == pytest.approx(jet.fuel)
     assert obs.home_base == model._home_base == config.DEFAULT_HOME_BASE
+    assert obs.current_altitude == pytest.approx(jet.altitude)
+    assert jet.altitude == pytest.approx(
+        config.JET_FRAME_CATALOG[jet.frame_type].cruise_altitude
+    )
+
+
+def test_altitude_climb_clamped_by_max_climb_per_tick():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    frame = config.JET_FRAME_CATALOG[jet.frame_type]
+    assert jet.altitude == pytest.approx(frame.cruise_altitude)
+    jet.desired_altitude = jet.altitude + frame.max_climb_per_tick * 3
+    start = jet.pos
+    model.step(
+        {
+            "Jet_1": ActionIntent(
+                agent_id="Jet_1",
+                tick=0,
+                action_type="MOVE",
+                target_position=(start[0] + 0.1, start[1]),
+                desired_altitude=jet.desired_altitude,
+            )
+        }
+    )
+    assert jet.altitude == pytest.approx(
+        frame.cruise_altitude + frame.max_climb_per_tick
+    )
+
+
+def test_altitude_descent_clamped_to_min_combat_unless_landing():
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    frame = config.JET_FRAME_CATALOG[jet.frame_type]
+    start = jet.pos
+    model.step(
+        {
+            "Jet_1": ActionIntent(
+                agent_id="Jet_1",
+                tick=0,
+                action_type="MOVE",
+                target_position=(start[0] + 0.1, start[1]),
+                desired_altitude=0.0,
+            )
+        }
+    )
+    # Far from base / not RTB: cannot go below min_combat_altitude.
+    assert jet.altitude >= frame.min_combat_altitude
+    assert jet.altitude == pytest.approx(
+        frame.cruise_altitude - frame.max_climb_per_tick
+    )
+
+
+def test_stage_guard_rejects_duplicate_and_out_of_order():
+    model = WraithNetModel()
+    model.stage_pre_move_obs({})
+    with pytest.raises(RuntimeError, match="already called"):
+        model.stage_pre_move_obs({})
+    with pytest.raises(RuntimeError, match="out of order|requires"):
+        model.stage_resolve_combat({})
+    model.stage_apply_movement({})
+    model.stage_post_move_obs({})
+    model.stage_register_launches()
+    model.stage_countermeasures()
+    model.stage_resolve_combat({})
+    with pytest.raises(RuntimeError, match="already called"):
+        model.stage_resolve_combat({})
+
+
+def test_step_wrapper_runs_stages_once():
+    model = WraithNetModel()
+    model.step({})
+    assert model.tick == 1
+    assert "resolve_combat" in model._tick_stages_done
+    model.step({})
+    assert model.tick == 2
 
 
 def _sam_exposure_model(
@@ -1053,7 +1214,7 @@ def _sam_exposure_model(
     """One jet sitting on a live SAM site, plus a far dummy bunker so the
     scenario is valid. Used to compare frames under identical SAM exposure."""
     return WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             jets=[
                 JetSpec(
                     agent_id=agent_id,
@@ -1078,14 +1239,14 @@ def _sam_exposure_model(
                     target_type="SAM_SITE",
                 )
             ],
-        )
+        ))
     )
 
 
 def _evasion_pair_model(sam_pos: tuple[float, float] = (50.0, 50.0)) -> WraithNetModel:
     """Two frames on the same SAM pad so a before/after HP comparison is fair."""
     return WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             jets=[
                 JetSpec(
                     agent_id="Evasive",
@@ -1116,53 +1277,84 @@ def _evasion_pair_model(sam_pos: tuple[float, float] = (50.0, 50.0)) -> WraithNe
                     target_type="SAM_SITE",
                 )
             ],
-        )
+        ))
     )
 
 
 def test_evasion_bonus_reduces_sam_damage_vs_zero_evasion_frame(monkeypatch):
-    """Direct before/after: same SAM exposure, INTERCEPTOR (evasion 2) takes
-    less damage than HEAVY_BOMBER (evasion 0). Monkeypatch SAM_DAMAGE_PER_TICK
-    above both bonuses so the interceptor still takes a nonzero hit — otherwise
-    the catalog's INTERCEPTOR bonus (2) already fully negates the default 1."""
-    monkeypatch.setattr(config, "SAM_DAMAGE_PER_TICK", 5)
+    """Same SAM missile HIT: INTERCEPTOR (evasion 2) takes less than HEAVY_BOMBER."""
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "SAM_RADAR",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["SAM_RADAR"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+            damage_per_hit=5,
+            requires_support=False,
+        ),
+    )
     model = _evasion_pair_model()
+    model.sam_sites["SAM_Pad"].cooldown_ticks = 0
     evasive = model.jets["Evasive"]
     bomber = model.jets["Bomber"]
     evasive_hp = evasive.hp
     bomber_hp = bomber.hp
-    model._apply_sam_damage()
+    # One launch engages the nearest jet only; run enough ticks for both
+    # to be hit at least once.
+    for _ in range(4):
+        _sam_combat_tick(model)
     evasive_taken = evasive_hp - evasive.hp
     bomber_taken = bomber_hp - bomber.hp
-    assert bomber_taken == 5  # evasion 0
-    assert evasive_taken == 3  # 5 - 2
+    assert bomber_taken >= 5  # evasion 0
+    assert evasive_taken >= 3  # 5 - 2
     assert evasive_taken < bomber_taken
     assert_all_jet_ids_intact(model)
 
 
-def test_evasion_bonus_at_or_above_sam_damage_deals_exactly_zero():
-    """INTERCEPTOR evasion 2 > SAM_DAMAGE_PER_TICK 1, and STRIKE_FIGHTER
-    evasion 1 == SAM_DAMAGE_PER_TICK: both take 0, never a negative HP-delta
-    (never healing)."""
+def test_evasion_bonus_at_or_above_sam_damage_deals_exactly_zero(monkeypatch):
+    """INTERCEPTOR/STRIKE_FIGHTER evasion ≥ SAM_RADAR damage → 0 net damage."""
+    import dataclasses
+
+    monkeypatch.setitem(
+        config.WEAPON_CATALOG,
+        "SAM_RADAR",
+        dataclasses.replace(
+            config.WEAPON_CATALOG["SAM_RADAR"],
+            speed_per_tick=100.0,
+            base_hit_probability=1.0,
+            fuel_ticks=5,
+            terminal_range=5.0,
+            damage_per_hit=1,
+            requires_support=False,
+        ),
+    )
     interceptor = _sam_exposure_model("INTERCEPTOR")
+    interceptor.sam_sites["SAM_Pad"].cooldown_ticks = 0
     jet = interceptor.jets["Victim"]
     hp_before = jet.hp
-    interceptor._apply_sam_damage()
+    _sam_combat_tick(interceptor)
     assert jet.hp == hp_before
     assert_all_jet_ids_intact(interceptor)
 
     fighter = _sam_exposure_model("STRIKE_FIGHTER")
+    fighter.sam_sites["SAM_Pad"].cooldown_ticks = 0
     jet = fighter.jets["Victim"]
     hp_before = jet.hp
-    fighter._apply_sam_damage()
+    _sam_combat_tick(fighter)
     assert jet.hp == hp_before
     assert_all_jet_ids_intact(fighter)
 
     bomber = _sam_exposure_model("HEAVY_BOMBER")
+    bomber.sam_sites["SAM_Pad"].cooldown_ticks = 0
     jet = bomber.jets["Victim"]
     hp_before = jet.hp
-    bomber._apply_sam_damage()
-    assert jet.hp == hp_before - config.SAM_DAMAGE_PER_TICK
+    _sam_combat_tick(bomber)
+    assert jet.hp == hp_before - 1
 
 
 def test_all_jet_ids_survives_destroyed_fuel_exhausted_and_landed_in_one_run():
@@ -1170,7 +1362,7 @@ def test_all_jet_ids_survives_destroyed_fuel_exhausted_and_landed_in_one_run():
     leave a JetOutcome so all_jet_ids() never drops an ID."""
     home = (10.0, 10.0)
     model = WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             home_base=home,
             jets=[
                 JetSpec(
@@ -1197,7 +1389,7 @@ def test_all_jet_ids_survives_destroyed_fuel_exhausted_and_landed_in_one_run():
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
     assert_all_jet_ids_intact(model)
     model.jets["Lander"].is_rtb = True
@@ -1215,7 +1407,7 @@ def test_all_jet_ids_survives_destroyed_fuel_exhausted_and_landed_in_one_run():
 def test_all_jets_landed_sets_mission_aborted_not_wipeout():
     home = (20.0, 20.0)
     model = WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             home_base=home,
             jets=[
                 JetSpec(
@@ -1237,7 +1429,7 @@ def test_all_jets_landed_sets_mission_aborted_not_wipeout():
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
     for jet in model.jets.values():
         jet.is_rtb = True
@@ -1270,7 +1462,7 @@ def test_mission_aborted_and_swarm_wiped_out_never_both_true():
     none remain — that must be mission_aborted, not both."""
     home = (10.0, 10.0)
     model = WraithNetModel(
-        scenario=ScenarioConfig(
+        scenario=scenario_from_data(new_scenario_data(
             home_base=home,
             jets=[
                 JetSpec(
@@ -1292,7 +1484,7 @@ def test_mission_aborted_and_swarm_wiped_out_never_both_true():
                     target_type="HARDENED_BUNKER",
                 )
             ],
-        )
+        ))
     )
     model.jets["Lander"].is_rtb = True
     model.jets["Lost"].hp = 0

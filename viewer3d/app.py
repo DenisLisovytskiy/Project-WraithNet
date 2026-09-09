@@ -103,7 +103,9 @@ class WraithNetViewer3D(ShowBase):
 
             self._hud.set_visible(False)
             self._editor = ScenarioEditor(self)
-            self.accept("mouse1", self._on_editor_click)
+            self._terrain_painting = False
+            self.accept("mouse1", self._on_editor_mouse1_down)
+            self.accept("mouse1-up", self._on_editor_mouse1_up)
             self.accept("wheel_up", self._on_editor_zoom_in)
             self.accept("wheel_down", self._on_editor_zoom_out)
             self.accept("arrow_up", lambda: self._editor_pan(0.0, 4.0))
@@ -123,9 +125,45 @@ class WraithNetViewer3D(ShowBase):
 
         self.task_mgr.add(self._drain_queue_task, "drain-stream-queue")
 
+    def _editor_map_world_pos(self):
+        if self._editor is None or self.view_mode != "editor":
+            return None
+        mw = getattr(self, "mouseWatcherNode", None)
+        if mw is None:
+            return None
+        try:
+            if not mw.has_mouse():
+                return None
+            mx = mw.get_mouse_x()
+            my = mw.get_mouse_y()
+        except (AttributeError, AssertionError, TypeError):
+            return None
+        if mx < -0.45 or mx > 0.45:
+            return None
+        return self._editor.camera.screen_to_world(mx, my)
+
+    def _on_editor_mouse1_down(self) -> None:
+        if self._editor is None or self.view_mode != "editor":
+            return
+        if getattr(self._editor, "_edit_mode", "ENTITY") == "TERRAIN":
+            world = self._editor_map_world_pos()
+            if world is None:
+                return
+            self._terrain_painting = True
+            self._editor.terrain_paint_begin(world)
+            return
+        self._editor.on_map_click_from_mouse()
+
+    def _on_editor_mouse1_up(self) -> None:
+        if self._editor is None or self.view_mode != "editor":
+            return
+        if self._terrain_painting:
+            self._terrain_painting = False
+            self._editor.terrain_paint_end()
+
     def _on_editor_click(self) -> None:
-        if self._editor is not None and self.view_mode == "editor":
-            self._editor.on_map_click_from_mouse()
+        # Kept for tests that invoke the old entry point.
+        self._on_editor_mouse1_down()
 
     def _on_editor_zoom_in(self) -> None:
         if self._editor is not None and self.view_mode == "editor":
@@ -145,8 +183,8 @@ class WraithNetViewer3D(ShowBase):
                 self.cancel_launch()
                 return
         if self._editor is not None and self.view_mode == "editor":
-            if self._editor._placement_kind is not None:
-                self._editor.cancel_placement()
+            if self._editor.handle_escape():
+                self._terrain_painting = False
                 return
         self.userExit()
 
@@ -313,6 +351,14 @@ class WraithNetViewer3D(ShowBase):
         self._refresh_flight_targets()
         self._poll_sim_health()
         self._update_camera(dt)
+        if self.view_mode == "editor" and self._editor is not None:
+            if getattr(self, "_terrain_painting", False):
+                world = self._editor_map_world_pos()
+                if world is not None:
+                    self._editor.terrain_paint_drag(world)
+            ed_handles = getattr(self._editor, "_handles", None)
+            if ed_handles is not None:
+                decay_highlights(ed_handles, dt)
         if self._handles is not None:
             apply_jet_flight_easing(self._handles, dt)
             decay_highlights(self._handles, dt)
@@ -435,6 +481,12 @@ class WraithNetViewer3D(ShowBase):
             else {}
         )
         for strike in highlights.strikes:
+            # Prefer authoritative missile frames/launches over cosmetic tracers.
+            auth = bool(
+                getattr(tick, "missiles", None) or getattr(tick, "weapon_launches", None)
+            )
+            if auth and strike.weapon_type in effects.GUIDED_WEAPON_TYPES:
+                continue
             frame = jets_now.get(strike.agent_id) or jets_prev.get(strike.agent_id)
             if frame is None:
                 continue
@@ -458,6 +510,20 @@ class WraithNetViewer3D(ShowBase):
                 continue
             effects.spawn_destruction_explosion(
                 self.render, (float(pos[0]), float(pos[1]), 0.3), scale=1.5
+            )
+        # Phase 39: flare particles from authoritative countermeasure events.
+        for cm in getattr(tick, "countermeasures", None) or []:
+            if getattr(cm, "event", None) != "flare":
+                continue
+            if getattr(cm, "accepted", None) is False:
+                continue
+            frame = jets_now.get(cm.agent_id) or jets_prev.get(cm.agent_id)
+            if frame is None:
+                continue
+            z = float(getattr(frame, "altitude", None) or CRUISE_ALTITUDE)
+            effects.spawn_flare_burst(
+                self.render,
+                (float(frame.position[0]), float(frame.position[1]), z),
             )
 
     def _finish_removing_jet(self, agent_id: str, handles=None) -> None:
@@ -493,12 +559,14 @@ class WraithNetViewer3D(ShowBase):
             just_struck = strike_boost_active(
                 handles.last_struck_tick.get(aid), tick.tick
             )
+            auth_z = getattr(frame, "altitude", None)
             handles.desired_altitude[aid] = desired_altitude(
                 now - first,
                 frame.position,
                 header,
                 tick,
                 just_struck,
+                authoritative_altitude=auth_z,
             )
 
     def _selected_jet_pose(self):

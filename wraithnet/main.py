@@ -72,6 +72,9 @@ async def run_scenario(
     finally:
         recorder.close()
         if live_server is not None:
+            # Tick-based CNP finishes quickly; hold the socket so a viewer that
+            # connects just after launch still receives the header/backlog.
+            await live_server.wait_for_client_or_timeout(10.0)
             await live_server.close()
     return bridge
 

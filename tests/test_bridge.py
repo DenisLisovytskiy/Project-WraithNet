@@ -7,7 +7,7 @@ import pytest
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.bridge import WraithNetBridge
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.schemas import Observation, TargetInfo
 
 
@@ -79,7 +79,7 @@ async def test_bridge_runs_scenario_to_completion(fast_cnp):
         if entry["target_id"] == "Target_A"
     )
     assert all(
-        entry["weapon_type"] == "AIM9X"
+        entry["weapon_type"] == "AGM65"
         for entry in bridge.model.strike_log
         if entry["target_id"] == "Target_B"
     )
@@ -212,7 +212,7 @@ async def test_bridge_swarm_wipeout_terminates(fast_cnp):
 @pytest.mark.asyncio
 async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
     """Phase 14: a custom ScenarioConfig actually reaches the running simulation."""
-    scenario = ScenarioConfig(
+    scenario = scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Solo_Jet",
@@ -228,7 +228,7 @@ async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     bridge = WraithNetBridge(scenario=scenario)
     await asyncio.wait_for(bridge.run(max_ticks=50), timeout=15.0)
 
@@ -292,7 +292,7 @@ async def test_rtb_contractor_notifies_manager_like_a_combat_loss(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
-    scenario = ScenarioConfig(
+    scenario = scenario_from_data(new_scenario_data(
         home_base=(20.0, 20.0),
         jets=[
             JetSpec(
@@ -309,7 +309,7 @@ async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     bridge = WraithNetBridge(scenario=scenario)
     bridge.start_agent_loops()
     try:
@@ -329,7 +329,7 @@ async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
-    scenario = ScenarioConfig(
+    scenario = scenario_from_data(new_scenario_data(
         home_base=(2.0, 2.0),
         jets=[
             JetSpec(
@@ -346,7 +346,7 @@ async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     bridge = WraithNetBridge(scenario=scenario)
     bridge.start_agent_loops()
     try:
@@ -357,3 +357,60 @@ async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
         assert "Dry" not in bridge.model.jets_returned_to_base
     finally:
         await bridge.stop_agent_loops()
+
+@pytest.mark.asyncio
+async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes(fast_cnp):
+    scenario = scenario_from_data(new_scenario_data(
+        jets=[],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=(50.0, 50.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+        combat_seed=42,
+    ))
+    bridge = WraithNetBridge(scenario=scenario)
+    assert bridge.agents == {}
+    assert bridge.model.combat_seed == 42
+    tick_before = bridge.model.tick
+    await bridge._tick()
+    assert bridge.model.tick == tick_before + 1
+    assert bridge.agents == {}
+
+
+@pytest.mark.asyncio
+async def test_bridge_idle_scan_order_is_agent_id_sorted(fast_cnp, monkeypatch):
+    """CNP scan runs in stable agent-id order (not dict insertion order)."""
+    scenario = scenario_from_data(new_scenario_data(
+        jets=[
+            JetSpec(agent_id="Jet_B", position=(10.0, 10.0), payload={"JDAM": 1, "AIM9X": 0}),
+            JetSpec(agent_id="Jet_A", position=(12.0, 12.0), payload={"JDAM": 1, "AIM9X": 0}),
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=(11.0, 11.0),
+                hp_required=1,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    ))
+    bridge = WraithNetBridge(scenario=scenario)
+    order: list[str] = []
+    original = JetAgentRuntime.scan_and_negotiate
+
+    async def tracking(self):
+        order.append(self.agent_id)
+        return await original(self)
+
+    monkeypatch.setattr(JetAgentRuntime, "scan_and_negotiate", tracking)
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+    finally:
+        await bridge.stop_agent_loops()
+    assert order == sorted(order)
+    assert order[0] == "Jet_A"

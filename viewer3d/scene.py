@@ -1,7 +1,6 @@
 """Builds and updates the 3D scene graph from TraceHeader/TraceTick data.
-Coordinate mapping: sim (x, y) -> Panda3D (x, y), with z reserved for a
-synthetic, presentation-only flight altitude -- see design doc §6.1-6.2.
-No gameplay logic reads z; it is purely cosmetic.
+Coordinate mapping: sim (x, y) -> Panda3D (x, y). Phase 37: jet Z prefers
+authoritative Trace JetFrame.altitude; bank easing remains cosmetic.
 
 Ground entities use camera-facing billboard glyphs. Jets use a small,
 non-billboarded procedural dart mesh oriented in full 3D (Phase 25).
@@ -36,7 +35,15 @@ from viewer3d.flight_dynamics import (
     ease_toward,
 )
 from viewer3d.highlights import TickHighlights
-from wraithnet.trace_schemas import StrikeEvent, TraceHeader, TraceTick
+from viewer3d.terrain_mesh import build_terrain_root, resolve_header_terrain
+from wraithnet.trace_schemas import (
+    CarrierFrame,
+    CorvetteFrame,
+    StrikeEvent,
+    TankFrame,
+    TraceHeader,
+    TraceTick,
+)
 
 JET_ALTITUDE = 8.0  # world-units above the ground plane; presentation only
 
@@ -47,12 +54,14 @@ TARGET_COLORS = {
     "HARDENED_BUNKER": (150 / 255, 100 / 255, 60 / 255, 1.0),
     "MOBILE_RADAR": (70 / 255, 120 / 255, 220 / 255, 1.0),
     "SAM_SITE": (210 / 255, 60 / 255, 60 / 255, 1.0),
+    "AAA_SITE": (230 / 255, 140 / 255, 40 / 255, 1.0),
 }
 DESTROYED_COLOR = (70 / 255, 70 / 255, 70 / 255, 1.0)
 JAMMER_COLOR = (170 / 255, 90 / 255, 220 / 255, 1.0)
 GRID_COLOR = (0.15, 0.55, 0.72, 0.9)
 GROUND_COLOR = (0.02, 0.03, 0.06, 1.0)
 SAM_DISC_COLOR = (0.82, 0.22, 0.22, 0.18)
+AAA_DISC_COLOR = (0.90, 0.55, 0.15, 0.22)
 JAM_DISC_COLOR = (0.55, 0.25, 0.75, 0.16)
 GLYPH_SCALE = 1.6
 HIGHLIGHT_DURATION = 0.45
@@ -62,6 +71,14 @@ JAM_FLASH_COLOR = (1.0, 0.35, 1.0, 1.0)
 UNJAM_FLASH_COLOR = (0.31, 0.86, 1.0, 1.0)
 RTB_FLASH_COLOR = (0.31, 0.63, 1.0, 1.0)
 HOME_BASE_COLOR = (0.35, 0.78, 0.55, 1.0)
+CARRIER_COLOR = (0.55, 0.65, 0.75, 1.0)
+CARRIER_RECOVERY_RING = (0.45, 0.75, 0.95, 0.28)
+CORVETTE_COLOR = (0.75, 0.35, 0.28, 1.0)
+CORVETTE_SAM_RING = (0.85, 0.25, 0.25, 0.16)
+CORVETTE_CIWS_RING = (0.95, 0.55, 0.2, 0.2)
+TANK_FRIENDLY_COLOR = (0.35, 0.7, 0.45, 1.0)
+TANK_ENEMY_COLOR = (0.75, 0.4, 0.25, 1.0)
+MISSILE_COLOR = (1.0, 0.82, 0.25, 1.0)
 
 
 @dataclass
@@ -89,9 +106,16 @@ class SceneHandles:
     first_seen_tick: dict[str, int] = field(default_factory=dict)
     last_struck_tick: dict[str, int] = field(default_factory=dict)
     home_base: NodePath | None = None
+    carriers: dict[str, NodePath] = field(default_factory=dict)
+    corvettes: dict[str, NodePath] = field(default_factory=dict)
+    tanks: dict[str, NodePath] = field(default_factory=dict)
     fx_root: NodePath | None = None
     highlight_fx: list[_FxItem] = field(default_factory=list)
     pending_jet_removal: set[str] = field(default_factory=set)
+    terrain_root: NodePath | None = None
+    water_anim_phase: float = 0.0
+    # Phase 38: authoritative in-flight missile glyphs keyed by missile_id.
+    missiles: dict[str, NodePath] = field(default_factory=dict)
 
 
 def _rgb(rgb: tuple[int, int, int], a: float = 1.0) -> tuple[float, float, float, float]:
@@ -318,10 +342,15 @@ def _target_points(target_type: str):
 def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     """Called once, when the header first arrives. Jets start hidden until tick 0."""
     root = render_root.attach_new_node("wraithnet-scene")
-    _ground_quad(root, header.grid_width, header.grid_height)
-    _grid_lines(root, header.grid_width, header.grid_height)
+    terrain = resolve_header_terrain(header)
+    terrain_root = build_terrain_root(root, terrain)
+    _grid_lines(root, header.grid_width, header.grid_height, step=terrain.cell_size)
 
-    handles = SceneHandles(root=root, fx_root=root.attach_new_node("fx-root"))
+    handles = SceneHandles(
+        root=root,
+        fx_root=root.attach_new_node("fx-root"),
+        terrain_root=terrain_root,
+    )
     cx, cy = header.grid_width / 2.0, header.grid_height / 2.0
 
     for tid in header.target_ids:
@@ -339,6 +368,15 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
                 0.0,
                 header.sam_engagement_range,
                 SAM_DISC_COLOR,
+            )
+        if ttype == "AAA_SITE" or tid in getattr(header, "aaa_site_ids", []):
+            _ground_disc(
+                anchor,
+                f"aaa-ring-{tid}",
+                0.0,
+                0.0,
+                5.0,
+                AAA_DISC_COLOR,
             )
         handles.targets[tid] = anchor
 
@@ -377,6 +415,30 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         handles.rendered_bank_deg[aid] = 0.0
 
     return handles
+
+
+def sync_static_unit_glyphs(
+    handles: SceneHandles,
+    *,
+    carriers: list[CarrierFrame] | None = None,
+    corvettes: list[CorvetteFrame] | None = None,
+    tanks: list[TankFrame] | None = None,
+) -> None:
+    """Place/update carrier, corvette, and tank glyphs for editor static scenes."""
+    tick = TraceTick(
+        tick=0,
+        jets=[],
+        targets=[],
+        strikes=[],
+        running=True,
+        swarm_wiped_out=False,
+        carriers=list(carriers or []),
+        corvettes=list(corvettes or []),
+        tanks=list(tanks or []),
+    )
+    _update_carrier_glyphs(handles, tick)
+    _update_corvette_glyphs(handles, tick)
+    _update_tank_glyphs(handles, tick)
 
 
 def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
@@ -449,12 +511,14 @@ def update_tick(
             handles.first_seen_tick[aid] = tick.tick
         heading = float(frame.heading)
         handles.jet_heading_deg[aid] = heading
+        auth_z = getattr(frame, "altitude", None)
         target_z = desired_altitude(
             airborne.get(aid, 0.0),
             frame.position,
             header,
             tick,
             just_struck=aid in struck,
+            authoritative_altitude=auth_z,
         )
         prev_z = handles.previous_desired_altitude.get(aid)
         handles.desired_altitude[aid] = target_z
@@ -479,6 +543,193 @@ def update_tick(
             glyph = anchor.find("**/glyph-*")
             if not glyph.is_empty():
                 glyph.set_color(r, g, b, a)
+
+    _update_missile_glyphs(handles, tick)
+    _update_carrier_glyphs(handles, tick)
+    _update_corvette_glyphs(handles, tick)
+    _update_tank_glyphs(handles, tick)
+
+
+def _carrier_deck_points() -> list[tuple[float, float]]:
+    """Simple elongated rectangle glyph for a carrier deck (x, z local)."""
+    return [(-0.4, -1.2), (0.4, -1.2), (0.4, 1.2), (-0.4, 1.2)]
+
+
+def _corvette_hull_points() -> list[tuple[float, float]]:
+    """Compact diamond/hull glyph for a corvette."""
+    return [(0.0, 0.9), (0.35, 0.0), (0.0, -0.7), (-0.35, 0.0)]
+
+
+def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
+    """Sync Phase 40 carrier frames: deck glyph + recovery ring."""
+    frames = list(getattr(tick, "carriers", None) or [])
+    alive = {c.unit_id for c in frames}
+    for cid in list(handles.carriers):
+        if cid not in alive:
+            node = handles.carriers.pop(cid)
+            if node is not None and not node.is_empty():
+                node.remove_node()
+    for c in frames:
+        anchor = handles.carriers.get(c.unit_id)
+        if anchor is None or anchor.is_empty():
+            anchor = handles.root.attach_new_node(f"carrier-{c.unit_id}")
+            _attach_glyph(
+                anchor,
+                f"glyph-{c.unit_id}",
+                _carrier_deck_points(),
+                CARRIER_COLOR,
+            )
+            from wraithnet import config as wn_config
+
+            _ground_disc(
+                anchor,
+                f"recovery-ring-{c.unit_id}",
+                0.0,
+                0.0,
+                float(wn_config.RECOVERY_APPROACH_RADIUS),
+                CARRIER_RECOVERY_RING,
+            )
+            handles.carriers[c.unit_id] = anchor
+        x, y = float(c.position[0]), float(c.position[1])
+        anchor.set_pos(x, y, 0.18)
+        # Panda H matches sim heading (0=+y).
+        anchor.set_h(float(c.heading))
+        glyph = anchor.find(f"**/glyph-{c.unit_id}")
+        if c.destroyed or c.hp <= 0:
+            if not glyph.is_empty():
+                glyph.set_color(*DESTROYED_COLOR)
+            ring = anchor.find("**/recovery-ring-*")
+            if not ring.is_empty():
+                ring.hide()
+        else:
+            if not glyph.is_empty():
+                glyph.set_color(*CARRIER_COLOR)
+            ring = anchor.find("**/recovery-ring-*")
+            if not ring.is_empty():
+                ring.show()
+
+
+def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
+    """Sync Phase 41 corvette frames: hull glyph + SAM/CIWS threat rings."""
+    frames = list(getattr(tick, "corvettes", None) or [])
+    alive = {c.unit_id for c in frames}
+    for cid in list(handles.corvettes):
+        if cid not in alive:
+            node = handles.corvettes.pop(cid)
+            if node is not None and not node.is_empty():
+                node.remove_node()
+    for c in frames:
+        anchor = handles.corvettes.get(c.unit_id)
+        if anchor is None or anchor.is_empty():
+            anchor = handles.root.attach_new_node(f"corvette-{c.unit_id}")
+            _attach_glyph(
+                anchor,
+                f"glyph-{c.unit_id}",
+                _corvette_hull_points(),
+                CORVETTE_COLOR,
+            )
+            _ground_disc(
+                anchor,
+                f"sam-ring-{c.unit_id}",
+                0.0,
+                0.0,
+                float(getattr(c, "sam_range", 15.0) or 15.0),
+                CORVETTE_SAM_RING,
+            )
+            _ground_disc(
+                anchor,
+                f"ciws-ring-{c.unit_id}",
+                0.0,
+                0.0,
+                float(getattr(c, "ciws_range", 4.0) or 4.0),
+                CORVETTE_CIWS_RING,
+            )
+            handles.corvettes[c.unit_id] = anchor
+        x, y = float(c.position[0]), float(c.position[1])
+        anchor.set_pos(x, y, 0.16)
+        anchor.set_h(float(c.heading))
+        glyph = anchor.find(f"**/glyph-{c.unit_id}")
+        destroyed = bool(c.destroyed or c.hp <= 0)
+        if destroyed:
+            if not glyph.is_empty():
+                glyph.set_color(*DESTROYED_COLOR)
+            for pattern in ("**/sam-ring-*", "**/ciws-ring-*"):
+                ring = anchor.find(pattern)
+                if not ring.is_empty():
+                    ring.hide()
+        else:
+            if not glyph.is_empty():
+                glyph.set_color(*CORVETTE_COLOR)
+            for pattern in ("**/sam-ring-*", "**/ciws-ring-*"):
+                ring = anchor.find(pattern)
+                if not ring.is_empty():
+                    ring.show()
+
+
+def _tank_hull_points() -> list[tuple[float, float]]:
+    """Compact trapezoid hull for tanks."""
+    return [(-0.55, -0.35), (0.55, -0.35), (0.4, 0.4), (-0.4, 0.4)]
+
+
+def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
+    """Sync Phase 43 tank frames with faction colors."""
+    frames = list(getattr(tick, "tanks", None) or [])
+    alive = {t.unit_id for t in frames}
+    for tid in list(handles.tanks):
+        if tid not in alive:
+            node = handles.tanks.pop(tid)
+            if node is not None and not node.is_empty():
+                node.remove_node()
+    for t in frames:
+        color = (
+            TANK_FRIENDLY_COLOR
+            if str(getattr(t, "faction", "")) == "FRIENDLY"
+            else TANK_ENEMY_COLOR
+        )
+        anchor = handles.tanks.get(t.unit_id)
+        if anchor is None or anchor.is_empty():
+            anchor = handles.root.attach_new_node(f"tank-{t.unit_id}")
+            _attach_glyph(
+                anchor,
+                f"glyph-{t.unit_id}",
+                _tank_hull_points(),
+                color,
+            )
+            handles.tanks[t.unit_id] = anchor
+        x, y = float(t.position[0]), float(t.position[1])
+        anchor.set_pos(x, y, 0.14)
+        anchor.set_h(float(t.heading))
+        glyph = anchor.find(f"**/glyph-{t.unit_id}")
+        destroyed = bool(t.destroyed or t.hp <= 0)
+        if destroyed:
+            if not glyph.is_empty():
+                glyph.set_color(*DESTROYED_COLOR)
+        elif not glyph.is_empty():
+            glyph.set_color(*color)
+
+
+def _update_missile_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
+    """Sync authoritative MissileFrame positions; remove stale glyphs."""
+    frames = list(getattr(tick, "missiles", None) or [])
+    alive = {m.missile_id for m in frames}
+    for mid in list(handles.missiles):
+        if mid not in alive:
+            node = handles.missiles.pop(mid)
+            if node is not None and not node.is_empty():
+                node.remove_node()
+    parent = _fx_parent(handles)
+    for m in frames:
+        pos = m.position
+        node = handles.missiles.get(m.missile_id)
+        if node is None or node.is_empty():
+            node = parent.attach_new_node(f"missile-{m.missile_id}")
+            glyph = _attach_glyph(
+                node, f"missile-glyph-{m.missile_id}", _diamond_pts(), MISSILE_COLOR
+            )
+            glyph.set_scale(GLYPH_SCALE * 0.55)
+            handles.missiles[m.missile_id] = node
+        node.set_pos(float(pos[0]), float(pos[1]), float(pos[2]))
+        node.show()
 
 
 def _fx_parent(handles: SceneHandles) -> NodePath:
@@ -608,6 +859,20 @@ def decay_highlights(handles: SceneHandles, dt: float) -> None:
         item.node.set_color_scale(1.0, 1.0, 1.0, max(0.0, frac))
         still.append(item)
     handles.highlight_fx = still
+    animate_water(handles, dt)
+
+
+def animate_water(handles: SceneHandles, dt: float) -> None:
+    """Cosmetic water shimmer — never mutates terrain data."""
+    if handles.terrain_root is None or handles.terrain_root.is_empty():
+        return
+    water = handles.terrain_root.find("**/terrain-water")
+    if water.is_empty():
+        return
+    handles.water_anim_phase = (handles.water_anim_phase + dt * 1.2) % (2.0 * math.pi)
+    # Subtle alpha pulse; Z stays at surface zero so entities remain consistent.
+    pulse = 0.78 + 0.08 * math.sin(handles.water_anim_phase)
+    water.set_color_scale(1.0, 1.0, 1.0, pulse)
 
 
 def apply_tick_highlights(

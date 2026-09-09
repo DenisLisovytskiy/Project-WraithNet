@@ -25,7 +25,7 @@ loadPrcFileData("", "notify-level error")
 
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import JetFrame, JetOutcomeEvent, StrikeEvent, TargetFrame, TraceHeader, TraceTick
 from viewer3d.scene import (
     SceneHandles,
@@ -44,7 +44,7 @@ from viewer3d.stream_client import DisconnectedEvent, EndEvent, HeaderEvent, Tic
 
 
 def _tiny_scenario() -> ScenarioConfig:
-    return ScenarioConfig(
+    return scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Solo_Jet",
@@ -60,7 +60,7 @@ def _tiny_scenario() -> ScenarioConfig:
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
 
 
 def _sample_header() -> TraceHeader:

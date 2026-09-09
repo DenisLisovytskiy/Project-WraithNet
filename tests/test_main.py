@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from wraithnet.scenario_io import save_scenario
-from wraithnet.scenario_schema import ScenarioConfig
+from wraithnet.scenario_schema import ScenarioConfig, new_scenario_data, scenario_from_data
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCENARIO_PATH = REPO_ROOT / "scenarios" / "default.json"
@@ -30,7 +30,7 @@ def test_main_with_default_json_matches_main_with_no_flags():
 
 
 def test_main_runs_a_custom_scenario_file(tmp_path):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -46,7 +46,7 @@ def test_main_runs_a_custom_scenario_file(tmp_path):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     path = tmp_path / "custom.json"
     save_scenario(custom, path)
     result = _run_main("--scenario", str(path))
@@ -58,7 +58,7 @@ def test_main_runs_a_custom_scenario_file(tmp_path):
 
 
 def test_main_live_completes_without_a_client(tmp_path):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -74,7 +74,7 @@ def test_main_live_completes_without_a_client(tmp_path):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     path = tmp_path / "custom.json"
     save_scenario(custom, path)
     result = _run_main(
@@ -91,7 +91,7 @@ def test_main_live_completes_without_a_client(tmp_path):
 
 
 def test_main_explicit_argv_matches_sys_argv(tmp_path, monkeypatch, capsys):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -107,7 +107,7 @@ def test_main_explicit_argv_matches_sys_argv(tmp_path, monkeypatch, capsys):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     path = tmp_path / "custom.json"
     save_scenario(custom, path)
 
@@ -127,7 +127,7 @@ def test_main_explicit_argv_matches_sys_argv(tmp_path, monkeypatch, capsys):
 
 
 def test_main_writes_results_via_user_data_dir(tmp_path, monkeypatch):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -143,7 +143,7 @@ def test_main_writes_results_via_user_data_dir(tmp_path, monkeypatch):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     scenario_path = tmp_path / "custom.json"
     save_scenario(custom, scenario_path)
 
@@ -165,7 +165,7 @@ def test_main_writes_results_via_user_data_dir(tmp_path, monkeypatch):
 
 
 def test_main_output_dir_isolates_results(tmp_path):
-    custom = ScenarioConfig(
+    custom = scenario_from_data(new_scenario_data(
         jets=[
             {
                 "agent_id": "Solo_Jet",
@@ -181,7 +181,7 @@ def test_main_output_dir_isolates_results(tmp_path):
                 "target_type": "HARDENED_BUNKER",
             }
         ],
-    )
+    ))
     scenario_path = tmp_path / "custom.json"
     save_scenario(custom, scenario_path)
     out_a = tmp_path / "run-a"

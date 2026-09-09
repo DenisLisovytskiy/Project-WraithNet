@@ -9,7 +9,7 @@ from wraithnet.bridge import WraithNetBridge
 from wraithnet.metrics import summarize
 from wraithnet.recorder import TraceRecorder
 from wraithnet.schemas import ActionIntent
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 
@@ -247,7 +247,7 @@ def test_tick_heading_and_fuel_match_live_jet(tmp_path):
 
 def test_jet_outcomes_are_per_tick_not_cumulative(tmp_path):
     home = (20.0, 20.0)
-    scenario = ScenarioConfig(
+    scenario = scenario_from_data(new_scenario_data(
         home_base=home,
         jets=[
             JetSpec(
@@ -269,7 +269,7 @@ def test_jet_outcomes_are_per_tick_not_cumulative(tmp_path):
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     bridge = WraithNetBridge(sinks=[recorder], scenario=scenario)

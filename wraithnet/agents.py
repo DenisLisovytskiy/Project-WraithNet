@@ -9,59 +9,146 @@ Phase 6: weapon-suitability-aware bidding and STRIKE weapon_type.
 Phase 7: world_view memory, DATALINK_CONTACT sharing, direct-sensing STRIKE rule.
 Phase 21: catalog-driven bidding; rotate-to-bear before striking a narrow-arc weapon.
 Phase 22: bingo-fuel RTB role; fly home, ignore new contracts.
+Phase 39: basic flare/notch reactions to inbound IR/radar threats.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
-import uuid
+from typing import TYPE_CHECKING, Callable
 
 from wraithnet import config
+from wraithnet.bid_schemas import AwardContext, BidProposal, ThreatContact
+from wraithnet.bid_utility import (
+    build_bid_proposals,
+    flare_readiness,
+    proposal_damage_milli,
+    select_winning_bids,
+)
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
 from wraithnet.geometry import bearing_to, is_in_firing_arc
-from wraithnet.schemas import ActionIntent, Message, Observation, TargetInfo
+from wraithnet.schemas import ActionIntent, InboundThreat, Message, Observation, TargetInfo
+
+if TYPE_CHECKING:
+    from wraithnet.world import WraithNetModel
 
 MAX_CFP_ROUNDS = 5  # defensive cap so a manager can't re-broadcast forever
+
+
+def stable_id(*parts: object) -> str:
+    """Deterministic 32-char hex ID from stable parts (not UUIDs)."""
+    raw = "|".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _threat_contacts_from_observation(obs: Observation) -> list[ThreatContact]:
+    """Build typed contacts from inbound + gun threats (no hidden world leak)."""
+    contacts: list[ThreatContact] = []
+    for threat in obs.inbound_threats:
+        guidance = str(getattr(threat, "guidance", "") or "")
+        if guidance == "INFRARED":
+            kind = "IR_MISSILE"
+        elif guidance == "RADAR":
+            kind = "RADAR_MISSILE"
+        else:
+            kind = "UNKNOWN"
+        contacts.append(
+            ThreatContact(
+                threat_id=str(getattr(threat, "missile_id", "") or f"in_{kind}"),
+                kind=kind,  # type: ignore[arg-type]
+                position=tuple(obs.current_position),
+                altitude=float(obs.current_altitude),
+                observed_tick=int(obs.tick),
+                confidence=1.0,
+                source="DIRECT",
+                observer_id=obs.agent_id,
+                readiness=1.0,
+            )
+        )
+    for gun in getattr(obs, "observed_gun_threats", None) or []:
+        contacts.append(
+            ThreatContact(
+                threat_id=str(getattr(gun, "threat_id", getattr(gun, "source_id", "gun"))),
+                kind="GUN_AAA",
+                position=tuple(getattr(gun, "position", obs.current_position)),
+                altitude=0.0,
+                observed_tick=int(obs.tick),
+                confidence=1.0,
+                source="DIRECT",
+                observer_id=obs.agent_id,
+                readiness=1.0,
+            )
+        )
+    return contacts
+
+
+def compute_bid_proposals(
+    observation: Observation,
+    target: TargetInfo,
+    hp_needed: int | None = None,
+    threat_contacts: list[ThreatContact] | None = None,
+    context_hash: str = "",
+) -> list[BidProposal]:
+    """All legal weapon proposals for this bidder (Phase 45)."""
+    ask = target.hp_remaining if hp_needed is None else hp_needed
+    contacts = threat_contacts if threat_contacts is not None else _threat_contacts_from_observation(
+        observation
+    )
+    frame = config.JET_FRAME_CATALOG.get(observation.frame_type)
+    cooldown = int(getattr(frame, "flare_cooldown_ticks", 2) or 2) if frame else 2
+    return build_bid_proposals(
+        bidder_id=observation.agent_id,
+        position=observation.current_position,
+        altitude=float(observation.current_altitude),
+        heading_deg=float(observation.current_heading),
+        velocity=float(observation.current_speed),
+        payload={str(k): int(v) for k, v in observation.payload.items()},
+        target_id=target.target_id,
+        target_type=str(target.target_type),
+        target_position=tuple(target.position),
+        hp_needed=int(ask),
+        flares_remaining=int(observation.flares_remaining),
+        flare_capacity=int(observation.flare_capacity),
+        flare_cooldown_remaining=int(observation.flare_cooldown_remaining),
+        frame_flare_cooldown_ticks=cooldown,
+        has_rwr=bool(observation.radar_warning_receiver),
+        notch_hold_progress=0,
+        notch_hold_ticks=int(observation.notch_hold_ticks),
+        hp=3,
+        hp_max=3,
+        threat_contacts=contacts,
+        context_hash=context_hash or "",
+    )
 
 
 def compute_bid(
     observation: Observation,
     target: TargetInfo,
     hp_needed: int | None = None,
+    threat_contacts: list[ThreatContact] | None = None,
+    context_hash: str = "",
 ) -> tuple[float, int, str] | None:
-    """Returns (bid_utility, payload_offered, weapon_type), or None if this
-    jet has no weapon suitable for target.target_type (hard disqualification —
-    do not fold this into the utility score, see docs/03_..., finding I3).
+    """Returns (bid_utility, payload_offered, weapon_type), or None.
 
-    ``hp_needed`` is the ask for this CFP round (the manager's announced
-    shortfall). When omitted, falls back to ``target.hp_remaining`` — correct
-    for round 1, but later rounds must pass the CFP's ``hp_remaining``.
+    Uses Phase 45 ``build_bid_proposals``. With zero known exposure the leading
+    proposal utility matches the legacy scalar formula (PoC-safe).
     """
-    ask = target.hp_remaining if hp_needed is None else hp_needed
-    suitable = [
-        (wt, count)
-        for wt, count in observation.payload.items()
-        if count > 0
-        and config.WEAPON_CATALOG[wt].suitability.get(target.target_type, 0.0) > 0.0
-    ]
-    if not suitable:
-        return None
-    # Prefer the suitable weapon this jet holds the most of; tie-break alphabetically.
-    weapon_type, count = max(suitable, key=lambda pair: (pair[1], pair[0]))
-    suitability = config.WEAPON_CATALOG[weapon_type].suitability[target.target_type]
-    payload_score = min(1.0, count / ask)
-    distance = math.dist(observation.current_position, target.position)
-    distance_score = distance / config.MAX_GRID_DISTANCE
-    utility = (
-        config.UTILITY_W_WEAPON * suitability
-        + config.UTILITY_W1 * payload_score
-        - config.UTILITY_W2 * distance_score
+    proposals = compute_bid_proposals(
+        observation,
+        target,
+        hp_needed=hp_needed,
+        threat_contacts=threat_contacts,
+        context_hash=context_hash,
     )
-    payload_offered = min(count, ask)
-    return utility, payload_offered, weapon_type
-
+    if not proposals:
+        return None
+    # Legacy preferred the suitable weapon with most ammo; among equal totals
+    # build_bid_proposals already sorts (-utility, -ammo, weapon).
+    best = proposals[0]
+    return float(best.utility.total), int(best.payload_offered), str(best.weapon_type)
 
 class JetAgentRuntime:
     def __init__(self, agent_id: str, broker: MessageBroker) -> None:
@@ -70,6 +157,14 @@ class JetAgentRuntime:
         self.broker.register(agent_id)
         self.received_messages: list[Message] = []
         self._task: asyncio.Task | None = None
+        # Phase 37: per-source sequence for deterministic message/contract IDs.
+        self._msg_seq: int = 0
+        # When set (bridge), bid windows use logical ticks; else wall-clock shim.
+        self._model: WraithNetModel | None = None
+        self._use_tick_bid_timeout: bool = False
+        self._bid_deadline_tick: int | None = None
+        # Optional override clock for tests (returns current logical tick).
+        self._tick_clock: Callable[[], int] | None = None
 
         self.role: str = "IDLE"
         self.latest_observation: Observation | None = None
@@ -88,10 +183,77 @@ class JetAgentRuntime:
         self.committed_weapon_type: str | None = None
         # Tick we entered CONTRACTOR_PENDING; cleared on ACCEPT/REJECT/TTL (Phase 9).
         self.pending_bid_since_tick: int | None = None
+        # Phase 45: shared RISK_UPDATE context keyed by contract_id so concurrent
+        # managers cannot clobber each other's award/bid pricing context.
+        self._risk_context_hash: str = ""
+        self._risk_contacts: list[ThreatContact] = []
+        self._risk_by_contract: dict[str, tuple[str, list[ThreatContact]]] = {}
+        # Local negotiation audit (also mirrored onto model when available).
+        self.negotiation_events: list[dict] = []
 
         # Survives past managed_target_id cleanup — who we ACCEPTed for each target
         # (never includes self). Used by notify_contractor_lost (Phase 8).
         self.managed_contracts: dict[str, set[str]] = {}
+
+    def _record_negotiation(self, event: dict) -> None:
+        """Append a negotiation audit event to runtime + model (Part H)."""
+        self.negotiation_events.append(event)
+        model = self._model
+        if model is not None:
+            log = getattr(model, "negotiation_events", None)
+            if log is None:
+                model.negotiation_events = []
+                log = model.negotiation_events
+            log.append(event)
+
+    def _next_stable_id(self, *parts: object) -> str:
+        self._msg_seq += 1
+        return stable_id(*parts, self._msg_seq)
+
+    def _current_logical_tick(self) -> int:
+        if self._tick_clock is not None:
+            return int(self._tick_clock())
+        if self._model is not None:
+            return int(self._model.tick)
+        if self.latest_observation is not None:
+            return int(self.latest_observation.tick)
+        return 0
+
+    async def _await_bid_window(self) -> bool:
+        """Wait for the CFP bid collection window.
+
+        Bridge path (``_use_tick_bid_timeout``): poll/yield until the logical
+        clock reaches ``deadline_tick = current_tick + BID_TIMEOUT_TICKS``, or
+        until ``BID_TIMEOUT_TICKS`` cooperative yields elapse while the world
+        tick is frozen mid-negotiation (in-tick CNP).
+
+        Compat shim (unit tests): ``await asyncio.sleep(BID_TIMEOUT_SECONDS)``
+        so existing monkeypatches keep working.
+
+        Returns False if cancelled mid-wait (claim already aborted).
+        """
+        obs = self.latest_observation
+        assert obs is not None
+        start_tick = self._current_logical_tick()
+        deadline_tick = start_tick + config.BID_TIMEOUT_TICKS
+        self._bid_deadline_tick = deadline_tick
+        try:
+            if self._use_tick_bid_timeout:
+                yields = 0
+                # Extra yields beyond BID_TIMEOUT_TICKS give mailbox drain room
+                # when multiple IDLE agents finish scan_and_negotiate concurrently.
+                yield_budget = max(config.BID_TIMEOUT_TICKS, 3) * 2
+                while self._current_logical_tick() < deadline_tick:
+                    await asyncio.sleep(0)
+                    yields += 1
+                    if yields >= yield_budget:
+                        break
+                return True
+            await asyncio.sleep(config.BID_TIMEOUT_SECONDS)
+            return True
+        except asyncio.CancelledError:
+            self._abort_open_management()
+            return False
 
     def set_observation(self, observation: Observation) -> None:
         """Called by test code in this phase, and by the Bridge in Phase 4,
@@ -136,7 +298,9 @@ class JetAgentRuntime:
         for target in changed:
             await self.broker.send(
                 Message(
-                    message_id=uuid.uuid4().hex,
+                    message_id=self._next_stable_id(
+                        self.agent_id, target.target_id, obs.tick, "DATALINK"
+                    ),
                     contract_id=None,
                     tick=obs.tick,
                     sender_id=self.agent_id,
@@ -161,6 +325,19 @@ class JetAgentRuntime:
                 assert message.target_info is not None
                 self.world_view[message.target_id] = (message.target_info, message.tick)
             return
+        if message.message_type == "RISK_UPDATE":
+            contacts = [
+                ThreatContact.model_validate(c) for c in (message.threat_contacts or [])
+            ]
+            context_hash = message.context_hash or ""
+            if message.contract_id:
+                self._risk_by_contract[message.contract_id] = (context_hash, contacts)
+            # Refresh active fields only for our open management contract or when idle
+            # (about to bid); never let another manager's update clobber ours mid-award.
+            if message.contract_id == self.open_contract_id or self.role == "IDLE":
+                self._risk_context_hash = context_hash
+                self._risk_contacts = contacts
+            return
         if message.message_type == "CFP":
             await self._maybe_bid(message)
         elif (
@@ -168,9 +345,6 @@ class JetAgentRuntime:
             and self.managed_target_id is not None
             and message.target_id == self.managed_target_id
         ):
-            # Key off managed_target_id, not role==MANAGER: a self-commit in an
-            # earlier round sets role=CONTRACTOR while this agent is still
-            # collecting bids for later CFP rounds.
             self._collected_bids.append(message)
         elif message.message_type == "ACCEPT" and self.role == "CONTRACTOR_PENDING":
             self._commit(
@@ -196,7 +370,9 @@ class JetAgentRuntime:
         obs = self.latest_observation
         if self.role != "IDLE" or obs is None or target.hp_remaining <= 0:
             return False
-        contract_id = uuid.uuid4().hex
+        contract_id = self._next_stable_id(
+            self.agent_id, target.target_id, obs.tick, "CONTRACT"
+        )
         if not self.broker.try_open_contract(
             target.target_id, contract_id, self.agent_id, obs.tick
         ):
@@ -213,11 +389,35 @@ class JetAgentRuntime:
         obs = self.latest_observation
         assert obs is not None
         self._collected_bids = []
-        # Self-bid: the manager may also strike its own managed target. Without
-        # this, a jet that spots and manages a target it's well-placed to hit
-        # itself would never fire, which contradicts minimizing total distance.
-        # Skip if we already committed to this target in a prior round — re-bidding
-        # the same missiles would double-count them against the remaining shortfall.
+        contacts = _threat_contacts_from_observation(obs)
+        context_hash = stable_id(
+            self.open_contract_id,
+            self.managed_target_id,
+            obs.tick,
+            self._cfp_round,
+            "RISK",
+            *[c.threat_id for c in contacts],
+        )
+        self._risk_contacts = contacts
+        self._risk_context_hash = context_hash
+        if self.open_contract_id:
+            self._risk_by_contract[self.open_contract_id] = (context_hash, contacts)
+        # Phase 45: broadcast normalized threat set before bids.
+        await self.broker.send(
+            Message(
+                message_id=self._next_stable_id(
+                    self.agent_id, self.managed_target_id, obs.tick, "RISK_UPDATE"
+                ),
+                contract_id=self.open_contract_id,
+                tick=obs.tick,
+                sender_id=self.agent_id,
+                receiver_id=BROADCAST_ID,
+                message_type="RISK_UPDATE",
+                target_id=self.managed_target_id,
+                context_hash=context_hash,
+                threat_contacts=[c.model_dump() for c in contacts],
+            )
+        )
         already_committed = (
             self.committed_target_id == self.managed_target_id
             and self.committed_payload > 0
@@ -232,25 +432,56 @@ class JetAgentRuntime:
                 None,
             )
             if target is not None:
-                bid = compute_bid(obs, target, hp_needed=hp_needed)
-                if bid is not None:
-                    utility, payload_offered, weapon_type = bid
+                proposals = compute_bid_proposals(
+                    obs,
+                    target,
+                    hp_needed=hp_needed,
+                    threat_contacts=contacts,
+                    context_hash=context_hash,
+                )
+                if proposals:
+                    best = proposals[0]
                     self._collected_bids.append(
                         Message(
-                            message_id=uuid.uuid4().hex,
+                            message_id=self._next_stable_id(
+                                self.agent_id,
+                                self.managed_target_id,
+                                obs.tick,
+                                "SELF_BID",
+                            ),
                             contract_id=self.open_contract_id,
                             tick=obs.tick,
                             sender_id=self.agent_id,
                             receiver_id=self.agent_id,
                             message_type="BID",
                             target_id=self.managed_target_id,
-                            payload_offered=payload_offered,
-                            bid_utility=utility,
-                            weapon_type=weapon_type,
+                            payload_offered=best.payload_offered,
+                            bid_utility=float(best.utility.total),
+                            weapon_type=best.weapon_type,  # type: ignore[arg-type]
+                            context_hash=context_hash,
+                            proposals=[p.model_dump() for p in proposals],
                         )
                     )
+                    self._record_negotiation(
+                        {
+                            "event": "bid",
+                            "tick": obs.tick,
+                            "context_hash": context_hash,
+                            "contract_id": self.open_contract_id,
+                            "target_id": self.managed_target_id,
+                            "bidder_id": self.agent_id,
+                            "proposal_count": len(proposals),
+                            "flares_remaining": int(obs.flares_remaining),
+                            "flare_capacity": int(obs.flare_capacity),
+                            "best_utility": float(best.utility.total),
+                            "best_weapon": best.weapon_type,
+                            "status": "valid",
+                        }
+                    )
         cfp = Message(
-            message_id=uuid.uuid4().hex,
+            message_id=self._next_stable_id(
+                self.agent_id, self.managed_target_id, obs.tick, "CFP"
+            ),
             contract_id=self.open_contract_id,
             tick=obs.tick,
             sender_id=self.agent_id,
@@ -258,12 +489,25 @@ class JetAgentRuntime:
             message_type="CFP",
             target_id=self.managed_target_id,
             hp_remaining=hp_needed,
+            raw_hp=hp_needed,
+            reserved_hp=0,
+            context_hash=context_hash,
+            threat_contacts=[c.model_dump() for c in contacts],
         )
         await self.broker.send(cfp)
-        try:
-            await asyncio.sleep(config.BID_TIMEOUT_SECONDS)
-        except asyncio.CancelledError:
-            self._abort_open_management()
+        self._record_negotiation(
+            {
+                "event": "cfp",
+                "tick": obs.tick,
+                "context_hash": context_hash,
+                "contract_id": self.open_contract_id,
+                "target_id": self.managed_target_id,
+                "raw_hp": int(hp_needed),
+                "unreserved_hp": int(hp_needed),
+                "threat_contact_ids": [c.threat_id for c in contacts],
+            }
+        )
+        if not await self._await_bid_window():
             return
         await self._resolve_contract(hp_needed)
 
@@ -278,58 +522,193 @@ class JetAgentRuntime:
 
     async def _resolve_contract(self, hp_needed: int) -> None:
         assert self.latest_observation is not None
-        bids = sorted(self._collected_bids, key=lambda b: (-b.bid_utility, b.sender_id))
-        # Use this round's announced ask — Observation.hp_remaining is stale
-        # mid-negotiation (no strikes have landed yet this tick).
-        remaining = hp_needed
-        winners: list[Message] = []
-        for bid in bids:
-            if remaining <= 0:
-                break
-            winners.append(bid)
-            remaining -= bid.payload_offered
-        winner_ids = {b.sender_id for b in winners}
+        # Phase 45: convert BID messages into proposals for award selection.
+        from wraithnet.bid_schemas import (
+            AttackPlanSummary,
+            BidRiskBreakdownModel,
+            BidUtilityBreakdownModel,
+            BidderStateSnapshot,
+        )
 
-        for bid in bids:
+        proposals: list[BidProposal] = []
+        for bid in self._collected_bids:
+            if bid.proposals:
+                for raw in bid.proposals:
+                    proposals.append(BidProposal.model_validate(raw))
+                continue
+            util = float(bid.bid_utility or 0.0)
+            weapon = str(bid.weapon_type or "JDAM")
+            offered = int(bid.payload_offered or 1)
+            catalog = config.WEAPON_CATALOG.get(weapon)  # type: ignore[arg-type]
+            damage = int(catalog.damage_per_hit) if catalog is not None else 1
+            proposals.append(
+                BidProposal(
+                    bidder_id=bid.sender_id,
+                    weapon_type=weapon,
+                    payload_offered=offered,
+                    plan=AttackPlanSummary(
+                        weapon_type=weapon,
+                        launch_xy=(0.0, 0.0),
+                        launch_altitude=0.0,
+                        estimated_ticks_to_launch=0,
+                        estimated_ticks_to_impact=1,
+                    ),
+                    bidder_state=BidderStateSnapshot(
+                        agent_id=bid.sender_id,
+                        position=(0.0, 0.0),
+                        altitude=0.0,
+                        heading_deg=0.0,
+                        velocity=0.0,
+                        hp=3,
+                        hp_max=3,
+                        flares_remaining=0,
+                        flare_capacity=0,
+                    ),
+                    risk=BidRiskBreakdownModel(
+                        ir_risk=0.0, radar_risk=0.0, gun_risk=0.0, combined=0.0
+                    ),
+                    utility=BidUtilityBreakdownModel(
+                        capability=1.0,
+                        reach=1.0,
+                        survival=1.0,
+                        recovery=1.0,
+                        total=util,
+                    ),
+                    normalized_context_hash=bid.context_hash or "",
+                    expected_damage_milli=offered * damage * 1000,
+                )
+            )
+
+        context_hash = self._risk_context_hash or ""
+        if self.open_contract_id and self.open_contract_id in self._risk_by_contract:
+            context_hash = self._risk_by_contract[self.open_contract_id][0]
+        award = select_winning_bids(
+            proposals,
+            AwardContext(
+                target_id=str(self.managed_target_id),
+                raw_hp=int(hp_needed),
+                reserved_hp=0,
+                unreserved_hp=int(hp_needed),
+                context_hash=context_hash,
+                current_tick=int(self.latest_observation.tick),
+            ),
+        )
+        accepted_by_bidder = {p.bidder_id: p for p in award.accepted}
+        winner_ids = set(accepted_by_bidder.keys())
+        covered_milli = sum(proposal_damage_milli(p) for p in award.accepted)
+        need_milli = max(0, int(hp_needed)) * 1000
+        if covered_milli >= need_milli:
+            remaining = 0
+        else:
+            remaining = int(math.ceil((need_milli - covered_milli) / 1000.0))
+
+        self._record_negotiation(
+            {
+                "event": "award",
+                "tick": self.latest_observation.tick,
+                "context_hash": context_hash,
+                "contract_id": self.open_contract_id,
+                "target_id": self.managed_target_id,
+                "accepted": [
+                    {
+                        "bidder_id": p.bidder_id,
+                        "weapon_type": p.weapon_type,
+                        "payload_offered": p.payload_offered,
+                        "expected_damage_milli": proposal_damage_milli(p),
+                        "utility": float(p.utility.total),
+                        "risk": float(p.risk.combined),
+                        "flares_remaining": int(p.bidder_state.flares_remaining),
+                        "flare_capacity": int(p.bidder_state.flare_capacity),
+                        "flare_readiness": flare_readiness(
+                            flares_remaining=int(p.bidder_state.flares_remaining),
+                            flare_capacity=int(p.bidder_state.flare_capacity),
+                            flare_cooldown_remaining=int(
+                                p.bidder_state.flare_cooldown_remaining
+                            ),
+                            ticks_to_first_ir_encounter=None,
+                            frame_flare_cooldown_ticks=2,
+                        ),
+                    }
+                    for p in award.accepted
+                ],
+                "reject_reasons": dict(award.reject_reasons),
+                "low_confidence_coverage": bool(award.low_confidence_coverage),
+                "overkill_milli": int(award.overkill_milli),
+                "covered_milli": int(covered_milli),
+                "raw_need_milli": int(need_milli),
+                "award_score": float(award.award_score),
+            }
+        )
+        for bidder_id, reason in sorted(award.reject_reasons.items()):
+            self._record_negotiation(
+                {
+                    "event": "decline",
+                    "tick": self.latest_observation.tick,
+                    "context_hash": context_hash,
+                    "contract_id": self.open_contract_id,
+                    "target_id": self.managed_target_id,
+                    "bidder_id": bidder_id,
+                    "reason": reason,
+                }
+            )
+
+        for bid in sorted(
+            self._collected_bids, key=lambda b: (-(b.bid_utility or 0.0), b.sender_id)
+        ):
+            winner = accepted_by_bidder.get(bid.sender_id)
             if bid.sender_id == self.agent_id:
-                if bid.sender_id in winner_ids:
+                if winner is not None:
                     self._commit(
                         self.managed_target_id,
-                        bid.payload_offered,
-                        bid.weapon_type,
+                        winner.payload_offered,
+                        winner.weapon_type,
                     )
                 continue
-            decision = "ACCEPT" if bid.sender_id in winner_ids else "REJECT"
+            decision = "ACCEPT" if winner is not None else "REJECT"
             if decision == "ACCEPT":
                 self.managed_contracts.setdefault(self.managed_target_id, set()).add(
                     bid.sender_id
                 )
             await self.broker.send(
                 Message(
-                    message_id=uuid.uuid4().hex,
+                    message_id=self._next_stable_id(
+                        self.agent_id,
+                        self.managed_target_id,
+                        self.latest_observation.tick,
+                        decision,
+                        bid.sender_id,
+                    ),
                     contract_id=self.open_contract_id,
                     tick=self.latest_observation.tick,
                     sender_id=self.agent_id,
                     receiver_id=bid.sender_id,
                     message_type=decision,
                     target_id=self.managed_target_id,
-                    payload_offered=bid.payload_offered if decision == "ACCEPT" else None,
-                    weapon_type=bid.weapon_type if decision == "ACCEPT" else None,
+                    payload_offered=winner.payload_offered if winner is not None else None,
+                    weapon_type=winner.weapon_type if winner is not None else None,  # type: ignore[arg-type]
                 )
             )
 
         if remaining > 0 and self._cfp_round < MAX_CFP_ROUNDS:
-            await self._broadcast_cfp_and_collect(remaining)  # re-negotiate the shortfall
+            await self._broadcast_cfp_and_collect(remaining)
             return
 
-        # Only free the claim on give-up. A fully-covered contract stays claimed
-        # until the target is destroyed (Bridge) or TTL expires — otherwise IDLE
-        # agents would reopen CFPs every tick for targets already being struck.
         if remaining > 0:
             self.broker.close_contract(self.managed_target_id)
+            self._record_negotiation(
+                {
+                    "event": "reservation_release",
+                    "tick": self.latest_observation.tick,
+                    "context_hash": context_hash,
+                    "contract_id": self.open_contract_id,
+                    "target_id": self.managed_target_id,
+                    "reason": "UNCOVERED_SHORTFALL",
+                    "remaining_hp": remaining,
+                }
+            )
         self.open_contract_id = None
         self.managed_target_id = None
-        if self.role == "MANAGER":  # did not win our own self-bid
+        if self.role == "MANAGER":
             self.role = "IDLE"
 
     async def _maybe_bid(self, cfp: Message) -> None:
@@ -344,15 +723,41 @@ class JetAgentRuntime:
         )
         if target is None or target.hp_remaining <= 0:
             return
-        bid = compute_bid(obs, target, hp_needed=cfp.hp_remaining)
+        contacts = list(self._risk_contacts)
+        context_hash = self._risk_context_hash or ""
+        if cfp.contract_id and cfp.contract_id in self._risk_by_contract:
+            context_hash, contacts = self._risk_by_contract[cfp.contract_id]
+        if cfp.threat_contacts:
+            contacts = [
+                ThreatContact.model_validate(c) for c in cfp.threat_contacts
+            ]
+            context_hash = cfp.context_hash or context_hash
+        if cfp.contract_id:
+            self._risk_by_contract[cfp.contract_id] = (context_hash, contacts)
+        bid = compute_bid(
+            obs,
+            target,
+            hp_needed=cfp.hp_remaining,
+            threat_contacts=contacts,
+            context_hash=context_hash,
+        )
         if bid is None:
             return
+        proposals = compute_bid_proposals(
+            obs,
+            target,
+            hp_needed=cfp.hp_remaining,
+            threat_contacts=contacts,
+            context_hash=context_hash,
+        )
         utility, payload_offered, weapon_type = bid
         self.role = "CONTRACTOR_PENDING"
         self.pending_bid_since_tick = obs.tick
         await self.broker.send(
             Message(
-                message_id=uuid.uuid4().hex,
+                message_id=self._next_stable_id(
+                    self.agent_id, cfp.target_id, obs.tick, "BID"
+                ),
                 contract_id=cfp.contract_id,
                 tick=obs.tick,
                 sender_id=self.agent_id,
@@ -361,8 +766,26 @@ class JetAgentRuntime:
                 target_id=cfp.target_id,
                 payload_offered=payload_offered,
                 bid_utility=utility,
-                weapon_type=weapon_type,
+                weapon_type=weapon_type,  # type: ignore[arg-type]
+                context_hash=context_hash,
+                proposals=[p.model_dump() for p in proposals],
             )
+        )
+        self._record_negotiation(
+            {
+                "event": "bid",
+                "tick": obs.tick,
+                "context_hash": context_hash,
+                "contract_id": cfp.contract_id,
+                "target_id": cfp.target_id,
+                "bidder_id": self.agent_id,
+                "proposal_count": len(proposals),
+                "flares_remaining": int(obs.flares_remaining),
+                "flare_capacity": int(obs.flare_capacity),
+                "best_utility": float(utility),
+                "best_weapon": weapon_type,
+                "status": "valid",
+            }
         )
 
     def _commit(
@@ -410,7 +833,11 @@ class JetAgentRuntime:
 
         self.role = "MANAGER"
         self.managed_target_id = target_id
-        self.open_contract_id = uuid.uuid4().hex
+        obs = self.latest_observation
+        tick = obs.tick if obs is not None else 0
+        self.open_contract_id = self._next_stable_id(
+            self.agent_id, target_id, tick, "REOPEN"
+        )
         self._cfp_round = 0
         await self._broadcast_cfp_and_collect(target.hp_remaining)
 
@@ -435,6 +862,59 @@ class JetAgentRuntime:
         bingo = ticks_home * frame.fuel_burn_per_tick * config.RTB_FUEL_SAFETY_MARGIN
         return obs.fuel <= bingo
 
+    def _select_defensive_threat(
+        self, obs: Observation
+    ) -> InboundThreat | None:
+        """Deterministic priority: shortest ETTI, then defendable guidance, then id."""
+        threats = list(obs.inbound_threats)
+        if not threats:
+            return None
+
+        def _can_defend(t: InboundThreat) -> bool:
+            if t.guidance == "INFRARED":
+                return obs.flares_remaining > 0 and obs.flare_cooldown_remaining <= 0
+            if t.guidance == "RADAR":
+                return obs.radar_warning_receiver
+            return False
+
+        threats.sort(
+            key=lambda t: (
+                float(t.estimated_time_to_impact),
+                0 if _can_defend(t) else 1,
+                t.missile_id,
+            )
+        )
+        return threats[0]
+
+    def _with_defense(self, intent: ActionIntent, obs: Observation) -> ActionIntent:
+        """Attach FLARE/NOTCH alongside the primary task intent when threatened.
+
+        Low-fuel / RTB jets still defend before continuing home. Strike
+        fighters/interceptors whose evasion already nullifies SAM_RADAR
+        damage skip notching so PoC routes stay near-optimal; bombers and
+        low-evasion frames still notch imminent radar threats.
+        """
+        threat = self._select_defensive_threat(obs)
+        if threat is None:
+            return intent
+        data = intent.model_dump()
+        if (
+            threat.guidance == "INFRARED"
+            and obs.flares_remaining > 0
+            and obs.flare_cooldown_remaining <= 0
+        ):
+            data["countermeasure_action"] = "FLARE"
+            data["defensive_threat_id"] = threat.missile_id
+        if threat.guidance == "RADAR" and obs.radar_warning_receiver:
+            evasion = config.JET_FRAME_CATALOG[obs.frame_type].evasion_bonus
+            sam_damage = config.WEAPON_CATALOG["SAM_RADAR"].damage_per_hit
+            needs_notch = evasion < sam_damage and threat.estimated_time_to_impact <= 3.0
+            if needs_notch:
+                data["maneuver_defense"] = "NOTCH"
+                data["defensive_threat_id"] = threat.missile_id
+                data["desired_heading"] = (threat.estimated_bearing + 90.0) % 360.0
+        return ActionIntent(**data)
+
     def decide_intent(self) -> ActionIntent:
         """Pure function of current state + latest_observation. Phase 4's
         Bridge calls this once per tick per agent to get its next ActionIntent."""
@@ -442,15 +922,19 @@ class JetAgentRuntime:
         assert obs is not None
         if self.role == "RTB":
             bearing = bearing_to(obs.current_position, obs.home_base)
-            return ActionIntent(
+            intent = ActionIntent(
                 agent_id=self.agent_id,
                 tick=obs.tick,
                 action_type="MOVE",
                 target_position=obs.home_base,
                 desired_heading=bearing,
             )
+            return self._with_defense(intent, obs)
         if self.committed_target_id is None:
-            return ActionIntent(agent_id=self.agent_id, tick=obs.tick, action_type="IDLE")
+            intent = ActionIntent(
+                agent_id=self.agent_id, tick=obs.tick, action_type="IDLE"
+            )
+            return self._with_defense(intent, obs)
         target = next(
             (
                 t
@@ -468,7 +952,10 @@ class JetAgentRuntime:
             self.committed_target_id = None
             self.committed_weapon_type = None
             self.role = "IDLE"
-            return ActionIntent(agent_id=self.agent_id, tick=obs.tick, action_type="IDLE")
+            intent = ActionIntent(
+                agent_id=self.agent_id, tick=obs.tick, action_type="IDLE"
+            )
+            return self._with_defense(intent, obs)
         distance = math.dist(obs.current_position, target.position)
         # Safety: never STRIKE a memory-only target — must be directly sensing it.
         directly_sensed = any(t.target_id == target.target_id for t in obs.known_targets)
@@ -484,29 +971,36 @@ class JetAgentRuntime:
             )
             if in_arc:
                 self.committed_payload -= 1
-                return ActionIntent(
+                # Phase 38: guided weapons emit LAUNCH; direct-fire stays STRIKE.
+                action = (
+                    "LAUNCH" if weapon.guidance != "NONE" else "STRIKE"
+                )
+                intent = ActionIntent(
                     agent_id=self.agent_id,
                     tick=obs.tick,
-                    action_type="STRIKE",
+                    action_type=action,
                     target_id=target.target_id,
                     weapon_type=self.committed_weapon_type,
                 )
+                return self._with_defense(intent, obs)
             # In range but not pointed at the target yet: turn toward it this
             # tick instead of striking. Still in position, just not yet able
             # to fire — does not consume payload, does not lose the contract.
-            return ActionIntent(
+            intent = ActionIntent(
                 agent_id=self.agent_id,
                 tick=obs.tick,
                 action_type="IDLE",
                 desired_heading=bearing,
             )
-        return ActionIntent(
+            return self._with_defense(intent, obs)
+        intent = ActionIntent(
             agent_id=self.agent_id,
             tick=obs.tick,
             action_type="MOVE",
             target_position=target.position,
             desired_heading=bearing,
         )
+        return self._with_defense(intent, obs)
 
     async def scan_and_negotiate(self) -> None:
         """Call once per tick when IDLE: look for an unclaimed, live target and

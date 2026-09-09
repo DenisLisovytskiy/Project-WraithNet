@@ -51,7 +51,7 @@ async def test_target_b_does_not_require_unnecessary_cooperation(fast_cnp):
     contributors_b = summary["contributors_by_target"].get("Target_B", [])
     assert len(contributors_b) == 1
     b_strikes = [e for e in bridge.model.strike_log if e["target_id"] == "Target_B"]
-    assert all(e["weapon_type"] == "AIM9X" for e in b_strikes)
+    assert all(e["weapon_type"] == "AGM65" for e in b_strikes)
     assert len(b_strikes) == 1
 
 
@@ -129,7 +129,7 @@ async def test_scenario_exercises_jamming_and_still_resolves(fast_cnp):
     assert jammed_ticks.get("Jet_3", 0) >= 1
     b_strikes = [e for e in bridge.model.strike_log if e["target_id"] == "Target_B"]
     assert len(b_strikes) == 1
-    assert b_strikes[0]["weapon_type"] == "AIM9X"
+    assert b_strikes[0]["weapon_type"] == "AGM65"
     assert b_strikes[0]["agent_id"] == "Jet_3"
 
 

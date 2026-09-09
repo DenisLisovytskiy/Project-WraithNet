@@ -92,6 +92,18 @@ class LiveStreamServer:
             except Exception:
                 self._writers.remove(w)
 
+    async def wait_for_client_or_timeout(self, timeout: float = 10.0) -> bool:
+        """Keep the backlog available briefly for late-connecting viewers."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            if self._writers:
+                # Give the client a moment to drain the backlog.
+                await asyncio.sleep(0.25)
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
     async def close(self) -> None:
         if self._closed:
             return

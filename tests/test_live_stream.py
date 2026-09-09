@@ -12,7 +12,7 @@ from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
 from wraithnet.metrics import summarize
 from wraithnet.recorder import TraceRecorder
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 
@@ -23,7 +23,7 @@ def fast_cnp(monkeypatch):
 
 
 def _tiny_scenario() -> ScenarioConfig:
-    return ScenarioConfig(
+    return scenario_from_data(new_scenario_data(
         jets=[
             JetSpec(
                 agent_id="Solo_Jet",
@@ -39,7 +39,7 @@ def _tiny_scenario() -> ScenarioConfig:
                 target_type="HARDENED_BUNKER",
             )
         ],
-    )
+    ))
 
 
 async def _read_stream_messages(host: str, port: int, count: int) -> list[dict]:

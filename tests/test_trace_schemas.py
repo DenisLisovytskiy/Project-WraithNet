@@ -173,3 +173,12 @@ def test_target_frame_constructs():
     frame = TargetFrame(target_id="Target_A", hp_remaining=3, claimed=True)
     assert frame.claimed is True
     assert frame.hp_remaining == 3
+
+
+def test_jet_frame_carries_optional_altitude():
+    bare = _sample_jet()
+    assert bare.altitude is None
+    with_alt = _sample_jet(altitude=20.0)
+    assert with_alt.altitude == pytest.approx(20.0)
+    restored = JetFrame.model_validate_json(with_alt.model_dump_json())
+    assert restored.altitude == pytest.approx(20.0)

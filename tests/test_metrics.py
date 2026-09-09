@@ -6,7 +6,7 @@ import pytest
 
 from wraithnet import config
 from wraithnet.metrics import summarize
-from wraithnet.scenario_schema import JetSpec, SamSiteSpec, ScenarioConfig, TargetSpec
+from wraithnet.scenario_schema import JetSpec, SamSiteSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.schemas import ActionIntent
 from wraithnet.world import WraithNetModel
 
@@ -30,7 +30,7 @@ def _far_bunker_scenario(
     home_base: tuple[float, float] = (10.0, 10.0),
     sam_sites: list[SamSiteSpec] | None = None,
 ) -> ScenarioConfig:
-    return ScenarioConfig(
+    return scenario_from_data(new_scenario_data(
         home_base=home_base,
         jets=jets,
         targets=[
@@ -42,7 +42,7 @@ def _far_bunker_scenario(
             )
         ],
         sam_sites=sam_sites or [],
-    )
+    ))
 
 
 def test_summarize_keeps_distance_of_a_jet_destroyed_mid_run():

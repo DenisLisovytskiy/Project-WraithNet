@@ -50,7 +50,7 @@ async def test_target_a_requires_multi_jet_jdam_cooperation(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_target_b_solo_with_aim9x(fast_cnp):
+async def test_target_b_solo_with_agm65(fast_cnp):
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
@@ -58,7 +58,7 @@ async def test_target_b_solo_with_aim9x(fast_cnp):
     contributors_b = summary["contributors_by_target"].get("Target_B", [])
     assert len(contributors_b) == 1
     b_strikes = [e for e in bridge.model.strike_log if e["target_id"] == "Target_B"]
-    assert all(e["weapon_type"] == "AIM9X" for e in b_strikes)
+    assert all(e["weapon_type"] == "AGM65" for e in b_strikes)
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_no_wasted_or_misassigned_strikes(fast_cnp):
 
     # 5 (Target_A) + 1 (Target_B) + 1 (SAM_Site_1) = 7
     assert summary["total_missiles_fired"] == 7
-    assert summary["per_weapon_type_missiles_fired"] == {"JDAM": 6, "AIM9X": 1}
+    assert summary["per_weapon_type_missiles_fired"] == {"JDAM": 6, "AGM65": 1}
 
 
 @pytest.mark.asyncio
