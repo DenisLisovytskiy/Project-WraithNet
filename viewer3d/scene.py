@@ -9,6 +9,7 @@ non-billboarded procedural dart mesh oriented in full 3D (Phase 25).
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -35,6 +36,7 @@ from viewer3d.flight_dynamics import (
     ease_toward,
 )
 from viewer3d.highlights import TickHighlights
+from viewer3d.motion import SampledPose
 from viewer3d.terrain_mesh import build_terrain_root, resolve_header_terrain
 from wraithnet.trace_schemas import (
     CarrierFrame,
@@ -442,7 +444,11 @@ def sync_static_unit_glyphs(
 
 
 def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
-    """Ease rendered altitude/bank toward the latest per-tick targets every frame."""
+    """Ease rendered altitude/bank toward the latest per-tick targets every frame.
+
+    XY/heading are owned by ``apply_sampled_jet_poses`` on the live path; this
+    only updates Z and bank so easing does not fight ground-track sampling.
+    """
     for aid, anchor in list(handles.jets.items()):
         if anchor.is_empty() or anchor.is_hidden():
             continue
@@ -463,6 +469,34 @@ def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
             glyph.set_hpr(heading, 0.0, -new_bank)
 
 
+def apply_sampled_jet_poses(
+    handles: SceneHandles, poses: Mapping[str, SampledPose]
+) -> None:
+    """Drive jet XY/heading from presentation-time samples (Phase 47).
+
+    Safe when a pose id has no handle (late spawn) or a handle has no pose
+    (despawn / pending wreck). Does not touch targets/SAMs/jammers.
+    """
+    for aid, pose in poses.items():
+        if aid in handles.pending_jet_removal:
+            continue
+        anchor = handles.jets.get(aid)
+        if anchor is None or anchor.is_empty():
+            continue
+        z = handles.rendered_altitude.get(aid)
+        if z is None:
+            z = handles.desired_altitude.get(aid, GROUND_ALTITUDE)
+            handles.rendered_altitude[aid] = z
+        anchor.set_pos(pose.x, pose.y, z)
+        anchor.show()
+        handles.jet_heading_deg[aid] = pose.heading_deg
+        handles.last_jet_xy[aid] = (pose.x, pose.y)
+        glyph = handles.jet_glyphs.get(aid)
+        if glyph is not None and not glyph.is_empty():
+            bank = handles.rendered_bank_deg.get(aid, 0.0)
+            glyph.set_hpr(pose.heading_deg, 0.0, -bank)
+
+
 def update_tick(
     handles: SceneHandles,
     header: TraceHeader,
@@ -472,7 +506,14 @@ def update_tick(
     just_struck: set[str] | None = None,
     tick_dt: float = 1.0 / 60.0,
     on_jet_removed: Callable[[str, tuple[float, float, float]], None] | None = None,
+    apply_jet_pose: bool = True,
 ) -> None:
+    """Apply discrete tick visual state.
+
+    When ``apply_jet_pose`` is False (live dual-clock path), XY/heading are left
+    to ``apply_sampled_jet_poses``; this still updates altitude desires, target
+    colors, removals, and other non-jet-pose glyphs.
+    """
     airborne = seconds_airborne or {}
     struck = just_struck or set()
     alive_ids = {frame.agent_id for frame in tick.jets}
@@ -505,12 +546,13 @@ def update_tick(
         if anchor is None or anchor.is_empty():
             continue
         x, y = frame.position
-        anchor.set_pos(x, y, handles.rendered_altitude.get(aid, GROUND_ALTITUDE))
-        anchor.show()
+        if apply_jet_pose:
+            anchor.set_pos(x, y, handles.rendered_altitude.get(aid, GROUND_ALTITUDE))
+            anchor.show()
+            handles.jet_heading_deg[aid] = float(frame.heading)
+            handles.last_jet_xy[aid] = (x, y)
         if aid not in handles.first_seen_tick:
             handles.first_seen_tick[aid] = tick.tick
-        heading = float(frame.heading)
-        handles.jet_heading_deg[aid] = heading
         auth_z = getattr(frame, "altitude", None)
         target_z = desired_altitude(
             airborne.get(aid, 0.0),
@@ -524,7 +566,6 @@ def update_tick(
         handles.desired_altitude[aid] = target_z
         handles.desired_bank_deg[aid] = desired_bank_deg(prev_z, target_z, tick_dt)
         handles.previous_desired_altitude[aid] = target_z
-        handles.last_jet_xy[aid] = (x, y)
 
     for frame in tick.targets:
         anchor = handles.targets.get(frame.target_id)
@@ -860,6 +901,20 @@ def decay_highlights(handles: SceneHandles, dt: float) -> None:
         still.append(item)
     handles.highlight_fx = still
     animate_water(handles, dt)
+
+
+def clear_highlight_fx(handles: SceneHandles) -> None:
+    """Drop all pending highlight cosmetics (Phase 49 snap / catch-up hygiene)."""
+    for item in handles.highlight_fx:
+        if item.restore is not None:
+            try:
+                item.restore()
+            except Exception:
+                pass
+        if item.node is not None and not item.node.is_empty():
+            item.node.remove_node()
+    handles.highlight_fx.clear()
+
 
 
 def animate_water(handles: SceneHandles, dt: float) -> None:

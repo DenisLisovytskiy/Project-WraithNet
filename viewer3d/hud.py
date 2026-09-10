@@ -200,6 +200,15 @@ class Hud:
             fg=WHITE,
         )
         self._summary_node.hide()
+        self._debug_node = _text(
+            aspect,
+            pos=(0.0, -0.92),
+            align=TextNode.ACenter,
+            scale=0.028,
+            fg=MUTED,
+        )
+        self._debug_node.hide()
+        self.presentation_debug_text = ""
 
         # Seed placeholder copy so every panel is independently non-empty
         # even before the first update() call.
@@ -222,6 +231,7 @@ class Hud:
             self._controls_frame,
             self._controls_node,
             self._summary_node,
+            self._debug_node,
             *self._role_swatches,
         ]
         for node in nodes:
@@ -233,6 +243,8 @@ class Hud:
                 node.hide()
         if visible and not self.summary_text:
             self._summary_node.hide()
+        if visible and not self.presentation_debug_text:
+            self._debug_node.hide()
 
     def _set_mission(self, text: str) -> None:
         self.mission_info_text = text
@@ -260,18 +272,36 @@ class Hud:
         disconnect_reason: str | None = None,  # from DisconnectedEvent, Phase 16
         ticks: list[TraceTick] | None = None,
         orbit_center: tuple[float, float, float] | None = None,
+        sampled_xy: dict[str, tuple[float, float]] | None = None,
+        presentation_debug: str | None = None,
     ) -> None:
         self._update_mission_info(mode, header, latest_tick, disconnect_reason)
         self._update_force_status(header, latest_tick)
         self._update_coordinates_and_minimap(
-            header, latest_tick, selected_jet_id, camera_mode, orbit_center
+            header,
+            latest_tick,
+            selected_jet_id,
+            camera_mode,
+            orbit_center,
+            sampled_xy,
         )
         self._update_controls(camera_mode)
+        self._update_presentation_debug(presentation_debug)
         if mode == "finished" or (latest_tick is not None and not latest_tick.running):
             self._show_end_of_run_summary(header, latest_tick, ticks or [])
         else:
             self._summary_node.hide()
             self.summary_text = ""
+
+    def _update_presentation_debug(self, text: str | None) -> None:
+        if not text:
+            self.presentation_debug_text = ""
+            self._debug_node.hide()
+            return
+        self.presentation_debug_text = text
+        self._debug_node.setText(text)
+        if self._visible:
+            self._debug_node.show()
 
     def _update_mission_info(
         self,
@@ -351,15 +381,21 @@ class Hud:
         selected_jet_id: str | None,
         camera_mode: str,
         orbit_center: tuple[float, float, float] | None,
+        sampled_xy: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         focus_label = "MAP"
         coords = (50.0, 50.0, 0.0)
-        if camera_mode == "chase" and selected_jet_id and latest_tick is not None:
-            for frame in latest_tick.jets:
-                if frame.agent_id == selected_jet_id:
-                    coords = (frame.position[0], frame.position[1], 0.0)
-                    focus_label = selected_jet_id
-                    break
+        if camera_mode == "chase" and selected_jet_id:
+            if sampled_xy and selected_jet_id in sampled_xy:
+                xy = sampled_xy[selected_jet_id]
+                coords = (xy[0], xy[1], 0.0)
+                focus_label = selected_jet_id
+            elif latest_tick is not None:
+                for frame in latest_tick.jets:
+                    if frame.agent_id == selected_jet_id:
+                        coords = (frame.position[0], frame.position[1], 0.0)
+                        focus_label = selected_jet_id
+                        break
         elif orbit_center is not None:
             coords = orbit_center
             focus_label = "MAP"
@@ -371,13 +407,14 @@ class Hud:
             f"  FOCUS  {focus_label}"
         )
         self._set_coords(text)
-        self._update_minimap(header, latest_tick, selected_jet_id)
+        self._update_minimap(header, latest_tick, selected_jet_id, sampled_xy)
 
     def _update_minimap(
         self,
         header: TraceHeader | None,
         latest_tick: TraceTick | None,
         selected_jet_id: str | None,
+        sampled_xy: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         for dot in self._minimap_dots:
             dot.hide()
@@ -417,7 +454,11 @@ class Hud:
             for i, frame in enumerate(latest_tick.jets):
                 color = JET_PALETTE[i % len(JET_PALETTE)]
                 scale = 1.4 if frame.agent_id == selected_jet_id else 1.0
-                _place(frame.position[0], frame.position[1], color, scale)
+                if sampled_xy and frame.agent_id in sampled_xy:
+                    xy = sampled_xy[frame.agent_id]
+                    _place(xy[0], xy[1], color, scale)
+                else:
+                    _place(frame.position[0], frame.position[1], color, scale)
 
     def _update_controls(self, camera_mode: str) -> None:
         mode = camera_mode.upper()
@@ -427,6 +468,7 @@ class Hud:
             f"  O      orbit\n"
             f"  C      chase\n"
             f"  Tab/N  next jet\n"
+            f"  F3     motion dbg\n"
             f"  Esc    quit"
         )
         self._set_controls(text)

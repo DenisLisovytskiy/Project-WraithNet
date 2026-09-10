@@ -357,3 +357,24 @@ def spawn_jet_wreck(
         ),
         Func(_finish),
     ).start()
+
+
+def clear_fx_under_root(root: NodePath) -> None:
+    """Remove in-flight cosmetic effect nodes under ``root`` (snap hygiene).
+
+    Weapon/destruction effects attach as ``fx-*`` (and a few related names).
+    Removing the nodes abandons their intervals safely for catch-up snaps.
+    """
+    if root is None or root.is_empty():
+        return
+    for child in list(root.get_children()):
+        if child.is_empty():
+            continue
+        name = child.get_name() or ""
+        if (
+            name.startswith("fx-")
+            or name.startswith("gun-tracer")
+            or name == "missile-trail"
+            or name == "missile-glyph"
+        ):
+            child.remove_node()

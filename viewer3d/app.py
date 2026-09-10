@@ -1,9 +1,11 @@
 """python -m viewer3d.app
 python -m viewer3d.app --edit [scenario.json]
+python -m viewer3d.app --replay <trace.jsonl> [--rate N]
 python -m viewer3d.app <host> <port>
 
 Default (no args) opens the scenario editor (Phase 18/19). `--edit` is
-the same, and may load a JSON path. `<host> <port>` connects to an
+the same, and may load a JSON path. `--replay` plays a recorded trace through
+the same TickBuffer sampler as live. `<host> <port>` connects to an
 already-running live stream as in Phases 16–17.
 """
 
@@ -32,10 +34,23 @@ from viewer3d.flight_dynamics import (
     desired_altitude,
     strike_boost_active,
 )
+from viewer3d.motion import (
+    CATCHUP_BACKLOG_TICKS,
+    CATCHUP_MAX_RATE,
+    DEFAULT_INTERP_DELAY_S,
+    DEFAULT_MAX_BACKLOG_TICKS,
+    DEFAULT_PLAYBACK_RATE,
+    DEFAULT_REPLAY_TICK_SPACING_S,
+    MAX_EXTRAPOLATION_ALPHA,
+    SampledPose,
+    TickBuffer,
+)
 from viewer3d.scene import (
     apply_jet_flight_easing,
+    apply_sampled_jet_poses,
     apply_tick_highlights,
     build_static_scene,
+    clear_highlight_fx,
     decay_highlights,
     finish_removing_jet,
     update_tick,
@@ -47,6 +62,7 @@ from viewer3d.stream_client import (
     StreamClient,
     TickEvent,
 )
+from viewer3d.trace_io import load_trace
 from wraithnet.paths import user_data_dir
 
 # view_mode transitions:
@@ -66,6 +82,8 @@ class WraithNetViewer3D(ShowBase):
         *,
         start_client: bool | None = None,
         editor_mode: bool = False,
+        replay_path: str | None = None,
+        playback_rate: float = DEFAULT_PLAYBACK_RATE,
     ) -> None:
         super().__init__()
         self.disable_mouse()
@@ -73,16 +91,29 @@ class WraithNetViewer3D(ShowBase):
             self.set_background_color(0.02, 0.03, 0.06, 1.0)
 
         self._editor_mode = editor_mode
+        self._offline_replay = replay_path is not None
+        self._playback_rate = float(playback_rate) if playback_rate > 0.0 else DEFAULT_PLAYBACK_RATE
+        self._show_presentation_debug = False
         self._previewing_from_editor = False
-        self.view_mode = "editor" if editor_mode else "connecting"
+        self.view_mode = "editor" if editor_mode else ("brief" if self._offline_replay else "connecting")
         self.camera_mode = "orbit"
         self.selected_jet_id: str | None = None
         self._disconnect_reason: str | None = None
         self._header = None
         self._handles = None
-        self._latest_tick = None
-        self._previous_tick = None
+        self._latest_tick = None  # newest ingested (may be ahead of presentation)
+        self._presented_tick = None  # HUD / discrete authority
+        self._previous_tick = None  # previous presented tick (highlights)
         self._ticks: list = []
+        self._tick_buffer = TickBuffer(
+            interp_delay_s=DEFAULT_INTERP_DELAY_S,
+            max_extrapolation_alpha=MAX_EXTRAPOLATION_ALPHA,
+            max_backlog_ticks=DEFAULT_MAX_BACKLOG_TICKS,
+            catchup_backlog_ticks=CATCHUP_BACKLOG_TICKS,
+            catchup_max_rate=CATCHUP_MAX_RATE,
+        )
+        self._pres_wall_last: float | None = None
+        self._sampled_poses: dict[str, SampledPose] = {}
         self._orbit = OrbitCamera(self)
         self._chase = ChaseCamera(self)
         self._brief = MissionBriefCamera(self)
@@ -91,9 +122,10 @@ class WraithNetViewer3D(ShowBase):
         self._sim_handle: SimLaunchHandle | None = None
         self._first_seen_wallclock: dict[str, float] = {}
         self._last_tick_wallclock: float | None = None
+        self._last_present_wallclock: float | None = None
 
         if start_client is None:
-            start_client = not editor_mode
+            start_client = not editor_mode and not self._offline_replay
         self._client = StreamClient(host, port)
         if start_client:
             self._client.start()
@@ -120,10 +152,15 @@ class WraithNetViewer3D(ShowBase):
         self.accept("tab", self._cycle_selected_jet)
         self.accept("n", self._cycle_selected_jet)
         self.accept("N", self._cycle_selected_jet)
+        self.accept("f3", self._toggle_presentation_debug)
+        self.accept("F3", self._toggle_presentation_debug)
         self.accept("escape", self._on_escape)
         self.exitFunc = self.on_window_close
 
         self.task_mgr.add(self._drain_queue_task, "drain-stream-queue")
+
+        if replay_path is not None:
+            self._load_offline_replay(replay_path)
 
     def _editor_map_world_pos(self):
         if self._editor is None or self.view_mode != "editor":
@@ -238,6 +275,11 @@ class WraithNetViewer3D(ShowBase):
         self._ticks = []
         self._previous_tick = None
         self._latest_tick = None
+        self._presented_tick = None
+        self._sampled_poses = {}
+        self._tick_buffer.reset()
+        self._pres_wall_last = None
+        self._last_present_wallclock = None
         self._disconnect_reason = None
         # Spawn + connect first so StreamClient can attach while the live
         # server is still up; preview is local and does not wait on the child.
@@ -333,8 +375,10 @@ class WraithNetViewer3D(ShowBase):
             return
         ids = list(self._header.jet_ids)
         alive = set()
-        if self._latest_tick is not None:
-            alive = {j.agent_id for j in self._latest_tick.jets}
+        alive = set()
+        src = self._presented_tick or self._latest_tick
+        if src is not None:
+            alive = {j.agent_id for j in src.jets}
         prefer = [i for i in ids if i in alive] or ids
         if self.selected_jet_id not in prefer:
             self.selected_jet_id = prefer[0]
@@ -342,12 +386,53 @@ class WraithNetViewer3D(ShowBase):
         idx = prefer.index(self.selected_jet_id)
         self.selected_jet_id = prefer[(idx + 1) % len(prefer)]
 
+    def _toggle_presentation_debug(self) -> None:
+        self._show_presentation_debug = not self._show_presentation_debug
+
+    def _load_offline_replay(self, path: str) -> None:
+        """Load a recorded trace into the same TickBuffer used for live view."""
+        header, ticks = load_trace(path)
+        self._header = header
+        self._handles = build_static_scene(self.render, header)
+        self._rebuild_cameras()
+        self._ticks = list(ticks)
+        self._latest_tick = ticks[-1] if ticks else None
+        self._previous_tick = None
+        self._presented_tick = None
+        self._sampled_poses = {}
+        self._first_seen_wallclock.clear()
+        now = time.monotonic()
+        for tick in ticks:
+            for frame in tick.jets:
+                self._first_seen_wallclock.setdefault(frame.agent_id, now)
+        self._tick_buffer.reset()
+        # Offline: retain the full schedule; advance with playback_rate × dt only.
+        self._tick_buffer.load_scheduled_ticks(
+            ticks,
+            t0=0.0,
+            spacing_s=DEFAULT_REPLAY_TICK_SPACING_S,
+        )
+        # Start after delay so the first segment has a next tick when possible.
+        self._tick_buffer.set_presentation_time(self._tick_buffer.interp_delay_s)
+        self._pres_wall_last = time.monotonic()
+        self.view_mode = "live"
+        self.camera_mode = "orbit"
+        if self.selected_jet_id is None and header.jet_ids:
+            self.selected_jet_id = header.jet_ids[0]
+        self._hud.set_visible(True)
+        self._apply_presentation_state()
+
     def _drain_queue_task(self, task):
         clock = ClockObject.get_global_clock()
         dt = clock.get_dt()
         if dt <= 0.0:
             dt = 1.0 / 60.0
-        self._drain_events()
+        if not self._offline_replay:
+            self._drain_events()
+        # Live / brief→live / offline replay: advance presentation clock and sample.
+        # Editor placement does not use the interpolator.
+        if self.view_mode != "editor":
+            self._advance_presentation(dt)
         self._refresh_flight_targets()
         self._poll_sim_health()
         self._update_camera(dt)
@@ -360,10 +445,98 @@ class WraithNetViewer3D(ShowBase):
             if ed_handles is not None:
                 decay_highlights(ed_handles, dt)
         if self._handles is not None:
+            # Altitude/bank ease toward desires from the presented HUD tick;
+            # XY/heading already come from sampled poses this frame.
             apply_jet_flight_easing(self._handles, dt)
             decay_highlights(self._handles, dt)
         self._refresh_hud()
         return task.cont
+
+    def _reset_motion_buffer(self) -> None:
+        self._tick_buffer.reset()
+        self._pres_wall_last = None
+        self._last_present_wallclock = None
+        self._presented_tick = None
+        self._sampled_poses = {}
+
+    def _advance_presentation(self, dt: float | None = None) -> None:
+        """Advance presentation time and apply samples/events."""
+        now = time.monotonic()
+        if self._pres_wall_last is None:
+            if not self._offline_replay:
+                self._tick_buffer.set_presentation_time(now)
+            # Offline path seeds t_p in ``_load_offline_replay``.
+        else:
+            wall_dt = float(dt) if dt is not None else (now - self._pres_wall_last)
+            if wall_dt < 0.0:
+                wall_dt = 0.0
+            if self._offline_replay:
+                self._tick_buffer.advance(
+                    wall_dt * self._playback_rate, catchup=False
+                )
+            else:
+                self._tick_buffer.advance(wall_dt, catchup=True)
+        self._pres_wall_last = now
+        self._apply_presentation_state()
+        if (
+            self._offline_replay
+            and self._presented_tick is not None
+            and not self._presented_tick.running
+        ):
+            self.view_mode = "finished"
+
+    def _flush_presentation(self) -> None:
+        """Snap presentation to the newest buffered tick (headless tests / join).
+
+        Production live frames use ``_advance_presentation`` with delay; tests that
+        inject ticks in one task step call this so discrete state is visible
+        without sleeping through ``interp_delay_s``.
+        """
+        if not self._tick_buffer._entries:
+            return
+        last_t = self._tick_buffer._entries[-1][0]
+        self._tick_buffer.set_presentation_time(
+            last_t + self._tick_buffer.interp_delay_s
+        )
+        self._pres_wall_last = time.monotonic()
+        self._apply_presentation_state()
+
+    def _clear_backlog_cosmetics(self) -> None:
+        """On catch-up snap, drop pending highlight/effect spam (Phase 49)."""
+        if self._handles is not None:
+            clear_highlight_fx(self._handles)
+        effects.clear_fx_under_root(self.render)
+
+    def _apply_presentation_state(self) -> None:
+        # Sample first so newly presented effects can use this frame's poses.
+        self._sampled_poses = self._tick_buffer.sample_jet_poses()
+        snapped = self._tick_buffer.consume_snap_flag()
+        if snapped:
+            self._clear_backlog_cosmetics()
+
+        hud = self._tick_buffer.current_tick_for_hud()
+        self._tick_buffer.pop_newly_presented_events()
+        if hud is not None:
+            prev_n = self._presented_tick.tick if self._presented_tick is not None else -1
+            if hud.tick > prev_n:
+                # Only walk ticks still retained in the buffer. After a snap,
+                # discarded backlog is skipped (no multi-teleport through flood).
+                candidates = self._tick_buffer.buffered_ticks()
+                if snapped and len(candidates) >= 1:
+                    # Commit only the newest kept tick's discrete state.
+                    self._present_tick(candidates[-1])
+                else:
+                    for tick in candidates:
+                        if tick.tick <= prev_n:
+                            continue
+                        if tick.tick > hud.tick:
+                            break
+                        self._present_tick(tick)
+                # Re-sample after discrete presents (despawn hold rules may change).
+                self._sampled_poses = self._tick_buffer.sample_jet_poses()
+
+        if self._handles is not None and self._sampled_poses:
+            apply_sampled_jet_poses(self._handles, self._sampled_poses)
 
     def _drain_events(self) -> None:
         while not self._client.events.empty():
@@ -374,6 +547,10 @@ class WraithNetViewer3D(ShowBase):
                 self._handles = build_static_scene(self.render, self._header)
                 self._first_seen_wallclock.clear()
                 self._last_tick_wallclock = None
+                self._reset_motion_buffer()
+                self._previous_tick = None
+                self._latest_tick = None
+                self._ticks = []
                 if (
                     old is not None
                     and old.root is not None
@@ -386,7 +563,7 @@ class WraithNetViewer3D(ShowBase):
                     self.view_mode = "brief"
                     self.camera_mode = "brief"
             elif isinstance(event, TickEvent):
-                self._on_tick(event.tick)
+                self._ingest_tick(event.tick)
             elif isinstance(event, EndEvent):
                 self.view_mode = "finished"
             elif isinstance(event, DisconnectedEvent):
@@ -398,7 +575,8 @@ class WraithNetViewer3D(ShowBase):
                 ):
                     self.view_mode = "finished"
 
-    def _on_tick(self, tick) -> None:
+    def _ingest_tick(self, tick) -> None:
+        """Queue a tick into the presentation buffer (not pose authority)."""
         if self.view_mode == "brief":
             # Happens exactly once: first TickEvent while still in brief.
             self.view_mode = "live"
@@ -406,19 +584,36 @@ class WraithNetViewer3D(ShowBase):
             if self.selected_jet_id is None and self._header is not None:
                 if self._header.jet_ids:
                     self.selected_jet_id = self._header.jet_ids[0]
-        now = time.monotonic()
-        tick_dt = 1.0 / 60.0
-        if self._last_tick_wallclock is not None:
-            tick_dt = max(0.001, now - self._last_tick_wallclock)
-        self._last_tick_wallclock = now
 
-        seconds_airborne: dict[str, float] = {}
+        now = time.monotonic()
         for frame in tick.jets:
             aid = frame.agent_id
             if aid not in self._first_seen_wallclock:
                 self._first_seen_wallclock[aid] = now
-            seconds_airborne[aid] = now - self._first_seen_wallclock[aid]
 
+        self._tick_buffer.push(tick, t_accept=now)
+        self._latest_tick = tick
+        self._ticks.append(tick)
+        # End-of-run can flip as soon as the sim emits running=False; discrete
+        # combat visuals still wait for presentation below.
+        if not tick.running:
+            self.view_mode = "finished"
+
+    def _present_tick(self, tick) -> None:
+        """Commit one authoritative tick for HUD, highlights, and discrete scene state."""
+        now = time.monotonic()
+        tick_dt = 1.0 / 60.0
+        if self._last_present_wallclock is not None:
+            tick_dt = max(0.001, now - self._last_present_wallclock)
+        self._last_present_wallclock = now
+
+        seconds_airborne: dict[str, float] = {}
+        for frame in tick.jets:
+            aid = frame.agent_id
+            first = self._first_seen_wallclock.get(aid, now)
+            seconds_airborne[aid] = now - first
+
+        just_struck: set[str] = set()
         if self._handles is not None:
             for strike in tick.strikes:
                 self._handles.last_struck_tick[strike.agent_id] = tick.tick
@@ -432,6 +627,8 @@ class WraithNetViewer3D(ShowBase):
 
         highlights = compute_highlights(self._previous_tick, tick)
         if self._handles is not None and self._header is not None:
+            # Sampled poses for this frame are applied after all presents; prefer
+            # them when spawning effects so VFX line up with the mesh.
             self._spawn_weapon_effects(tick, highlights)
             apply_tick_highlights(
                 self._handles, self._header, self._previous_tick, tick, highlights
@@ -463,12 +660,16 @@ class WraithNetViewer3D(ShowBase):
                 just_struck=just_struck,
                 tick_dt=tick_dt,
                 on_jet_removed=_on_jet_removed,
+                apply_jet_pose=False,
             )
         self._previous_tick = tick
-        self._latest_tick = tick
-        self._ticks.append(tick)
+        self._presented_tick = tick
         if not tick.running:
             self.view_mode = "finished"
+
+    # Back-compat for tests that still call the old ingest entry point.
+    def _on_tick(self, tick) -> None:
+        self._ingest_tick(tick)
 
     def _spawn_weapon_effects(self, tick, highlights) -> None:
         """Spawn cosmetic strike / destruction effects from this tick's highlights."""
@@ -488,7 +689,8 @@ class WraithNetViewer3D(ShowBase):
             if auth and strike.weapon_type in effects.GUIDED_WEAPON_TYPES:
                 continue
             frame = jets_now.get(strike.agent_id) or jets_prev.get(strike.agent_id)
-            if frame is None:
+            pose = self._sampled_poses.get(strike.agent_id)
+            if frame is None and pose is None:
                 continue
             target_xy = self._header.target_positions.get(strike.target_id)
             if target_xy is None:
@@ -499,7 +701,11 @@ class WraithNetViewer3D(ShowBase):
                     strike.agent_id,
                     self._handles.desired_altitude.get(strike.agent_id, CRUISE_ALTITUDE),
                 )
-            launch_pos = (float(frame.position[0]), float(frame.position[1]), float(z))
+            if pose is not None:
+                launch_pos = (pose.x, pose.y, float(z))
+            else:
+                assert frame is not None
+                launch_pos = (float(frame.position[0]), float(frame.position[1]), float(z))
             impact_pos = (float(target_xy[0]), float(target_xy[1]), 0.25)
             effects.spawn_strike_effect(
                 self.render, strike.weapon_type, launch_pos, impact_pos
@@ -518,6 +724,16 @@ class WraithNetViewer3D(ShowBase):
             if getattr(cm, "accepted", None) is False:
                 continue
             frame = jets_now.get(cm.agent_id) or jets_prev.get(cm.agent_id)
+            pose = self._sampled_poses.get(cm.agent_id)
+            if pose is not None:
+                z = CRUISE_ALTITUDE
+                if self._handles is not None:
+                    z = self._handles.rendered_altitude.get(
+                        cm.agent_id,
+                        self._handles.desired_altitude.get(cm.agent_id, CRUISE_ALTITUDE),
+                    )
+                effects.spawn_flare_burst(self.render, (pose.x, pose.y, float(z)))
+                continue
             if frame is None:
                 continue
             z = float(getattr(frame, "altitude", None) or CRUISE_ALTITUDE)
@@ -541,14 +757,14 @@ class WraithNetViewer3D(ShowBase):
     def _refresh_flight_targets(self) -> None:
         """Recompute takeoff/attack altitude from wall-clock time every frame.
 
-        Tick-drain can assign every queued tick the same ``time.monotonic()``
-        value (late-connect backfill). Desired altitude must keep advancing
-        after the queue empties, or takeoff freezes near the ground.
+        Uses the **presented** HUD tick (not the newest buffered ingest) so
+        altitude desires stay aligned with discrete combat state. XY for
+        proximity comes from sampled poses when available.
         """
-        if self._handles is None or self._header is None or self._latest_tick is None:
+        tick = self._presented_tick
+        if self._handles is None or self._header is None or tick is None:
             return
         now = time.monotonic()
-        tick = self._latest_tick
         header = self._header
         handles = self._handles
         for frame in tick.jets:
@@ -560,9 +776,11 @@ class WraithNetViewer3D(ShowBase):
                 handles.last_struck_tick.get(aid), tick.tick
             )
             auth_z = getattr(frame, "altitude", None)
+            pose = self._sampled_poses.get(aid)
+            xy = (pose.x, pose.y) if pose is not None else frame.position
             handles.desired_altitude[aid] = desired_altitude(
                 now - first,
-                frame.position,
+                xy,
                 header,
                 tick,
                 just_struck,
@@ -570,10 +788,23 @@ class WraithNetViewer3D(ShowBase):
             )
 
     def _selected_jet_pose(self):
-        if self._latest_tick is None or self.selected_jet_id is None:
+        if self.selected_jet_id is None:
             return None
-        for frame in self._latest_tick.jets:
-            if frame.agent_id != self.selected_jet_id:
+        aid = self.selected_jet_id
+        pose = self._sampled_poses.get(aid)
+        if pose is not None:
+            z = GROUND_ALTITUDE
+            if self._handles is not None:
+                z = self._handles.rendered_altitude.get(
+                    aid,
+                    self._handles.desired_altitude.get(aid, CRUISE_ALTITUDE),
+                )
+            return (pose.x, pose.y, z), pose.heading_deg
+        tick = self._presented_tick or self._latest_tick
+        if tick is None:
+            return None
+        for frame in tick.jets:
+            if frame.agent_id != aid:
                 continue
             z = GROUND_ALTITUDE
             if self._handles is not None:
@@ -611,15 +842,34 @@ class WraithNetViewer3D(ShowBase):
         if self.view_mode == "editor":
             return
         center = self._orbit.center if self._orbit is not None else (50.0, 50.0, 0.0)
+        sampled_xy = {aid: (p.x, p.y) for aid, p in self._sampled_poses.items()}
+        debug = None
+        if self._show_presentation_debug:
+            flags = []
+            if self._tick_buffer.is_catching_up:
+                flags.append("CATCHUP")
+            if self._tick_buffer.is_extrapolating:
+                flags.append("EXTRAP")
+            flag_s = ",".join(flags) if flags else "ok"
+            mode = "REPLAY" if self._offline_replay else "LIVE"
+            debug = (
+                f"[ MOTION ]  {mode}  backlog={self._tick_buffer.backlog_len}  "
+                f"{flag_s}  rate={self._playback_rate:.2f}x"
+            )
+        display_mode = self.view_mode
+        if self._offline_replay and self.view_mode == "live":
+            display_mode = "live"
         self._hud.update(
-            mode=self.view_mode,
+            mode=display_mode,
             header=self._header,
-            latest_tick=self._latest_tick,
+            latest_tick=self._presented_tick,
             camera_mode=self.camera_mode,
             selected_jet_id=self.selected_jet_id,
             disconnect_reason=self._disconnect_reason,
             ticks=self._ticks,
             orbit_center=center,
+            sampled_xy=sampled_xy,
+            presentation_debug=debug,
         )
 
 
@@ -635,6 +885,14 @@ def main(argv: list[str] | None = None) -> None:
         app = WraithNetViewer3D(editor_mode=True)
         if parsed.edit_path and app._editor is not None:
             app._editor.load(parsed.edit_path)
+        app.run()
+        return
+    if parsed.replay_path:
+        app = WraithNetViewer3D(
+            start_client=False,
+            replay_path=parsed.replay_path,
+            playback_rate=parsed.playback_rate,
+        )
         app.run()
         return
     app = WraithNetViewer3D(parsed.host, parsed.port)

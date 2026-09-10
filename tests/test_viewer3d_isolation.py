@@ -52,6 +52,9 @@ def test_headless_viewer3d_modules_do_not_import_panda3d():
         "viewer3d/highlights.py",
         "viewer3d/launch.py",
         "viewer3d/argv.py",
+        "viewer3d/motion.py",
+        "viewer3d/flight_dynamics.py",
+        "viewer3d/trace_io.py",
     ):
         text = _read(rel)
         assert not _RENDER_IMPORT.search(text), rel

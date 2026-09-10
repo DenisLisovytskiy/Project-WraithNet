@@ -412,6 +412,7 @@ def test_camera_orbit_chase_switching_invokes_chase_with_jet_position():
         app.task_mgr.step()
         assert app.view_mode == "live"
 
+        app._flush_presentation()
         app.camera_mode = "orbit"
         app.task_mgr.step()
 
@@ -966,7 +967,9 @@ def test_live_stream_strike_triggers_spawn_strike_effect():
             if strike_calls:
                 break
             if app.view_mode == "finished" and app._latest_tick is not None:
-                # Drain a bit more in case the strike tick just arrived.
+                # Presentation delay may still hold the strike tick; flush so
+                # discrete combat VFX commit without waiting on wall-clock.
+                app._flush_presentation()
                 for _ in range(5):
                     app.task_mgr.step()
                 break
@@ -998,6 +1001,7 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
         )
         app._client.events.put(TickEvent(tick=tick0))
         app.task_mgr.step()
+        app._flush_presentation()
         assert "Jet_1" in app._handles.jets
 
         # Force-destroy Jet_1 by omitting it from the next tick (same as recorder pattern).
@@ -1008,6 +1012,7 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
         )
         app._client.events.put(TickEvent(tick=tick1))
         app.task_mgr.step()
+        app._flush_presentation()
 
         assert "Jet_1" in app._handles.jets, "jet must still be present during wreck"
         assert "Jet_1" in app._handles.pending_jet_removal
@@ -1057,6 +1062,7 @@ def test_takeoff_continues_after_burst_tick_drain():
                 )
             )
         app.task_mgr.step()
+        app._flush_presentation()
         z_burst = app._handles.rendered_altitude["Jet_1"]
         assert z_burst < 1.5
 
@@ -1093,6 +1099,7 @@ def test_strike_on_same_tick_as_destruction_still_spawns_effect():
             )
         )
         app.task_mgr.step()
+        app._flush_presentation()
         dying = TraceTick(
             tick=1,
             jets=[_jet_frame("Jet_2", (21.0, 20.0))],
@@ -1108,6 +1115,7 @@ def test_strike_on_same_tick_as_destruction_still_spawns_effect():
         )
         app._client.events.put(TickEvent(tick=dying))
         app.task_mgr.step()
+        app._flush_presentation()
         assert calls, "strike must spawn even when the jet is absent this tick"
         assert calls[0][0][1] == "AIM9X"
     finally:
@@ -1132,12 +1140,14 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
             )
         )
         app.task_mgr.step()
+        app._flush_presentation()
         app._client.events.put(
             TickEvent(
                 tick=_tick(1, [_jet_frame("Jet_2", (21.0, 20.0))], _alive_targets())
             )
         )
         app.task_mgr.step()
+        app._flush_presentation()
         assert "Jet_1" in app._handles.pending_jet_removal
 
         app._client.events.put(HeaderEvent(header=header))
@@ -1151,6 +1161,7 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
             )
         )
         app.task_mgr.step()
+        app._flush_presentation()
         replacement = app._handles.jets["Jet_1"]
         assert not replacement.is_empty()
         _advance_intervals(app, 1.5)

@@ -98,6 +98,8 @@ hiddenimports += [
     "viewer3d.app",
     "viewer3d.argv",
     "viewer3d.launch",
+    "viewer3d.motion",
+    "viewer3d.trace_io",
 ]
 
 a = Analysis(

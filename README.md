@@ -52,6 +52,22 @@ Land: tanks (HOLD/PATROL/ADVANCE), AAA gun sites, city LOS. Naval: carriers and 
 
 Bids include flare/IR risk when known IR threats exist; with no threat exposure, utilities match the legacy PoC scoring so default assignments stay stable. Managers broadcast `RISK_UPDATE` before collecting BIDs.
 
+## Smooth live view (Phases 46–49)
+
+Simulation ticks stay discrete (CNP, strikes, and outcomes still resolve on
+tick boundaries). The 3D viewer keeps a small presentation delay and
+**interpolates** jet XY/heading between buffered ticks so motion looks
+continuous at roughly 30–60 FPS. Smooth motion is cosmetic presentation
+only — it is not continuous combat physics.
+
+```bash
+python -m launcher          # Generate → Launch (live stream + interpolator)
+python -m viewer3d.app --replay path/to/trace.jsonl [--rate 2]
+```
+
+Press **F3** in the 3D view for a compact motion debug line (backlog /
+catch-up / extrapolating). The 2D Pygame replay path remains discrete-tick.
+
 ## Documentation
 
 - Authoritative design: [`docs/6th-Gen_Warfare_Sim_Design_Document_v2.md`](docs/6th-Gen_Warfare_Sim_Design_Document_v2.md)

@@ -244,6 +244,24 @@ through `wraithnet.agents` → no new hiddenimports. After rebuild, confirm a
 Contested Generate → Launch still awards contracts (negotiation events appear
 in `trace.jsonl` as `negotiation` / award summaries when present).
 
+## Phase 49 — Smooth live motion packaging note
+
+`viewer3d.motion` (TickBuffer / pose sampler) is pure Python and imported by
+`viewer3d.app`; PyInstaller analysis of the existing viewer3d hiddenimports
+pulls it in. Explicit entries `viewer3d.motion` / `viewer3d.trace_io` are
+listed in `packaging/wraithnet.spec` as belt-and-suspenders.
+
+Manual smoke (after `python packaging/build.py`):
+
+1. Launch `dist\WraithNet\WraithNet.exe`.
+2. Standard → Generate → Launch.
+3. Watch ~10 seconds of jet ground-track motion — should glide between ticks,
+   not teleport each tick under normal load.
+4. Exit cleanly (Esc / window close); no orphaned sim worker.
+
+Optional: `--replay` a saved `trace.jsonl` from a developer install
+(`python -m viewer3d.app --replay …`) to confirm the same sampler offline.
+
 ## Deterministic generation matrices (source)
 
 Verified green on this checkout:
