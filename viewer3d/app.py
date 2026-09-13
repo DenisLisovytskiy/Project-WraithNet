@@ -123,6 +123,7 @@ class WraithNetViewer3D(ShowBase):
         self._first_seen_wallclock: dict[str, float] = {}
         self._last_tick_wallclock: float | None = None
         self._last_present_wallclock: float | None = None
+        self._stream_ended: bool = False
 
         if start_client is None:
             start_client = not editor_mode and not self._offline_replay
@@ -551,6 +552,7 @@ class WraithNetViewer3D(ShowBase):
                 self._previous_tick = None
                 self._latest_tick = None
                 self._ticks = []
+                self._stream_ended = False
                 if (
                     old is not None
                     and old.root is not None
@@ -565,13 +567,18 @@ class WraithNetViewer3D(ShowBase):
             elif isinstance(event, TickEvent):
                 self._ingest_tick(event.tick)
             elif isinstance(event, EndEvent):
-                self.view_mode = "finished"
+                # Stream closed — keep presenting buffered ticks. ``finished``
+                # flips only when the *presented* tick is terminal.
+                self._stream_ended = True
             elif isinstance(event, DisconnectedEvent):
                 self._disconnect_reason = event.reason
                 if self.view_mode == "connecting":
                     pass  # HUD surfaces the reason; stay in connecting
-                elif self.view_mode == "live" and (
-                    self._latest_tick is None or not self._latest_tick.running
+                elif (
+                    self.view_mode == "live"
+                    and self._stream_ended
+                    and self._presented_tick is not None
+                    and not self._presented_tick.running
                 ):
                     self.view_mode = "finished"
 
@@ -594,10 +601,7 @@ class WraithNetViewer3D(ShowBase):
         self._tick_buffer.push(tick, t_accept=now)
         self._latest_tick = tick
         self._ticks.append(tick)
-        # End-of-run can flip as soon as the sim emits running=False; discrete
-        # combat visuals still wait for presentation below.
-        if not tick.running:
-            self.view_mode = "finished"
+        # Do not mark finished here — presentation may still be catching up.
 
     def _present_tick(self, tick) -> None:
         """Commit one authoritative tick for HUD, highlights, and discrete scene state."""

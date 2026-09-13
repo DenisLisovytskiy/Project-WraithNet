@@ -52,7 +52,12 @@ from wraithnet.countermeasures import (
     roll_flare_decoy,
     roll_notch_break,
 )
-from wraithnet.geometry import bearing_to, is_in_firing_arc, shortest_signed_angle
+from wraithnet.geometry import (
+    angular_distance,
+    bearing_to,
+    is_in_firing_arc,
+    shortest_signed_angle,
+)
 from wraithnet.guns import (
     CIWS_GUN,
     DECK_GUN,
@@ -374,6 +379,7 @@ class WraithNetModel(mesa.Model):
         self.deaths_by_guidance: dict[str, int] = {}
         self.swarm_wiped_out: bool = False
         self.mission_aborted: bool = False
+        self.mission_solved: bool = False
         self.jet_outcomes: dict[str, JetOutcome] = {}
         self._home_base: tuple[float, float] = self._scenario.home_base
         self.terrain: TerrainGrid = self._scenario.terrain
@@ -721,6 +727,10 @@ class WraithNetModel(mesa.Model):
             self._ensure_active_base(jet)
             if jet.is_rtb and jet.recovery_phase is None and not jet.recovery_abort:
                 jet.recovery_phase = "RTB"
+            # Enter APPROACH from current geometry before translating so a jet
+            # already inside the envelope is not forced to crab-slide to stay.
+            if jet.is_rtb and not jet.recovery_abort:
+                self._update_recovery_phase(jet)
 
         moved: set[str] = set()
         for agent_id, intent in intents.items():
@@ -733,15 +743,12 @@ class WraithNetModel(mesa.Model):
                 # Heading already overridden in pre_move; synthesize destination.
                 pass
             if intent.maneuver_defense == "NOTCH":
-                max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
-                # World heading: 0=+y, 90=+x → displacement (sin, cos) in that frame.
-                h = math.radians(jet.heading)
-                destination = (
-                    jet.pos[0] + max_speed * math.sin(h),
-                    jet.pos[1] + max_speed * math.cos(h),
-                )
+                destination = self._forward_flight_destination(jet)
             elif intent.action_type == "MOVE":
                 destination = intent.target_position
+            elif intent.action_type in ("STRIKE", "LAUNCH"):
+                # Attack runs keep airspeed — jets cannot hover to pickle munitions.
+                destination = self._forward_flight_destination(jet)
             else:
                 destination = None
             # Carrier RTB: retarget to live recovery geometry each tick.
@@ -767,6 +774,12 @@ class WraithNetModel(mesa.Model):
             if not self._is_carrier_base(jet.active_base_id):
                 continue
             destination = self._recovery_destination(jet)
+            # No ActionIntent this tick — steer toward the live recovery point
+            # so heading-cruise movement still closes instead of flying away.
+            jet.desired_heading = bearing_to(
+                (float(jet.pos[0]), float(jet.pos[1])), destination
+            )
+            self._apply_heading_rotation(jet)
             if jet.recovery_phase == "APPROACH":
                 jet.desired_altitude = config.RECOVERY_ALTITUDE
                 base_id = jet.active_base_id
@@ -1137,13 +1150,16 @@ class WraithNetModel(mesa.Model):
                 self.running = False
             self.mission_aborted = evaluation.mission_aborted or self.mission_aborted
             self.swarm_wiped_out = evaluation.swarm_wiped_out
+            self.mission_solved = evaluation.solved
             return
 
         # Legacy destroy-all / wipeout (v2 scenarios without mission_objectives).
         if all(t.is_destroyed for t in self.targets.values()):
             self.running = False  # success — includes SAM_Site_1 now
+            self.mission_solved = True
         elif len(self.jets) == 0:
             self.running = False
+            self.mission_solved = False
             if self.jets_returned_to_base:
                 # At least one jet made it home; not a wipeout. "mission
                 # aborted" specifically means the swarm ran out of fuel and
@@ -1152,6 +1168,38 @@ class WraithNetModel(mesa.Model):
                 self.mission_aborted = True
             else:
                 self.swarm_wiped_out = True  # every jet that left play was destroyed
+
+    def required_destroy_objectives_complete(self) -> bool:
+        """True when every required DESTROY objective's subjects are destroyed.
+
+        Used by the bridge to force end-of-mission RTB while RETURN is still
+        pending. Scenarios with no DESTROY objectives return False.
+        """
+        destroy_objs = [
+            o
+            for o in self.mission_objectives
+            if o.required and o.objective_type == "DESTROY"
+        ]
+        if not destroy_objs:
+            return False
+        destroyed_map = {tid: t.is_destroyed for tid, t in self.targets.items()}
+        for aid, outcome in self.jet_outcomes.items():
+            if outcome.outcome == "destroyed":
+                destroyed_map[aid] = True
+        for cid, carrier in self.carriers.items():
+            if carrier.destroyed or carrier.hp <= 0:
+                destroyed_map[cid] = True
+        for vid, corvette in self.corvettes.items():
+            if corvette.is_destroyed:
+                destroyed_map[vid] = True
+        for tid, tank in self.tanks.items():
+            if tank.is_destroyed:
+                destroyed_map[tid] = True
+        for obj in destroy_objs:
+            for sid in obj.subject_ids:
+                if not destroyed_map.get(sid, False):
+                    return False
+        return True
 
     def all_jet_ids(self) -> set[str]:
         """Every jet that ever existed this run, alive or not. Must always equal
@@ -1366,8 +1414,9 @@ class WraithNetModel(mesa.Model):
             return LaunchAcknowledgement(
                 accepted=False, missile_id=None, reason="unknown_target"
             )
+        release_xy = self._weapon_release_xy(jet)
         has_los = self.has_combat_los(
-            jet.pos,
+            release_xy,
             jet.altitude,
             tgt_pos,
             tgt_z,
@@ -1376,7 +1425,7 @@ class WraithNetModel(mesa.Model):
             shooter_id=jet.agent_id,
             target_id=target_id,
             weapon_type=weapon_type,  # type: ignore[arg-type]
-            shooter_position=(jet.pos[0], jet.pos[1], jet.altitude),
+            shooter_position=(release_xy[0], release_xy[1], jet.altitude),
             target_position=(tgt_pos[0], tgt_pos[1], tgt_z),
             shooter_faction=jet.faction,
             target_faction=tgt_faction,
@@ -1624,7 +1673,9 @@ class WraithNetModel(mesa.Model):
             tank = self.tanks[target_id]
             if tank.is_destroyed:
                 return
-            damage = max(0, raw_damage - tank.armor)
+            damage = max(0, int(raw_damage) - int(tank.armor))
+            if int(raw_damage) > 0:
+                damage = max(1, damage)
             tank.hp = max(0, tank.hp - damage)
             if tank.hp <= 0:
                 tank.mark_destroyed()
@@ -2283,17 +2334,56 @@ class WraithNetModel(mesa.Model):
         else:
             jet.heading = (jet.heading + turn_rate * (1.0 if delta > 0 else -1.0)) % 360.0
 
-    def _apply_move(self, jet: JetAgent, destination: tuple[float, float]) -> None:
+    def _forward_flight_destination(self, jet: JetAgent) -> tuple[float, float]:
+        """One tick of airspeed along the jet's current heading (0=+y, 90=+x)."""
         max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
-        distance = math.dist(jet.pos, destination)
-        if distance <= max_speed:
+        h = math.radians(jet.heading)
+        return (
+            float(jet.pos[0]) + max_speed * math.sin(h),
+            float(jet.pos[1]) + max_speed * math.cos(h),
+        )
+
+    def _apply_move(self, jet: JetAgent, destination: tuple[float, float]) -> None:
+        """Translate a jet like an aircraft: cruise along heading, not crab-slide.
+
+        Far from ``destination``, advance one tick of airspeed along the nose
+        (heading already rotated in ``stage_pre_move_obs``). Arrive/capture only
+        when the waypoint is within one tick *and* the nose is pointed at it —
+        otherwise a nearby gate behind/abeam the jet would slide it sideways.
+
+        After clamping to the map edge, re-align heading to the actual
+        displacement so the nose cannot keep pointing off the wall while the
+        body scrapes along it.
+        """
+        max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
+        pos = (float(jet.pos[0]), float(jet.pos[1]))
+        distance = math.dist(pos, destination)
+        bearing = bearing_to(pos, destination)
+        # Require near nose-on before capture — a wide gate still looked like
+        # sideways slides whenever a release point fell inside max_speed.
+        aligned = angular_distance(jet.heading, bearing) <= 15.0
+        if distance <= max_speed and aligned:
             new_pos = destination
-            moved = distance
         else:
-            dx, dy = destination[0] - jet.pos[0], destination[1] - jet.pos[1]
-            ratio = max_speed / distance
-            new_pos = (jet.pos[0] + dx * ratio, jet.pos[1] + dy * ratio)
-            moved = max_speed
+            h = math.radians(jet.heading)
+            new_pos = (
+                pos[0] + max_speed * math.sin(h),
+                pos[1] + max_speed * math.cos(h),
+            )
+        # Mesa ContinuousSpace rejects positions on/outside the far edge when
+        # non-toroidal; clamp so RTB/notch/naval intents near the border cannot
+        # crash the run.
+        eps = 1e-6
+        x_max = float(self._scenario.grid_width) - eps
+        y_max = float(self._scenario.grid_height) - eps
+        new_pos = (
+            min(max(float(new_pos[0]), 0.0), x_max),
+            min(max(float(new_pos[1]), 0.0), y_max),
+        )
+        moved = math.dist(pos, new_pos)
+        if moved > 1e-9:
+            # Keep the nose on the path actually flown (incl. wall deflection).
+            jet.heading = bearing_to(pos, new_pos)
         self.space.move_agent(jet, new_pos)
         jet.distance_traveled += moved
 
@@ -2322,12 +2412,29 @@ class WraithNetModel(mesa.Model):
             floor = frame.min_combat_altitude
         jet.altitude = max(floor, new_alt)
 
+    def _weapon_release_xy(self, jet: JetAgent) -> tuple[float, float]:
+        """XY where munitions leave the jet this tick.
+
+        Attack-run coast happens in ``stage_apply_movement`` after the jet has
+        already committed to STRIKE/LAUNCH from its pre-move pose. Range, arc,
+        and LOS must use that release pose — not the post-coast position.
+        """
+        if jet._pos_at_move_start is not None:
+            return (
+                float(jet._pos_at_move_start[0]),
+                float(jet._pos_at_move_start[1]),
+            )
+        return (float(jet.pos[0]), float(jet.pos[1]))
+
     def _target_in_firing_arc(
         self, jet: JetAgent, target: TargetState, weapon: config.WeaponSpec
     ) -> bool:
         # Delegates to wraithnet.geometry so decide_intent cannot drift.
         return is_in_firing_arc(
-            jet.heading, jet.pos, target.position, weapon.firing_arc_deg
+            jet.heading,
+            self._weapon_release_xy(jet),
+            target.position,
+            weapon.firing_arc_deg,
         )
 
     def _apply_strike(
@@ -2369,7 +2476,11 @@ class WraithNetModel(mesa.Model):
             tgt_height = 0.0
 
             def _apply_damage(amount: int) -> None:
-                damage = max(0, amount - tank.armor)
+                # Armor reduces hits but must not nullify air strikes (JDAM
+                # damage_per_hit == armor previously dealt 0 forever).
+                damage = max(0, int(amount) - int(tank.armor))
+                if int(amount) > 0:
+                    damage = max(1, damage)
                 tank.hp = max(0, tank.hp - damage)
                 if tank.hp <= 0:
                     tank.mark_destroyed()
@@ -2391,7 +2502,8 @@ class WraithNetModel(mesa.Model):
             return
         if weapon.suitability.get(target_type, 0.0) <= 0.0:
             return  # physically cannot damage this target type with this weapon — no-op
-        if math.dist(jet.pos, tgt_pos) > weapon.range:
+        release_xy = self._weapon_release_xy(jet)
+        if math.dist(release_xy, tgt_pos) > weapon.range:
             return
         if weapon.firing_arc_deg < 360.0:
             # Reuse installation arc helper via a thin position adapter.
@@ -2401,13 +2513,13 @@ class WraithNetModel(mesa.Model):
                 return
             if tank is not None:
                 bearing = math.degrees(
-                    math.atan2(tgt_pos[1] - jet.pos[1], tgt_pos[0] - jet.pos[0])
+                    math.atan2(tgt_pos[1] - release_xy[1], tgt_pos[0] - release_xy[0])
                 )
                 delta = (bearing - jet.heading + 180.0) % 360.0 - 180.0
                 if abs(delta) > weapon.firing_arc_deg / 2.0:
                     return
         if not self.has_combat_los(
-            jet.pos,
+            release_xy,
             jet.altitude,
             tgt_pos,
             tgt_height,
@@ -2549,7 +2661,51 @@ class WraithNetModel(mesa.Model):
             alternate_base_available=alt_available,
             recovery_route_forecast=route_forecast,
             observed_gun_threats=observed_gun_threats,
+            briefed_seek_positions=self._briefed_seek_positions(),
         )
+
+    def _subject_xy(self, subject_id: str) -> tuple[float, float] | None:
+        """Resolve a mission-subject id to a map XY, if still present."""
+        if subject_id in self.targets:
+            return tuple(self.targets[subject_id].position)
+        if subject_id in self.tanks:
+            return tuple(self.tanks[subject_id].position)
+        if subject_id in self.corvettes:
+            return tuple(self.corvettes[subject_id].position)
+        if subject_id in self.carriers:
+            return tuple(self.carriers[subject_id].position)
+        if subject_id in self.jets:
+            jet = self.jets[subject_id]
+            return (float(jet.pos[0]), float(jet.pos[1]))
+        return None
+
+    def _is_subject_destroyed(self, subject_id: str) -> bool:
+        if subject_id in self.targets:
+            return self.targets[subject_id].is_destroyed
+        if subject_id in self.tanks:
+            return self.tanks[subject_id].is_destroyed
+        if subject_id in self.corvettes:
+            return self.corvettes[subject_id].is_destroyed
+        if subject_id in self.carriers:
+            carrier = self.carriers[subject_id]
+            return bool(carrier.destroyed or carrier.hp <= 0)
+        if subject_id in self.jet_outcomes:
+            return self.jet_outcomes[subject_id].outcome == "destroyed"
+        return False
+
+    def _briefed_seek_positions(self) -> list[tuple[float, float]]:
+        """XY waypoints for incomplete required DESTROY subjects (mission brief)."""
+        positions: list[tuple[float, float]] = []
+        for obj in self.mission_objectives:
+            if obj.objective_type != "DESTROY" or not obj.required:
+                continue
+            for sid in obj.subject_ids:
+                if self._is_subject_destroyed(sid):
+                    continue
+                xy = self._subject_xy(sid)
+                if xy is not None:
+                    positions.append(xy)
+        return positions
 
     def _observed_aaa_threats_for(self, jet: JetAgent) -> list[ObservedGunThreat]:
         """Expose sensed AAA envelopes as typed threat contacts (Phase 42)."""

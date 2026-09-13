@@ -677,15 +677,13 @@ TARGET_SIGNATURE_DEFAULTS: dict[TargetType, SensorSignature] = {
 
 #   INTERCEPTOR    40 ticks × 7.0 = 280 units (~1.4 width round-trips) — short-legged dash
 
-#   STRIKE_FIGHTER 80 ticks × 5.0 = 400 units; ~2.5× the 32-tick PoC so Phase 22
+# Fuel sized for mandatory end-of-mission RTB on the default/generated maps.
 
-#                  bingo-fuel has headroom to fly home without changing the
+#   INTERCEPTOR   40 ticks × 7.0 — short legs; long routes need strike frames
 
-#                  default scenario's outcome
+#   STRIKE_FIGHTER 120 ticks × 5.0 = 600 units (PoC RTB headroom)
 
-#   HEAVY_BOMBER  120 ticks × 3.0 = 360 units — long loiter, similar distance-range
-
-#                  to the fighter despite crawling
+#   HEAVY_BOMBER  160 ticks × 3.0 = 480 units
 
 JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
@@ -719,7 +717,7 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         turn_rate_deg_per_tick=25.0,
 
-        fuel_capacity=80.0,
+        fuel_capacity=120.0,
 
         fuel_burn_per_tick=1.0,
 
@@ -743,7 +741,7 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         turn_rate_deg_per_tick=12.0,
 
-        fuel_capacity=120.0,
+        fuel_capacity=160.0,
 
         fuel_burn_per_tick=1.0,
 
@@ -776,6 +774,8 @@ UTILITY_W_WEAPON: float = 10.0  # dominates W1+W2's <=1.5 combined range; see do
 
 
 # --- Sensor radius (populated in Observation starting Phase 6; filtering starts Phase 7) ---
+
+# Cap on generator discovery / objective distance from home.
 
 SENSOR_RADIUS: float = 65.0
 

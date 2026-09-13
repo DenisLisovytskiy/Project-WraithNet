@@ -48,6 +48,19 @@ Same seed + same resolved parameters reproduce the same scenario (generator v3).
 
 Land: tanks (HOLD/PATROL/ADVANCE), AAA gun sites, city LOS. Naval: carriers and corvettes when counts/presets enable water. Metrics export tank/AAA/CIWS/carrier recovery fields. Feasibility codes cover domain spawn, anti-armor/anti-ship, and ground discovery deadlock.
 
+Default missions require **RETURN**: after DESTROY subjects are done, surviving friendlies RTB before SUCCESS. Live view is paced (~4 ticks/sec) with pause/rewind so Launch is watchable.
+
+## Live view controls
+
+While watching a Launch:
+
+- **Space** — pause / resume (presentation is paced at ~3 ticks/sec; the sim may finish buffering earlier)
+- **← / →** — step one tick back / forward
+- **R** — restart from tick 0
+- **+ / −** — speed up / slow down
+- **O / C** — orbit / chase camera
+- **Esc** — return to editor
+
 ## Risk-aware CNP (Phase 45)
 
 Bids include flare/IR risk when known IR threats exist; with no threat exposure, utilities match the legacy PoC scoring so default assignments stay stable. Managers broadcast `RISK_UPDATE` before collecting BIDs.

@@ -118,6 +118,26 @@ def test_dp_prefers_reserve_coverage_when_available():
     assert alone.accepted and alone.low_confidence_coverage is True
 
 
+def test_partial_award_when_swarm_cannot_cover_raw_need():
+    """Under-armed bids must still be accepted so contractors engage (not idle-bingo)."""
+    props = [
+        _proposal(bidder="Jet_1", offered=1, util=0.80),
+        _proposal(bidder="Jet_2", offered=1, util=0.70),
+    ]
+    award = select_winning_bids(
+        props,
+        AwardContext(
+            target_id="Tank_1",
+            unreserved_hp=6,
+            context_hash="h",
+        ),
+    )
+    assert len(award.accepted) == 2
+    assert award.covered_milli == 2000
+    assert award.low_confidence_coverage is True
+    assert set(award.reject_reasons) == set()
+
+
 def test_ir_flare_disadvantage_in_award():
     ir = [
         ThreatContact(

@@ -61,6 +61,7 @@ def test_headless_viewer3d_modules_do_not_import_panda3d():
         "viewer3d/highlights.py",
         "viewer3d/launch.py",
         "viewer3d/argv.py",
+        "viewer3d/playback.py",
     ]
     # Phase 25 may already have landed; include it when present.
     flight = ROOT / "viewer3d" / "flight_dynamics.py"

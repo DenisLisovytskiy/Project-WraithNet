@@ -369,8 +369,16 @@ def test_view_mode_connecting_brief_live_finished():
         assert app.camera_mode == "orbit"
         assert app._latest_tick is tick0
 
+        # Stream end alone must not finish while presentation is mid-run.
         app._client.events.put(EndEvent())
         app.task_mgr.step()
+        assert app._stream_ended is True
+        assert app.view_mode == "live"
+
+        done = tick0.model_copy(update={"tick": 1, "running": False})
+        app._client.events.put(TickEvent(tick=done))
+        app.task_mgr.step()
+        app._flush_presentation()
         assert app.view_mode == "finished"
     finally:
         _destroy_app(app)
@@ -391,6 +399,7 @@ def test_running_false_tick_marks_finished():
         done = done.model_copy(update={"running": False})
         app._client.events.put(TickEvent(tick=done))
         app.task_mgr.step()
+        app._flush_presentation()
         assert app.view_mode == "finished"
     finally:
         _destroy_app(app)

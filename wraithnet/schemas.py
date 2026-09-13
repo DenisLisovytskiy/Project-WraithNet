@@ -204,6 +204,11 @@ class Observation(BaseModel):
 
     observed_gun_threats: list[ObservedGunThreat] = Field(default_factory=list)
 
+    # Mission-brief waypoints for incomplete required DESTROY subjects.
+    # Not sensor contacts — jets may MOVE toward these under fog of war until
+    # a live TargetInfo appears in known_targets / world_view.
+    briefed_seek_positions: list[tuple[float, float]] = Field(default_factory=list)
+
 
 
     @property

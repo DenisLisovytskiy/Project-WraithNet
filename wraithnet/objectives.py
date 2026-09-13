@@ -56,6 +56,35 @@ def synthesize_legacy_destroy_objective(
     )
 
 
+def synthesize_legacy_return_objective(
+    jet_ids: Sequence[str],
+    *,
+    objective_id: str = "OBJ_RETURN_ALL",
+) -> MissionObjective:
+    """Require surviving friendlies to recover at base before SUCCESS."""
+    return MissionObjective(
+        objective_id=objective_id,
+        objective_type="RETURN",
+        subject_ids=list(jet_ids),
+        required=True,
+        faction="FRIENDLY",
+        priority=0.4,
+    )
+
+
+def default_strike_and_return_objectives(
+    target_ids: Sequence[str],
+    jet_ids: Sequence[str],
+) -> list[MissionObjective]:
+    """DESTROY (if any targets) + RETURN (if any jets) — default mission package."""
+    objectives: list[MissionObjective] = []
+    if target_ids:
+        objectives.append(synthesize_legacy_destroy_objective(target_ids))
+    if jet_ids:
+        objectives.append(synthesize_legacy_return_objective(jet_ids))
+    return objectives
+
+
 class MissionEvaluation:
     """Result of evaluating all objectives at a tick."""
 
@@ -115,12 +144,15 @@ def _evaluate_one(
             return "COMPLETE"
         return "PENDING"
 
-    # RETURN
-    if any(_destroyed(s, destroyed_ids) for s in subjects):
+    # RETURN — survivors must recover. Combat losses do not fail RETURN by
+    # themselves (DESTROY / SURVIVE / PROTECT still gate wipeouts). Unreachable
+    # survivors fail. Wipeout with nobody home fails RETURN.
+    survivors = [s for s in subjects if not _destroyed(s, destroyed_ids)]
+    if any(s in unreachable_ids for s in survivors):
         return "FAILED"
-    if any(s in unreachable_ids for s in subjects):
+    if not survivors:
         return "FAILED"
-    if all(s in returned_ids for s in subjects):
+    if all(s in returned_ids for s in survivors):
         return "COMPLETE"
     return "PENDING"
 

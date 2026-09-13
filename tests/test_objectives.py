@@ -96,7 +96,7 @@ def test_survive_fails_before_until_tick_and_completes_at_deadline():
     assert done.objective_status["OBJ_SURVIVE"] == "COMPLETE"
 
 
-def test_return_completes_and_fails_on_destroy_or_unreachable():
+def test_return_completes_for_survivors_and_fails_unreachable_or_wipeout():
     obj = _return("Jet_1", "Jet_2")
     pending = evaluate_mission(
         [obj], tick=1, destroyed_ids=set(), returned_ids={"Jet_1"}
@@ -108,10 +108,17 @@ def test_return_completes_and_fails_on_destroy_or_unreachable():
     )
     assert done.result == "SUCCESS"
 
-    destroyed = evaluate_mission(
+    # Combat loss + survivor home → RETURN still succeeds.
+    survivor_home = evaluate_mission(
         [obj], tick=2, destroyed_ids={"Jet_1"}, returned_ids={"Jet_2"}
     )
-    assert destroyed.result == "FAILURE"
+    assert survivor_home.result == "SUCCESS"
+    assert survivor_home.objective_status["OBJ_RETURN"] == "COMPLETE"
+
+    wipeout = evaluate_mission(
+        [obj], tick=2, destroyed_ids={"Jet_1", "Jet_2"}, returned_ids=set()
+    )
+    assert wipeout.result == "FAILURE"
 
     unreachable = evaluate_mission(
         [obj],

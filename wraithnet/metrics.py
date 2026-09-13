@@ -114,7 +114,13 @@ def summarize(model) -> dict:
 
     return {
         "ticks_elapsed": model.tick,
-        "solved": all(t.is_destroyed for t in model.targets.values()),
+        "solved": bool(
+            getattr(
+                model,
+                "mission_solved",
+                all(t.is_destroyed for t in model.targets.values()),
+            )
+        ),
         "swarm_wiped_out": model.swarm_wiped_out,
         "mission_aborted": getattr(model, "mission_aborted", False),
         "targets_destroyed": sum(1 for t in model.targets.values() if t.is_destroyed),

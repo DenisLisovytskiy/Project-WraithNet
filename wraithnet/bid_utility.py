@@ -608,13 +608,63 @@ def select_winning_bids(
     low_confidence = bool(raw_coverers) and not bool(reserve_coverers)
 
     if not candidates:
-        # No covering team: fall back to empty award; reject everyone stably.
+        # No team can cover raw_need in one award. Accept the best partial
+        # subset so multi-strike / multi-round CNP can chip HP down — empty
+        # awards leave contractors idle until bingo-fuel abort (tanks/ships).
+        partials: list[list[BidProposal]] = []
+        if options:
+            for combo in product(*options):
+                subset = [p for p in combo if p is not None]
+                if subset:
+                    partials.append(subset)
+        if not partials:
+            for bid in bidder_ids:
+                reject.setdefault(bid, "MANAGER_REJECTED")
+            return AwardPlan(
+                accepted=[],
+                reject_reasons=reject,
+                low_confidence_coverage=True if valid else False,
+                raw_need_milli=raw_need,
+                reserve_need_milli=reserve_need,
+            )
+
+        def _partial_cover(subset: list[BidProposal]) -> int:
+            return sum(proposal_damage_milli(p) for p in subset)
+
+        best_cover = max(_partial_cover(s) for s in partials)
+        partials = [s for s in partials if _partial_cover(s) == best_cover]
+
+        def _partial_rank(subset: list[BidProposal]) -> tuple:
+            score, neg_risk, neg_rec, diversity, id_tie = _award_score(
+                subset,
+                raw_need=raw_need,
+                overkill_weight=float(context.overkill_weight),
+                team_size_weight=float(context.team_size_weight),
+                n_bidders=max(1, len(bidder_ids)),
+            )
+            return (-score, -neg_risk, -neg_rec, -diversity, id_tie)
+
+        best = min(partials, key=_partial_rank)
+        best_rank = _award_score(
+            best,
+            raw_need=raw_need,
+            overkill_weight=float(context.overkill_weight),
+            team_size_weight=float(context.team_size_weight),
+            n_bidders=max(1, len(bidder_ids)),
+        )
+        covered_milli = sum(proposal_damage_milli(p) for p in best)
+        accepted = sorted(best, key=lambda p: (p.bidder_id, p.weapon_type))
+        accepted_ids = {p.bidder_id for p in accepted}
         for bid in bidder_ids:
-            reject.setdefault(bid, "MANAGER_REJECTED")
+            if bid not in accepted_ids:
+                reject.setdefault(bid, "MANAGER_REJECTED")
         return AwardPlan(
-            accepted=[],
+            accepted=accepted,
             reject_reasons=reject,
-            low_confidence_coverage=True if valid else False,
+            low_confidence_coverage=True,
+            overkill_milli=0,
+            award_score=float(best_rank[0]),
+            covered_milli=covered_milli,
             raw_need_milli=raw_need,
             reserve_need_milli=reserve_need,
         )

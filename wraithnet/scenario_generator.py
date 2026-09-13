@@ -533,15 +533,29 @@ def _place_group_centers(
         )
 
     # Pre-check: root annulus must be non-empty.
+    # Distance fractions are relative to map diagonal, but discovery still
+    # caps root_max at SENSOR_RADIUS. On large grids, frac_min * diagonal can
+    # exceed that cap — clamp root_min into the discoverable annulus.
     max_dist = max_normalized_distance(home_base)
+    sensor_cap = config.SENSOR_RADIUS - LAUNCH_RING_OUTER_RADIUS
+    root_max = min(
+        parameters.objective_distance_max_fraction * max_dist,
+        sensor_cap,
+    )
     root_min = max(
         parameters.base_safety_radius,
         parameters.objective_distance_min_fraction * max_dist,
     )
-    root_max = min(
-        parameters.objective_distance_max_fraction * max_dist,
-        config.SENSOR_RADIUS - LAUNCH_RING_OUTER_RADIUS,
-    )
+    if root_min > root_max:
+        # Keep relative spacing inside the sensor-capped band.
+        band_lo = parameters.base_safety_radius
+        if root_max <= band_lo:
+            root_min = root_max
+        else:
+            frac = parameters.objective_distance_min_fraction / max(
+                parameters.objective_distance_max_fraction, 1e-9
+            )
+            root_min = band_lo + frac * (root_max - band_lo)
     if root_max < root_min:
         raise GenerationError(
             IMPOSSIBLE_GEOMETRY,
@@ -554,7 +568,7 @@ def _place_group_centers(
                     "root_min": root_min,
                     "root_max": root_max,
                     "base_safety_radius": parameters.base_safety_radius,
-                    "sensor_cap": config.SENSOR_RADIUS - LAUNCH_RING_OUTER_RADIUS,
+                    "sensor_cap": sensor_cap,
                 },
                 "suggestions": [
                     "widen objective_distance fractions",
@@ -2127,13 +2141,15 @@ def _roster_passes_static(
     enemy_corvette_ids = [c.unit_id for c in corvette_list]
     objectives = None
     if enemy_tank_ids or enemy_corvette_ids:
-        from wraithnet.objectives import synthesize_legacy_destroy_objective
+        from wraithnet.objectives import default_strike_and_return_objectives
 
         subject_ids = [t.target_id for t in targets]
         subject_ids.extend(s.target_id for s in sam_sites)
         subject_ids.extend(enemy_tank_ids)
         subject_ids.extend(enemy_corvette_ids)
-        objectives = [synthesize_legacy_destroy_objective(subject_ids)]
+        objectives = default_strike_and_return_objectives(
+            subject_ids, [j.agent_id for j in jets]
+        )
 
     scenario_kwargs: dict = {
         "jets": jets,
@@ -3042,18 +3058,20 @@ def generate_scenario(parameters: GenerationParameters) -> GenerationResult:
         deliberate_cooperative_objective_ids=deliberate,
         modified_after_generation=False,
     )
-    # Opt-in DESTROY for generated enemy tanks/corvettes when present.
+    # DESTROY+RETURN when generated enemy tanks/corvettes are present.
     objectives = None
     enemy_tank_ids = [t.unit_id for t in tanks if t.faction == "ENEMY"]
     enemy_corvette_ids = [c.unit_id for c in corvettes]
     if enemy_tank_ids or enemy_corvette_ids:
-        from wraithnet.objectives import synthesize_legacy_destroy_objective
+        from wraithnet.objectives import default_strike_and_return_objectives
 
         subject_ids = [t.target_id for t in build_state.targets]
         subject_ids.extend(s.target_id for s in build_state.sam_sites)
         subject_ids.extend(enemy_tank_ids)
         subject_ids.extend(enemy_corvette_ids)
-        objectives = [synthesize_legacy_destroy_objective(subject_ids)]
+        objectives = default_strike_and_return_objectives(
+            subject_ids, [j.agent_id for j in jets]
+        )
 
     scenario = scenario_from_data(
         new_scenario_data(

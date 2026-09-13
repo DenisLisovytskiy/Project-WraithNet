@@ -213,6 +213,46 @@ def test_armor_reduces_damage_and_ammo_cooldown():
         assert model.tanks["Blue_1"].ammo < ammo0 or model.tanks["Red_1"].ammo < ammo0
 
 
+def test_jdam_deals_at_least_one_damage_through_tank_armor():
+    """Armor must reduce cannon damage, not nullify 1-damage air strikes."""
+    from wraithnet.scenario_schema import JetSpec
+
+    home = (2.0, 2.0)
+    data = new_scenario_data(
+        grid_width=40.0,
+        grid_height=40.0,
+        home_base=home,
+        fixed_airbases=[default_home_airbase(home)],
+        jets=[
+            JetSpec(
+                agent_id="Jet_1",
+                position=(20.0, 20.0),
+                payload={"JDAM": 2, "AIM9X": 0},
+            )
+        ],
+        targets=[],
+        tanks=[
+            TankSpec(
+                unit_id="Red_1",
+                faction="ENEMY",
+                position=(20.5, 20.0),
+                heading=0.0,
+                frame_type="MBT_STANDARD",
+                order="HOLD",
+            )
+        ],
+    )
+    scenario = scenario_from_data(data)
+    model = WraithNetModel(seed=0, scenario=scenario)
+    tank = model.tanks["Red_1"]
+    assert tank.armor >= 1
+    hp0 = tank.hp
+    jet = model.jets["Jet_1"]
+    model._apply_strike(jet, "Red_1", "JDAM")
+    assert tank.hp == hp0 - 1
+    assert jet.payload["JDAM"] == 1
+
+
 def test_city_blocks_los_but_allows_movement():
     terrain = all_plains_terrain(40.0, 40.0, cell_size=5.0)
     cells = [list(row) for row in terrain.cells]

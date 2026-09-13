@@ -148,6 +148,7 @@ def test_move_clamped_to_jet_speed():
 def test_move_does_not_overshoot_near_destination():
     model = WraithNetModel()
     jet = model.jets["Jet_2"]
+    jet.heading = 90.0  # face +x toward the short hop
     old_pos = jet.pos
     short = 2.0
     destination = (old_pos[0] + short, old_pos[1])
@@ -156,10 +157,65 @@ def test_move_does_not_overshoot_near_destination():
         tick=0,
         action_type="MOVE",
         target_position=destination,
+        desired_heading=90.0,
     )
     model.step({"Jet_2": intent})
     assert jet.pos == destination
     assert jet.distance_traveled == pytest.approx(short)
+
+
+def test_move_does_not_crab_to_nearby_waypoint_behind_the_nose():
+    """A gate within max_speed but abeam/behind must not slide the jet there."""
+    model = WraithNetModel()
+    jet = model.jets["Jet_2"]
+    jet.heading = 0.0  # nose +y
+    old_pos = tuple(jet.pos)
+    # Waypoint due +x, well within one tick of travel — old capture snapped
+    # sideways regardless of heading.
+    destination = (old_pos[0] + 3.0, old_pos[1])
+    model.step(
+        {
+            "Jet_2": ActionIntent(
+                agent_id="Jet_2",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+                desired_heading=0.0,
+            )
+        }
+    )
+    assert tuple(jet.pos) != destination
+    assert jet.pos[1] == pytest.approx(old_pos[1] + config.JET_SPEED)
+    assert jet.pos[0] == pytest.approx(old_pos[0])
+
+
+def test_move_cruises_along_heading_not_crab_slide():
+    """Far waypoints must not slide the jet sideways while the nose turns."""
+    model = WraithNetModel()
+    jet = model.jets["Jet_2"]
+    jet.heading = 0.0  # nose +y
+    old_pos = tuple(jet.pos)
+    # Destination due +x — old slide physics moved mostly +x while heading
+    # stayed near 0°, looking like sideways flight.
+    destination = (old_pos[0] + 50.0, old_pos[1])
+    model.step(
+        {
+            "Jet_2": ActionIntent(
+                agent_id="Jet_2",
+                tick=0,
+                action_type="MOVE",
+                target_position=destination,
+                desired_heading=90.0,
+            )
+        }
+    )
+    dx = jet.pos[0] - old_pos[0]
+    dy = jet.pos[1] - old_pos[1]
+    # Turn rate 25°/tick → heading becomes 25°, motion follows the nose.
+    assert jet.heading == pytest.approx(25.0)
+    assert dy == pytest.approx(config.JET_SPEED * math.cos(math.radians(25.0)))
+    assert dx == pytest.approx(config.JET_SPEED * math.sin(math.radians(25.0)))
+    assert abs(dy) > abs(dx)  # still mostly forward (+y), not a lateral slide
 
 
 def test_strike_out_of_range_is_noop():
@@ -198,6 +254,30 @@ def test_strike_in_range_damages_and_logs():
     assert model.strike_log == [
         {"tick": 1, "agent_id": "Jet_1", "target_id": "Target_A", "weapon_type": "JDAM"}
     ]
+
+
+def test_strike_coasts_forward_instead_of_hovering():
+    """Jets keep airspeed on STRIKE — munitions use pre-coast release pose."""
+    model = WraithNetModel()
+    jet = model.jets["Jet_1"]
+    target = model.targets["Target_A"]
+    model.space.move_agent(jet, target.position)
+    jet.heading = 90.0  # +x
+    release = tuple(jet.pos)
+    intent = ActionIntent(
+        agent_id="Jet_1",
+        tick=0,
+        action_type="STRIKE",
+        target_id="Target_A",
+        weapon_type="JDAM",
+        desired_heading=90.0,
+    )
+    model.step({"Jet_1": intent})
+    assert target.hp_remaining == 4
+    assert model.strike_log[-1]["weapon_type"] == "JDAM"
+    speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
+    assert math.dist(release, tuple(jet.pos)) == pytest.approx(speed)
+    assert jet.pos[0] == pytest.approx(release[0] + speed)
 
 
 def test_strike_unsuitable_weapon_is_noop():
@@ -345,10 +425,14 @@ def test_running_false_when_all_targets_destroyed():
     model = WraithNetModel()
     for t in model.targets.values():
         t.hp_remaining = 0
+    # RETURN objective stays pending until survivors recover.
+    for aid in list(model.jets):
+        model._remove_jet(model.jets[aid], "returned_to_base")
     model.step({})
     assert model.running is False
     assert model.swarm_wiped_out is False
     assert model.mission_aborted is False
+    assert model.mission_solved is True
 
 
 def test_running_stays_true_if_only_one_target_destroyed():
@@ -1495,13 +1579,16 @@ def test_mission_aborted_and_swarm_wiped_out_never_both_true():
     assert not (model.mission_aborted and model.swarm_wiped_out)
     assert_all_jet_ids_intact(model)
 
-    # Success path: flags stay both False even if the swarm is still flying.
+    # Success path: DESTROY + RETURN (recover every survivor) ends the mission.
     solved = WraithNetModel()
     for t in solved.targets.values():
         t.hp_remaining = 0
+    for aid in list(solved.jets):
+        solved._remove_jet(solved.jets[aid], "returned_to_base")
     solved.step({})
     assert solved.running is False
     assert solved.mission_aborted is False
     assert solved.swarm_wiped_out is False
+    assert solved.mission_solved is True
     assert_all_jet_ids_intact(solved)
 

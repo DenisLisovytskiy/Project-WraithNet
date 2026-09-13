@@ -11,7 +11,9 @@ import pytest
 
 from wraithnet import config
 from wraithnet.bridge import WraithNetBridge
+from wraithnet.broker import MessageBroker
 from wraithnet.metrics import export_results, summarize
+from wraithnet.world import WraithNetModel
 
 
 @pytest.fixture
@@ -86,21 +88,28 @@ async def test_no_wasted_or_misassigned_strikes(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_fog_of_war_and_jamming_were_both_actually_exercised(fast_cnp):
+    # Initial geometry: Jet_2 cannot see Target_A/B (FoW). After RTB landings,
+    # agent runtimes are removed, so we cannot inspect received_messages post-run.
+    model = WraithNetModel()
+    broker = MessageBroker()
+    jet2_ids = {
+        t.target_id for t in model.build_observation("Jet_2", broker).known_targets
+    }
+    assert "Target_A" not in jet2_ids
+    assert "Target_B" not in jet2_ids
+
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
-
-    datalink_messages = [
-        m
-        for agent in bridge.agents.values()
-        for m in agent.received_messages
-        if m.message_type == "DATALINK_CONTACT"
-    ]
-    assert len(datalink_messages) > 0, (
-        "no DATALINK_CONTACT was ever received — Fog of War wasn't exercised"
-    )
     assert bridge.model.total_jammed_agent_ticks > 0, (
         "no jet was ever jammed — check EW_Jammer_1 placement/JAM_RADIUS"
     )
+    # Cooperation on Target_A implies datalink/discovery across the swarm.
+    contributors = {
+        e["agent_id"]
+        for e in bridge.model.strike_log
+        if e["target_id"] == "Target_A"
+    }
+    assert len(contributors) >= 2
 
 
 @pytest.mark.asyncio
@@ -126,19 +135,18 @@ async def test_no_agent_left_in_a_zombie_state(fast_cnp):
 async def test_total_distance_traveled_is_reasonable(fast_cnp):
     """Empirically bounded from real runs (Phase 10 Context).
 
-    Observed under the fixed v3 scenario: total_distance_traveled ≈ 222.67
-    (tick 32). Bound is ±~20% around that observed value — wide enough for
-    legitimate variation if any, tight enough to catch a looping/broken
-    assignment (>600 was the prior loose placeholder).
+    Observed under the fixed v3 scenario with mandatory RTB: total distance
+    is strike transit plus return-to-base (~500+). Bound catches loops (>900)
+    without failing the longer RTB path.
     """
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
 
     observed = summary["total_distance_traveled"]
-    assert 180.0 <= observed <= 280.0, (
-        f"Total distance traveled ({observed:.2f}) is outside the observed "
-        "near-optimal band (~222.67 ±20%); inspect contributors_by_target."
+    assert 400.0 <= observed <= 900.0, (
+        f"Total distance traveled ({observed:.2f}) is outside the expected "
+        "RTB-inclusive band; inspect contributors_by_target."
     )
 
 

@@ -38,7 +38,12 @@ from wraithnet.naval import (
     validate_carrier_placement,
     validate_corvette_placement,
 )
-from wraithnet.objectives import MissionObjective, synthesize_legacy_destroy_objective
+from wraithnet.objectives import (
+    MissionObjective,
+    default_strike_and_return_objectives,
+    synthesize_legacy_destroy_objective,
+    synthesize_legacy_return_objective,
+)
 from wraithnet.tanks import TankSpec, validate_tank_placement
 from wraithnet.terrain import (
     TerrainGrid,
@@ -85,6 +90,23 @@ def _collect_destroy_subject_ids(data: dict[str, Any]) -> list[str]:
     for sam in data.get("sam_sites", []) or []:
         ids.append(str(_entity_field(sam, "target_id")))
     return ids
+
+
+def _collect_friendly_jet_ids(data: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for jet in data.get("jets", []) or []:
+        ids.append(str(_entity_field(jet, "agent_id")))
+    return ids
+
+
+def _default_mission_objective_dicts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        o.model_dump()
+        for o in default_strike_and_return_objectives(
+            _collect_destroy_subject_ids(data),
+            _collect_friendly_jet_ids(data),
+        )
+    ]
 
 
 class JetSpec(BaseModel):
@@ -416,13 +438,7 @@ def migrate_v2_to_v3(data: dict[str, Any]) -> dict[str, Any]:
 
     objectives = out.get("mission_objectives")
     if objectives is None or objectives == []:
-        subject_ids = _collect_destroy_subject_ids(out)
-        if subject_ids:
-            out["mission_objectives"] = [
-                synthesize_legacy_destroy_objective(subject_ids).model_dump()
-            ]
-        else:
-            out["mission_objectives"] = []
+        out["mission_objectives"] = _default_mission_objective_dicts(out)
 
     return out
 
@@ -700,7 +716,7 @@ def new_scenario_data(**fields: Any) -> dict[str, Any]:
 
     Fills ``scenario_version``, all-plains ``terrain``, ``combat_seed``,
     ``fixed_airbases``, empty ``carriers``/``corvettes``/``aaa_sites``/``tanks``,
-    and legacy DESTROY ``mission_objectives`` when omitted.
+    and legacy DESTROY+RETURN ``mission_objectives`` when omitted.
     """
     data = dict(fields)
     grid_width = float(data.get("grid_width", config.GRID_WIDTH))
@@ -723,13 +739,7 @@ def new_scenario_data(**fields: Any) -> dict[str, Any]:
     if "tanks" not in data:
         data["tanks"] = []
     if "mission_objectives" not in data:
-        subject_ids = _collect_destroy_subject_ids(data)
-        if subject_ids:
-            data["mission_objectives"] = [
-                synthesize_legacy_destroy_objective(subject_ids)
-            ]
-        else:
-            data["mission_objectives"] = []
+        data["mission_objectives"] = _default_mission_objective_dicts(data)
     data = migrate_v4_to_v5({**data, "scenario_version": 4})
     data = migrate_v5_to_v6(data)
     data = migrate_v6_to_v7(data)

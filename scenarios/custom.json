@@ -1,0 +1,1913 @@
+{
+  "scenario_version": 9,
+  "grid_width": 100.0,
+  "grid_height": 100.0,
+  "jets": [
+    {
+      "agent_id": "Jet_01",
+      "position": [
+        97.44210775271677,
+        94.11609193675689
+      ],
+      "payload": {
+        "JDAM": 2,
+        "AGM65": 2
+      },
+      "frame_type": "INTERCEPTOR",
+      "initial_heading": 227.0804571255902,
+      "base_assignment": {
+        "primary_base_id": "Base_Home",
+        "alternate_base_id": null
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
+    },
+    {
+      "agent_id": "Jet_02",
+      "position": [
+        94.55225063336809,
+        88.34696704955691
+      ],
+      "payload": {
+        "JDAM": 7,
+        "AGM65": 3
+      },
+      "frame_type": "HEAVY_BOMBER",
+      "initial_heading": 229.2807974174744,
+      "base_assignment": {
+        "primary_base_id": "Base_Home",
+        "alternate_base_id": null
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
+    },
+    {
+      "agent_id": "Jet_03",
+      "position": [
+        90.97570893953377,
+        92.72345673603999
+      ],
+      "payload": {
+        "JDAM": 5,
+        "AGM65": 2
+      },
+      "frame_type": "STRIKE_FIGHTER",
+      "initial_heading": 223.80376320415516,
+      "base_assignment": {
+        "primary_base_id": "Base_Home",
+        "alternate_base_id": null
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
+    }
+  ],
+  "targets": [
+    {
+      "target_id": "Target_01",
+      "position": [
+        62.662595182724935,
+        52.60985621581438
+      ],
+      "hp_required": 3,
+      "target_type": "MOBILE_RADAR"
+    },
+    {
+      "target_id": "Target_02",
+      "position": [
+        37.08764788140396,
+        68.61937354047745
+      ],
+      "hp_required": 1,
+      "target_type": "HARDENED_BUNKER"
+    },
+    {
+      "target_id": "Target_03",
+      "position": [
+        78.07545996075828,
+        57.2762297439793
+      ],
+      "hp_required": 4,
+      "target_type": "MOBILE_RADAR"
+    }
+  ],
+  "sam_sites": [
+    {
+      "target_id": "SAM_01",
+      "position": [
+        62.945001225520485,
+        71.84069553587612
+      ],
+      "hp_required": 1,
+      "target_type": "SAM_SITE",
+      "missile_loadout": {
+        "SAM_RADAR": 12
+      },
+      "cooldown_ticks": 1,
+      "sam_frame_ref": "SAM_SITE_DEFAULT"
+    }
+  ],
+  "jammers": [
+    {
+      "jammer_id": "Jammer_01",
+      "position": [
+        17.922869443820364,
+        72.35060640558535
+      ]
+    }
+  ],
+  "home_base": [
+    93.19504081714425,
+    93.31378121039505
+  ],
+  "terrain": {
+    "world_width": 100.0,
+    "world_height": 100.0,
+    "terrain_edit_seed": 3506262810209637596,
+    "cell_size": 5.0,
+    "columns": 20,
+    "rows": 20,
+    "cells": [
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 10.355
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 8.113
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 7.2669999999999995
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 7.282
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 10.850999999999999
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 6.781000000000001
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 7.821
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 6.891
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 8.378
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 11.538
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 7.704000000000001
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 11.66
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 9.246
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 6.241
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 11.196
+        },
+        {
+          "terrain_type": "CITY",
+          "building_height": 7.943
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "WATER",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ],
+      [
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        },
+        {
+          "terrain_type": "FOREST",
+          "building_height": null
+        },
+        {
+          "terrain_type": "PLAINS",
+          "building_height": null
+        }
+      ]
+    ]
+  },
+  "combat_seed": 14457586662967377758,
+  "mission_objectives": [
+    {
+      "objective_id": "OBJ_DESTROY_ALL",
+      "objective_type": "DESTROY",
+      "subject_ids": [
+        "Target_01",
+        "Target_02",
+        "Target_03",
+        "SAM_01"
+      ],
+      "required": true,
+      "faction": "FRIENDLY",
+      "priority": 0.5,
+      "until_tick": null
+    },
+    {
+      "objective_id": "OBJ_RETURN_ALL",
+      "objective_type": "RETURN",
+      "subject_ids": [
+        "Jet_01",
+        "Jet_02",
+        "Jet_03"
+      ],
+      "required": true,
+      "faction": "FRIENDLY",
+      "priority": 0.4,
+      "until_tick": null
+    }
+  ],
+  "fixed_airbases": [
+    {
+      "base_id": "Base_Home",
+      "position": [
+        93.19504081714425,
+        93.31378121039505
+      ]
+    }
+  ],
+  "carriers": [],
+  "corvettes": [],
+  "aaa_sites": [
+    {
+      "target_id": "AAA_01",
+      "position": [
+        57.61248612841107,
+        51.7183858795802
+      ],
+      "heading": 79.98899862766604,
+      "faction": "ENEMY",
+      "frame_type": "AAA_LIGHT",
+      "hp_required": null,
+      "ammo": null,
+      "target_type": "AAA_SITE"
+    }
+  ],
+  "tanks": [],
+  "generation": {
+    "generator_version": 3,
+    "seed": 14457586662967377758,
+    "preset": "STANDARD",
+    "resolved_parameters": {
+      "seed": 14457586662967377758,
+      "preset": "STANDARD",
+      "objective_count": 3,
+      "sam_count": 1,
+      "jammer_count": 1,
+      "objective_hp_min": 1,
+      "objective_hp_max": 4,
+      "cooperation_objective_fraction": 0.25,
+      "group_style": "MIXED",
+      "allowed_group_templates": [
+        "OBJECTIVE_ONLY",
+        "DEFENDED_OBJECTIVE",
+        "JAMMED_OBJECTIVE",
+        "IADS_CLUSTER"
+      ],
+      "objective_distance_min_fraction": 0.2,
+      "objective_distance_max_fraction": 0.85,
+      "map_margin": 5.0,
+      "base_safety_radius": 18.0,
+      "group_min_separation": 16.0,
+      "entity_min_separation": 3.0,
+      "threat_overlap": 0.35,
+      "launch_threat_clearance": 5.0,
+      "friendly_mode": "AUTO_BALANCED",
+      "friendly_count_min": 3,
+      "friendly_count_max": 6,
+      "allowed_frame_types": [
+        "INTERCEPTOR",
+        "STRIKE_FIGHTER",
+        "HEAVY_BOMBER"
+      ],
+      "custom_roster": [],
+      "friendly_reserve_factor": 1.35,
+      "max_placement_attempts": 200,
+      "terrain": {
+        "water_fraction": 0.18,
+        "forest_fraction": 0.18,
+        "city_fraction": 0.05,
+        "smoothing_passes": 3,
+        "city_cluster_radius": 2,
+        "building_height_min": 4.0,
+        "building_height_max": 12.0,
+        "minimum_land_component_cells": 40,
+        "minimum_water_component_cells": 0
+      },
+      "friendly_carrier_count": 0,
+      "carrier_base_mode": false,
+      "enemy_corvette_count": 0,
+      "corvette_defense_tier": "STANDARD",
+      "aaa_count": 1,
+      "friendly_tank_count": 0,
+      "enemy_tank_count": 0,
+      "naval_enabled": false,
+      "sam_ir_fraction": 0.25,
+      "jet_flare_fraction": 1.0
+    },
+    "deliberate_cooperative_objective_ids": [
+      "Target_03"
+    ],
+    "modified_after_generation": false
+  }
+}

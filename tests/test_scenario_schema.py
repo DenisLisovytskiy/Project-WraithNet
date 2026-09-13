@@ -254,11 +254,13 @@ def test_migrate_v1_to_v3_via_scenario_from_data():
     assert all(
         j.base_assignment.primary_base_id == HOME_BASE_ID for j in scenario.jets
     )
-    assert len(scenario.mission_objectives) == 1
-    obj = scenario.mission_objectives[0]
-    assert obj.objective_type == "DESTROY"
-    assert obj.required is True
-    assert set(obj.subject_ids) == {"Target_A", "Target_B", "SAM_Site_1"}
+    assert len(scenario.mission_objectives) == 2
+    destroy = next(o for o in scenario.mission_objectives if o.objective_type == "DESTROY")
+    ret = next(o for o in scenario.mission_objectives if o.objective_type == "RETURN")
+    assert destroy.required is True
+    assert set(destroy.subject_ids) == {"Target_A", "Target_B", "SAM_Site_1"}
+    assert ret.required is True
+    assert set(ret.subject_ids) == {"Jet_1", "Jet_2", "Jet_3"}
 
 
 def test_migrate_v2_to_v3_synthesizes_legacy_destroy_and_defaults():
@@ -337,10 +339,21 @@ def test_legacy_destroy_objective_covers_targets_and_sams():
         ],
     )
     objs = data["mission_objectives"]
-    assert len(objs) == 1
-    obj = objs[0]
-    subject_ids = obj.subject_ids if hasattr(obj, "subject_ids") else obj["subject_ids"]
+    assert len(objs) == 2
+    destroy = next(
+        o for o in objs
+        if (o.objective_type if hasattr(o, "objective_type") else o["objective_type"])
+        == "DESTROY"
+    )
+    subject_ids = destroy.subject_ids if hasattr(destroy, "subject_ids") else destroy["subject_ids"]
     assert set(subject_ids) == {"Target_A", "SAM_1"}
+    ret = next(
+        o for o in objs
+        if (o.objective_type if hasattr(o, "objective_type") else o["objective_type"])
+        == "RETURN"
+    )
+    ret_ids = ret.subject_ids if hasattr(ret, "subject_ids") else ret["subject_ids"]
+    assert set(ret_ids) == {"Jet_1"}
 
 
 def test_rejects_unknown_objective_subject_id():

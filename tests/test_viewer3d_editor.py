@@ -514,6 +514,27 @@ def test_property_form_apply_updates_payload():
         _destroy_app(app)
 
 
+def test_jet_property_form_layout_does_not_overlap():
+    """Payload rows sit below flares; Apply stays inside the properties card."""
+    app = _editor_app()
+    try:
+        editor = app._editor
+        editor.begin_placement("jet")
+        editor.on_ground_clicked((12.0, 13.0))
+        flare_z = editor._field_b_entry.getPos()[2]
+        payload_zs = [e.getPos()[2] for e in editor._payload_entries.values()]
+        apply_z = editor._btn_apply.getPos()[2]
+        frame_z = editor._frame_btn.getPos()[2]
+        path_z = editor._path_entry.getPos()[2]
+        assert flare_z > max(payload_zs)
+        assert frame_z > apply_z
+        assert apply_z > editor._form_bottom_z
+        assert apply_z > path_z
+        assert editor._frame_btn.getPos()[2] > path_z
+    finally:
+        _destroy_app(app)
+
+
 def test_ground_click_without_placement_selects_nearest():
     app = _editor_app()
     try:

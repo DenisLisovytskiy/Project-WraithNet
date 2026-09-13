@@ -45,7 +45,7 @@ def _tiny_scenario() -> ScenarioConfig:
 async def _read_stream_messages(host: str, port: int, count: int) -> list[dict]:
     """Connects, reads `count` newline-delimited JSON messages, returns them
     decoded. Test-only helper -- not part of the production package."""
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await asyncio.open_connection(host, port, limit=8 * 1024 * 1024)
     messages = []
     try:
         for _ in range(count):
@@ -63,7 +63,7 @@ async def _read_stream_messages(host: str, port: int, count: int) -> list[dict]:
 
 
 async def _read_until_end(host: str, port: int) -> list[dict]:
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await asyncio.open_connection(host, port, limit=8 * 1024 * 1024)
     messages = []
     try:
         while True:

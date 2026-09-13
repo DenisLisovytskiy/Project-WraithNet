@@ -405,8 +405,17 @@ def test_decide_intent_move_when_far_from_committed_target():
     jet._commit("Target_A", 1, "JDAM")
     intent = jet.decide_intent()
     assert intent.action_type == "MOVE"
-    assert intent.target_position == target.position
-    assert math.dist((70.0, 70.0), target.position) > config.WEAPON_CATALOG["JDAM"].range
+    weapon = config.WEAPON_CATALOG["JDAM"]
+    dist = math.dist((70.0, 70.0), target.position)
+    ux = (70.0 - target.position[0]) / dist
+    uy = (70.0 - target.position[1]) / dist
+    standoff = max(weapon.range * 0.5, 1e-3)
+    expected = (
+        target.position[0] + ux * standoff,
+        target.position[1] + uy * standoff,
+    )
+    assert intent.target_position == pytest.approx(expected)
+    assert math.dist((70.0, 70.0), target.position) > weapon.range
 
 
 def test_decide_intent_strike_when_in_range_decrements_committed_payload():

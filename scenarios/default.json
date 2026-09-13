@@ -1,5 +1,5 @@
 {
-  "scenario_version": 4,
+  "scenario_version": 9,
   "grid_width": 100.0,
   "grid_height": 100.0,
   "jets": [
@@ -17,7 +17,15 @@
       "base_assignment": {
         "primary_base_id": "Base_Home",
         "alternate_base_id": null
-      }
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
     },
     {
       "agent_id": "Jet_2",
@@ -33,7 +41,15 @@
       "base_assignment": {
         "primary_base_id": "Base_Home",
         "alternate_base_id": null
-      }
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
     },
     {
       "agent_id": "Jet_3",
@@ -50,7 +66,15 @@
       "base_assignment": {
         "primary_base_id": "Base_Home",
         "alternate_base_id": null
-      }
+      },
+      "flare_capacity": 6,
+      "flares_remaining": 6,
+      "flare_cooldown_ticks": 2,
+      "flare_quality": 0.75,
+      "radar_warning_receiver": true,
+      "notch_angle_window_deg": 30.0,
+      "notch_min_speed": 2.0,
+      "notch_hold_ticks": 2
     }
   ],
   "targets": [
@@ -1766,6 +1790,19 @@
       "faction": "FRIENDLY",
       "priority": 0.5,
       "until_tick": null
+    },
+    {
+      "objective_id": "OBJ_RETURN_ALL",
+      "objective_type": "RETURN",
+      "subject_ids": [
+        "Jet_1",
+        "Jet_2",
+        "Jet_3"
+      ],
+      "required": true,
+      "faction": "FRIENDLY",
+      "priority": 0.4,
+      "until_tick": null
     }
   ],
   "fixed_airbases": [
@@ -1777,5 +1814,9 @@
       ]
     }
   ],
+  "carriers": [],
+  "corvettes": [],
+  "aaa_sites": [],
+  "tanks": [],
   "generation": null
 }

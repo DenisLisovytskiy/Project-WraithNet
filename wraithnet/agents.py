@@ -931,6 +931,24 @@ class JetAgentRuntime:
             )
             return self._with_defense(intent, obs)
         if self.committed_target_id is None:
+            # Mission brief: transit toward incomplete DESTROY subjects until
+            # sensors acquire them. Hold only when no brief remains or we are
+            # already on station at the nearest waypoint.
+            waypoints = list(obs.briefed_seek_positions)
+            if waypoints:
+                nearest = min(
+                    waypoints, key=lambda p: math.dist(obs.current_position, p)
+                )
+                if math.dist(obs.current_position, nearest) > 1.0:
+                    bearing = bearing_to(obs.current_position, nearest)
+                    intent = ActionIntent(
+                        agent_id=self.agent_id,
+                        tick=obs.tick,
+                        action_type="MOVE",
+                        target_position=nearest,
+                        desired_heading=bearing,
+                    )
+                    return self._with_defense(intent, obs)
             intent = ActionIntent(
                 agent_id=self.agent_id, tick=obs.tick, action_type="IDLE"
             )
@@ -952,10 +970,8 @@ class JetAgentRuntime:
             self.committed_target_id = None
             self.committed_weapon_type = None
             self.role = "IDLE"
-            intent = ActionIntent(
-                agent_id=self.agent_id, tick=obs.tick, action_type="IDLE"
-            )
-            return self._with_defense(intent, obs)
+            # Fall through to briefed-seek / IDLE via a recursive-free re-entry.
+            return self.decide_intent()
         distance = math.dist(obs.current_position, target.position)
         # Safety: never STRIKE a memory-only target — must be directly sensing it.
         directly_sensed = any(t.target_id == target.target_id for t in obs.known_targets)
@@ -981,6 +997,8 @@ class JetAgentRuntime:
                     action_type=action,
                     target_id=target.target_id,
                     weapon_type=self.committed_weapon_type,
+                    # Keep nose on target while the world advances airspeed.
+                    desired_heading=bearing,
                 )
                 return self._with_defense(intent, obs)
             # In range but not pointed at the target yet: turn toward it this
@@ -993,11 +1011,32 @@ class JetAgentRuntime:
                 desired_heading=bearing,
             )
             return self._with_defense(intent, obs)
+        if distance <= 1e-9:
+            # Coincident with remembered coords but no live sense — hold the
+            # waypoint so the next tick can reacquire without a /0 gate.
+            intent = ActionIntent(
+                agent_id=self.agent_id,
+                tick=obs.tick,
+                action_type="MOVE",
+                target_position=target.position,
+                desired_heading=bearing,
+            )
+            return self._with_defense(intent, obs)
+        # Close on a release gate just inside weapon range (not the target
+        # centroid). High max_speed vs short JDAM/AGM65 ranges would otherwise
+        # overshoot the envelope in one MOVE and never pickle.
+        ux = (obs.current_position[0] - target.position[0]) / distance
+        uy = (obs.current_position[1] - target.position[1]) / distance
+        gate_standoff = max(weapon.range * 0.5, 1e-3)
+        gate = (
+            target.position[0] + ux * gate_standoff,
+            target.position[1] + uy * gate_standoff,
+        )
         intent = ActionIntent(
             agent_id=self.agent_id,
             tick=obs.tick,
             action_type="MOVE",
-            target_position=target.position,
+            target_position=gate,
             desired_heading=bearing,
         )
         return self._with_defense(intent, obs)

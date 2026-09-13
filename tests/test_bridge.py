@@ -236,7 +236,9 @@ async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
     assert bridge.model.swarm_wiped_out is False
     assert bridge.model.targets["Near_Bunker"].hp_remaining == 0
     assert "Target_A" not in bridge.model.targets
-    assert set(bridge.model.jets) == {"Solo_Jet"}
+    assert bridge.model.mission_solved is True
+    assert "Solo_Jet" in bridge.model.jets_returned_to_base
+    assert set(bridge.model.jets) == set()
     assert any(entry["target_id"] == "Near_Bunker" for entry in bridge.model.strike_log)
 
 

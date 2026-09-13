@@ -199,7 +199,17 @@ def test_decide_intent_move_sets_desired_heading_while_closing():
     jet._commit("Target_A", 1, "JDAM")
     intent = jet.decide_intent()
     assert intent.action_type == "MOVE"
-    assert intent.target_position == target.position
+    # Closing aims at a release gate just inside weapon range.
+    weapon = config.WEAPON_CATALOG["JDAM"]
+    dist = math.dist((70.0, 70.0), target.position)
+    ux = (70.0 - target.position[0]) / dist
+    uy = (70.0 - target.position[1]) / dist
+    standoff = max(weapon.range * 0.5, 1e-3)
+    expected = (
+        target.position[0] + ux * standoff,
+        target.position[1] + uy * standoff,
+    )
+    assert intent.target_position == pytest.approx(expected)
     assert intent.desired_heading == pytest.approx(45.0)
 
 
@@ -388,6 +398,65 @@ def test_decide_intent_rtb_always_moves_home():
     assert intent.desired_heading == pytest.approx(
         math.degrees(math.atan2(home[0] - position[0], home[1] - position[1])) % 360.0
     )
+
+
+def test_decide_intent_idle_seeks_briefed_destroy_waypoint():
+    """Uncommitted jets transit toward mission-brief DESTROY positions."""
+    broker = MessageBroker()
+    jet = JetAgentRuntime("Gunner", broker)
+    position = (10.0, 10.0)
+    waypoint = (80.0, 80.0)
+    obs = _gunner_obs(position, 0.0, {"JDAM": 1, "AIM9X": 0}, [])
+    jet.set_observation(
+        obs.model_copy(update={"briefed_seek_positions": [waypoint]})
+    )
+    intent = jet.decide_intent()
+    assert intent.action_type == "MOVE"
+    assert intent.target_position == waypoint
+    assert intent.desired_heading == pytest.approx(
+        math.degrees(math.atan2(waypoint[0] - position[0], waypoint[1] - position[1]))
+        % 360.0
+    )
+
+
+def test_out_of_sensor_range_jet_moves_toward_briefed_bunker():
+    """Regression: spawn beyond SENSOR_RADIUS must not hover IDLE forever."""
+    jet_pos = (10.0, 10.0)
+    bunker_pos = (80.0, 80.0)
+    assert math.dist(jet_pos, bunker_pos) > config.SENSOR_RADIUS
+    model = WraithNetModel(
+        scenario=scenario_from_data(
+            new_scenario_data(
+                jets=[
+                    JetSpec(
+                        agent_id="Jet_1",
+                        position=jet_pos,
+                        payload={"JDAM": 2},
+                    )
+                ],
+                targets=[
+                    TargetSpec(
+                        target_id="Target_1",
+                        position=bunker_pos,
+                        hp_required=2,
+                        target_type="HARDENED_BUNKER",
+                    )
+                ],
+            )
+        )
+    )
+    broker = MessageBroker()
+    runtime = JetAgentRuntime("Jet_1", broker)
+    obs = model.build_observation("Jet_1", broker)
+    assert obs.briefed_seek_positions == [bunker_pos]
+    assert not any(t.target_id == "Target_1" for t in obs.known_targets)
+    runtime.set_observation(obs)
+    intent = runtime.decide_intent()
+    assert intent.action_type == "MOVE"
+    assert intent.target_position == bunker_pos
+    start = tuple(model.jets["Jet_1"].pos)
+    model.step({"Jet_1": intent})
+    assert math.dist(start, tuple(model.jets["Jet_1"].pos)) > 0.5
 
 
 @pytest.mark.asyncio

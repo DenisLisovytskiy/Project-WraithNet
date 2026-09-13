@@ -102,6 +102,20 @@ class WraithNetBridge:
                 self.model.jets[agent_id].is_rtb = True
                 began_rtb_this_tick.add(agent_id)
 
+        # 1e. End-of-mission RTB — once required DESTROY objectives are done,
+        # every remaining friendly recovers before SUCCESS (RETURN objective).
+        if self.model.required_destroy_objectives_complete():
+            for agent_id in sorted(self.agents):
+                if agent_id in began_rtb_this_tick:
+                    continue
+                agent = self.agents[agent_id]
+                if agent.role == "RTB":
+                    continue
+                agent.begin_rtb()
+                if agent_id in self.model.jets:
+                    self.model.jets[agent_id].is_rtb = True
+                began_rtb_this_tick.add(agent_id)
+
         # 2. Negotiate (idle agents only), bounded by MAX_TICK_WAIT_SECONDS
         idle_agents = [a for a in self._agents_in_id_order() if a.role == "IDLE"]
         if idle_agents:

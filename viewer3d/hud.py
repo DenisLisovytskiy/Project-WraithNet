@@ -287,7 +287,9 @@ class Hud:
         )
         self._update_controls(camera_mode)
         self._update_presentation_debug(presentation_debug)
-        if mode == "finished" or (latest_tick is not None and not latest_tick.running):
+        # Overlay only when the *presented* tick is terminal — not merely
+        # because ingest/stream already closed (mode may flip early otherwise).
+        if latest_tick is not None and not latest_tick.running:
             self._show_end_of_run_summary(header, latest_tick, ticks or [])
         else:
             self._summary_node.hide()

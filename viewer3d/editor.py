@@ -23,13 +23,24 @@ import secrets
 from dataclasses import dataclass
 from typing import Literal
 
-from direct.gui.DirectGui import DirectButton, DirectEntry, DirectFrame, DirectLabel
+from direct.gui.DirectGui import DirectEntry, DirectLabel
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import MouseButton, OrthographicLens, TextNode, TransparencyAttrib
+from panda3d.core import MouseButton, OrthographicLens, TextNode
 from pydantic import ValidationError
 
 from viewer3d.cameras import _camera_node
 from viewer3d.scene import build_static_scene, jet_altitude, sync_static_unit_glyphs
+from viewer3d.ui_chrome import (
+    CYAN,
+    RED,
+    TEXT,
+    TEXT_MUTED,
+    make_button,
+    make_entry,
+    make_header,
+    make_label,
+    make_panel,
+)
 from wraithnet import config as wn_config
 from wraithnet.generation_presets import parameters_for_preset
 from wraithnet.generation_schemas import (
@@ -51,7 +62,10 @@ from wraithnet.scenario_generator import (
 )
 from wraithnet.scenario_io import load_scenario, save_scenario
 from wraithnet.bases import HOME_BASE_ID, default_home_airbase, default_jet_assignment
-from wraithnet.objectives import synthesize_legacy_destroy_objective
+from wraithnet.objectives import (
+    synthesize_legacy_destroy_objective,
+    synthesize_legacy_return_objective,
+)
 from wraithnet.scenario_schema import (
     ScenarioConfig,
     SUPPORTED_SCENARIO_VERSION,
@@ -78,10 +92,6 @@ EditMode = Literal["ENTITY", "TERRAIN"]
 _INVALID_ENTITY_COLOR = (0.95, 0.12, 0.12, 1.0)
 _BRUSH_CYCLE: tuple[BrushType, ...] = ("WATER", "PLAINS", "FOREST", "CITY")
 
-CYAN = (0.45, 0.88, 1.0, 1.0)
-PANEL_BG = (0.02, 0.07, 0.11, 0.78)
-RED = (1.0, 0.35, 0.32, 1.0)
-BTN_BG = (0.08, 0.18, 0.24, 0.95)
 _VALUE_ERROR_PREFIX = "Value error, "
 _FRAME_TYPES = list(wn_config.JET_FRAME_CATALOG)
 _CARRIER_FRAME_TYPES = [ft for ft in NAVAL_FRAME_CATALOG if "CARRIER" in ft]
@@ -294,21 +304,16 @@ class OrthoEditorCamera:
             return
 
 
-def _btn(parent, text, pos, command, extra_args=None, scale=0.038):
-    kwargs = dict(
-        parent=parent,
-        text=text,
-        pos=pos,
+def _btn(parent, text, pos, command, extra_args=None, scale=0.034, style="default"):
+    return make_button(
+        parent,
+        text,
+        pos,
+        command,
+        extra_args=extra_args,
         scale=scale,
-        command=command,
-        frameColor=BTN_BG,
-        text_fg=CYAN,
-        relief=1,
-        pad=(0.15, 0.08),
+        style=style,
     )
-    if extra_args is not None:
-        kwargs["extraArgs"] = extra_args
-    return DirectButton(**kwargs)
 
 
 @dataclass
@@ -391,22 +396,14 @@ class ScenarioEditor:
         parent = getattr(self.base, "a2dTopLeft", None) or getattr(
             self.base, "aspect2d", None
         )
-        self._panel = DirectFrame(
-            parent=parent,
-            frameColor=PANEL_BG,
-            frameSize=(0.02, 0.92, -1.85, -0.02),
-            pos=(0, 0, 0),
-            relief=None,
+        self._panel = make_panel(
+            parent, frame_size=(0.02, 0.92, -1.85, -0.02)
         )
-        self._panel.set_transparency(TransparencyAttrib.MAlpha)
-        DirectLabel(
-            parent=self._panel,
-            text="[ SCENARIO EDITOR ]",
+        make_header(
+            self._panel,
+            "[ SCENARIO EDITOR ]",
             pos=(0.08, 0, -0.08),
-            scale=0.042,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+            scale=0.040,
         )
         self._btn_add_jet = _btn(
             self._panel, "Add Jet", (0.22, 0, -0.16), self.begin_placement, ["jet"]
@@ -439,21 +436,16 @@ class ScenarioEditor:
             self._panel, "Edit Terrain", (0.52, 0, -0.48), self.enter_terrain_mode
         )
 
-        self._terrain_panel = DirectFrame(
-            parent=self._panel,
-            frameColor=(0.03, 0.09, 0.13, 0.55),
-            frameSize=(0.04, 0.88, -0.92, -0.08),
-            relief=None,
+        self._terrain_panel = make_panel(
+            self._panel,
+            frame_size=(0.04, 0.88, -0.92, -0.08),
+            nested=True,
         )
-        self._terrain_panel.set_transparency(TransparencyAttrib.MAlpha)
-        DirectLabel(
-            parent=self._terrain_panel,
-            text="[ TERRAIN MODE ]",
+        make_header(
+            self._terrain_panel,
+            "[ TERRAIN MODE ]",
             pos=(0.08, 0, -0.14),
             scale=0.034,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._btn_brush = _btn(
             self._terrain_panel,
@@ -476,14 +468,12 @@ class ScenarioEditor:
             self._cycle_city_height_mode,
             scale=0.030,
         )
-        self._fixed_height_entry = DirectEntry(
-            parent=self._terrain_panel,
+        self._fixed_height_entry = make_entry(
+            self._terrain_panel,
             pos=(0.72, 0, -0.30),
             scale=0.028,
             width=5,
-            initialText="10",
-            numLines=1,
-            focus=0,
+            initial="10",
         )
         self._btn_fill = _btn(
             self._terrain_panel, "Fill Map", (0.22, 0, -0.38), self._fill_terrain_clicked, scale=0.030
@@ -521,49 +511,40 @@ class ScenarioEditor:
             (0.40, 0, -0.62),
             self._confirm_relocate,
             scale=0.028,
+            style="primary",
         )
         self._btn_relocate_confirm.hide()
-        self._terrain_gen_frame = DirectFrame(
-            parent=self._terrain_panel,
-            frameColor=(0.02, 0.06, 0.10, 0.5),
-            frameSize=(0.06, 0.86, -0.90, -0.68),
-            relief=None,
+        self._terrain_gen_frame = make_panel(
+            self._terrain_panel,
+            frame_size=(0.06, 0.86, -0.90, -0.68),
+            nested=True,
         )
-        DirectLabel(
-            parent=self._terrain_gen_frame,
-            text="water / forest / city fractions",
+        make_label(
+            self._terrain_gen_frame,
+            "water / forest / city fractions",
             pos=(0.08, 0, -0.72),
             scale=0.024,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
-        self._terrain_water_entry = DirectEntry(
-            parent=self._terrain_gen_frame,
+        self._terrain_water_entry = make_entry(
+            self._terrain_gen_frame,
             pos=(0.20, 0, -0.78),
             scale=0.026,
             width=5,
-            initialText="0.20",
-            numLines=1,
-            focus=0,
+            initial="0.20",
         )
-        self._terrain_forest_entry = DirectEntry(
-            parent=self._terrain_gen_frame,
+        self._terrain_forest_entry = make_entry(
+            self._terrain_gen_frame,
             pos=(0.42, 0, -0.78),
             scale=0.026,
             width=5,
-            initialText="0.20",
-            numLines=1,
-            focus=0,
+            initial="0.20",
         )
-        self._terrain_city_entry = DirectEntry(
-            parent=self._terrain_gen_frame,
+        self._terrain_city_entry = make_entry(
+            self._terrain_gen_frame,
             pos=(0.64, 0, -0.78),
             scale=0.026,
             width=5,
-            initialText="0.10",
-            numLines=1,
-            focus=0,
+            initial="0.10",
         )
         self._btn_run_terrain_gen = _btn(
             self._terrain_gen_frame,
@@ -571,150 +552,157 @@ class ScenarioEditor:
             (0.40, 0, -0.86),
             self._generate_terrain_clicked,
             scale=0.028,
+            style="primary",
         )
         self._terrain_gen_frame.hide()
         self._terrain_panel.hide()
 
-        self._list_anchor_z = -0.58
-        DirectLabel(
-            parent=self._panel,
-            text="[ ENTITIES ]",
-            pos=(0.08, 0, -0.56),
-            scale=0.034,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        self._list_anchor_z = -0.60
+        self._list_max_visible = 5
+        make_header(
+            self._panel,
+            "[ ENTITIES ]",
+            pos=(0.08, 0, -0.545),
+            scale=0.032,
         )
+        self._hint = OnscreenText(
+            text="Click Add, then click the map to place.",
+            parent=self._panel,
+            pos=(0.08, -0.505),
+            scale=0.020,
+            fg=TEXT_MUTED,
+            align=TextNode.ALeft,
+            mayChange=True,
+        )
+        self._list_overflow_label = make_label(
+            self._panel,
+            "",
+            pos=(0.10, 0, -0.60),
+            scale=0.022,
+            fg=TEXT_MUTED,
+        )
+        self._list_overflow_label.hide()
 
-        self._form_frame = DirectFrame(
-            parent=self._panel,
-            frameColor=(0.03, 0.09, 0.13, 0.4),
-            frameSize=(0.06, 0.86, -1.36, -0.98),
-            relief=None,
+        # Tall properties card: jet payload + flares need ~0.7 of vertical space.
+        self._form_top_z = -0.88
+        self._form_bottom_z = -1.58
+        self._form_content_top_z = -0.94
+        self._form_frame = make_panel(
+            self._panel,
+            frame_size=(0.06, 0.86, self._form_bottom_z, self._form_top_z),
+            nested=True,
         )
-        DirectLabel(
-            parent=self._form_frame,
-            text="[ PROPERTIES ]",
-            pos=(0.08, 0, -1.02),
-            scale=0.032,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        make_header(
+            self._form_frame,
+            "[ PROPERTIES ]",
+            pos=(0.08, 0, self._form_top_z - 0.04),
+            scale=0.030,
         )
-        self._id_entry = DirectEntry(
-            parent=self._form_frame,
-            pos=(0.45, 0, -1.08),
-            scale=0.035,
-            width=12,
-            initialText="",
-            numLines=1,
-            focus=0,
+        self._id_label = make_label(
+            self._form_frame,
+            "ID",
+            pos=(0.10, 0, self._form_content_top_z),
+            scale=0.028,
+            fg=CYAN,
         )
-        DirectLabel(
-            parent=self._form_frame,
-            text="ID",
-            pos=(0.10, 0, -1.08),
-            scale=0.032,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        self._id_entry = make_entry(
+            self._form_frame,
+            pos=(0.40, 0, self._form_content_top_z),
+            scale=0.028,
+            width=14,
         )
-        self._field_a_entry = DirectEntry(
-            parent=self._form_frame,
-            pos=(0.45, 0, -1.14),
-            scale=0.035,
-            width=12,
-            initialText="",
-            numLines=1,
-            focus=0,
+        self._field_a_entry = make_entry(
+            self._form_frame,
+            pos=(0.40, 0, self._form_content_top_z - 0.05),
+            scale=0.028,
+            width=14,
         )
-        self._field_a_label = DirectLabel(
-            parent=self._form_frame,
-            text="JDAM",
-            pos=(0.10, 0, -1.14),
-            scale=0.032,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        self._field_a_label = make_label(
+            self._form_frame,
+            "JDAM",
+            pos=(0.10, 0, self._form_content_top_z - 0.05),
+            scale=0.026,
+            fg=CYAN,
         )
-        self._field_b_entry = DirectEntry(
-            parent=self._form_frame,
-            pos=(0.45, 0, -1.20),
-            scale=0.035,
-            width=12,
-            initialText="",
-            numLines=1,
-            focus=0,
+        self._field_b_entry = make_entry(
+            self._form_frame,
+            pos=(0.40, 0, self._form_content_top_z - 0.10),
+            scale=0.028,
+            width=14,
         )
-        self._field_b_label = DirectLabel(
-            parent=self._form_frame,
-            text="AIM9X",
-            pos=(0.10, 0, -1.20),
-            scale=0.032,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        self._field_b_label = make_label(
+            self._form_frame,
+            "AIM9X",
+            pos=(0.10, 0, self._form_content_top_z - 0.10),
+            scale=0.026,
+            fg=CYAN,
         )
         self._payload_entries: dict[str, DirectEntry] = {}
         self._payload_labels: dict[str, DirectLabel] = {}
         weapons = list(wn_config.WEAPON_CATALOG)
-        for i, weapon in enumerate(weapons):
-            row, col = divmod(i, 2)
-            z = -1.14 - 0.06 * row
-            x_label = 0.10 if col == 0 else 0.48
-            x_entry = 0.28 if col == 0 else 0.66
-            label = DirectLabel(
-                parent=self._form_frame,
-                text=weapon,
-                pos=(x_label, 0, z),
-                scale=0.028,
-                text_fg=CYAN,
-                text_align=TextNode.ALeft,
-                frameColor=(0, 0, 0, 0),
+        for weapon in weapons:
+            label = make_label(
+                self._form_frame,
+                weapon,
+                pos=(0.10, 0, self._form_content_top_z),
+                scale=0.022,
+                fg=CYAN,
             )
-            entry = DirectEntry(
-                parent=self._form_frame,
-                pos=(x_entry, 0, z),
-                scale=0.032,
-                width=6,
-                initialText="0",
-                numLines=1,
-                focus=0,
+            entry = make_entry(
+                self._form_frame,
+                pos=(0.28, 0, self._form_content_top_z),
+                scale=0.024,
+                width=5,
+                initial="0",
+                command=self._on_payload_typed,
             )
-            entry["command"] = self._on_payload_typed
             label.hide()
             entry.hide()
             self._payload_labels[weapon] = label
             self._payload_entries[weapon] = entry
-        n_payload_rows = max(1, (len(weapons) + 1) // 2)
-        frame_z = -1.14 - 0.06 * n_payload_rows
         self._frame_btn = _btn(
-            self._form_frame, "Frame: STRIKE_FIGHTER", (0.46, 0, frame_z), self._cycle_frame_type
+            self._form_frame,
+            "Frame: STRIKE_FIGHTER",
+            (0.46, 0, self._form_content_top_z),
+            self._cycle_frame_type,
+            scale=0.026,
         )
-        self._slots_label = DirectLabel(
-            parent=self._form_frame,
-            text="0 / 7 slots",
-            pos=(0.10, 0, -1.32),
-            scale=0.030,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        self._slots_label = make_label(
+            self._form_frame,
+            "0 / 7 slots",
+            pos=(0.10, 0, self._form_content_top_z),
+            scale=0.024,
+            fg=TEXT,
         )
         self._btn_apply = _btn(
-            self._form_frame, "Apply", (0.18, 0, -1.38), self._apply_form, scale=0.028
+            self._form_frame,
+            "Apply",
+            (0.20, 0, self._form_content_top_z),
+            self._apply_form,
+            scale=0.026,
+            style="primary",
         )
         self._btn_delete = _btn(
-            self._form_frame, "Delete", (0.40, 0, -1.38), self._delete_selected, scale=0.028
+            self._form_frame,
+            "Delete",
+            (0.42, 0, self._form_content_top_z),
+            self._delete_selected,
+            scale=0.026,
+            style="danger",
         )
         self._btn_hold = _btn(
-            self._form_frame, "Hold: ON", (0.66, 0, -1.32), self._toggle_hold_position, scale=0.026
+            self._form_frame,
+            "Hold: ON",
+            (0.68, 0, self._form_content_top_z),
+            self._toggle_hold_position,
+            scale=0.024,
         )
         self._btn_add_route = _btn(
             self._form_frame,
             "Add Route Point",
-            (0.66, 0, -1.38),
+            (0.68, 0, self._form_content_top_z),
             self._arm_route_point,
-            scale=0.024,
+            scale=0.022,
         )
         self._field_a_entry["command"] = self._on_payload_typed
         self._field_b_entry["command"] = self._on_payload_typed
@@ -722,32 +710,29 @@ class ScenarioEditor:
         self._slots_label.hide()
         self._btn_hold.hide()
         self._btn_add_route.hide()
+        self._layout_property_form("jammer")
 
-        self._path_entry = DirectEntry(
-            parent=self._panel,
-            pos=(0.48, 0, -1.50),
-            scale=0.032,
+        self._path_entry = make_entry(
+            self._panel,
+            pos=(0.48, 0, -1.66),
+            scale=0.028,
             width=18,
-            initialText=self._path,
-            numLines=1,
-            focus=0,
+            initial=self._path,
         )
-        DirectLabel(
-            parent=self._panel,
-            text="Path",
-            pos=(0.08, 0, -1.50),
-            scale=0.032,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+        make_label(
+            self._panel,
+            "Path",
+            pos=(0.08, 0, -1.66),
+            scale=0.028,
+            fg=CYAN,
         )
-        self._btn_save = _btn(self._panel, "Save", (0.18, 0, -1.60), self._save_clicked)
-        self._btn_load = _btn(self._panel, "Load", (0.40, 0, -1.60), self._load_clicked)
+        self._btn_save = _btn(self._panel, "Save", (0.18, 0, -1.74), self._save_clicked, scale=0.030)
+        self._btn_load = _btn(self._panel, "Load", (0.40, 0, -1.74), self._load_clicked, scale=0.030)
         self._btn_preview = _btn(
-            self._panel, "Preview", (0.66, 0, -1.60), self._preview_clicked
+            self._panel, "Preview", (0.66, 0, -1.74), self._preview_clicked, scale=0.030
         )
         self._btn_launch = _btn(
-            self._panel, "Launch", (0.40, 0, -1.70), self._launch_clicked
+            self._panel, "Launch", (0.40, 0, -1.84), self._launch_clicked, style="primary", scale=0.032
         )
 
         bl = getattr(self.base, "a2dBottomLeft", None) or parent
@@ -762,20 +747,12 @@ class ScenarioEditor:
             wordwrap=32,
         )
         self._banner.hide()
-        self._hint = OnscreenText(
-            text="Click Add, then click the map to place.",
-            parent=parent,
-            pos=(0.08, -0.28),
-            scale=0.028,
-            fg=CYAN,
-            align=TextNode.ALeft,
-            mayChange=True,
-        )
         self._back_btn = _btn(
             getattr(self.base, "a2dTopRight", None) or parent,
-            "Back to editing",
+            "Back to Editor",
             (-0.28, 0, -0.08),
             self._back_to_editing,
+            style="primary",
         )
         self._back_btn.hide()
         self._build_generate_panel()
@@ -785,22 +762,14 @@ class ScenarioEditor:
         parent = getattr(self.base, "a2dTopRight", None) or getattr(
             self.base, "aspect2d", None
         )
-        self._gen_panel = DirectFrame(
-            parent=parent,
-            frameColor=PANEL_BG,
-            frameSize=(-0.92, -0.02, -1.90, -0.02),
-            pos=(0, 0, 0),
-            relief=None,
+        self._gen_panel = make_panel(
+            parent, frame_size=(-0.92, -0.02, -1.90, -0.02)
         )
-        self._gen_panel.set_transparency(TransparencyAttrib.MAlpha)
-        DirectLabel(
-            parent=self._gen_panel,
-            text="[ QUICK GENERATE ]",
+        make_header(
+            self._gen_panel,
+            "[ QUICK GENERATE ]",
             pos=(-0.88, 0, -0.08),
             scale=0.038,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._btn_difficulty = _btn(
             self._gen_panel,
@@ -809,23 +778,19 @@ class ScenarioEditor:
             self._cycle_difficulty,
             scale=0.032,
         )
-        self._seed_entry = DirectEntry(
-            parent=self._gen_panel,
+        self._seed_entry = make_entry(
+            self._gen_panel,
             pos=(-0.55, 0, -0.24),
-            scale=0.030,
+            scale=0.028,
             width=16,
-            initialText="0",
-            numLines=1,
-            focus=0,
+            initial="0",
         )
-        DirectLabel(
-            parent=self._gen_panel,
-            text="Seed",
+        make_label(
+            self._gen_panel,
+            "Seed",
             pos=(-0.88, 0, -0.24),
             scale=0.028,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+            fg=CYAN,
         )
         self._btn_new_seed = _btn(
             self._gen_panel, "New Seed", (-0.22, 0, -0.24), self._new_seed, scale=0.028
@@ -838,7 +803,12 @@ class ScenarioEditor:
             scale=0.028,
         )
         self._btn_generate = _btn(
-            self._gen_panel, "Generate", (-0.72, 0, -0.40), self._generate_clicked, scale=0.032
+            self._gen_panel,
+            "Generate",
+            (-0.72, 0, -0.40),
+            self._generate_clicked,
+            scale=0.032,
+            style="primary",
         )
         self._btn_advanced = _btn(
             self._gen_panel,
@@ -860,6 +830,7 @@ class ScenarioEditor:
             (-0.72, 0, -0.48),
             self._confirm_replace_generation,
             scale=0.028,
+            style="primary",
         )
         self._btn_use_anyway = _btn(
             self._gen_panel,
@@ -874,28 +845,24 @@ class ScenarioEditor:
             (-0.18, 0, -0.48),
             self._cancel_pending_generation,
             scale=0.028,
+            style="danger",
         )
         self._btn_confirm_replace.hide()
         self._btn_use_anyway.hide()
         self._btn_cancel_pending.hide()
 
-        self._gen_meta_label = DirectLabel(
-            parent=self._gen_panel,
-            text="Manual scenario",
+        self._gen_meta_label = make_label(
+            self._gen_panel,
+            "Manual scenario",
             pos=(-0.88, 0, -0.56),
             scale=0.026,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+            fg=TEXT,
         )
-        self._gen_status_label = DirectLabel(
-            parent=self._gen_panel,
-            text="No generation yet.",
+        self._gen_status_label = make_label(
+            self._gen_panel,
+            "No generation yet.",
             pos=(-0.88, 0, -0.62),
             scale=0.024,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._btn_status_details = _btn(
             self._gen_panel,
@@ -904,22 +871,18 @@ class ScenarioEditor:
             self._toggle_status_details,
             scale=0.026,
         )
-        self._gen_details_label = DirectLabel(
-            parent=self._gen_panel,
-            text="",
+        self._gen_details_label = make_label(
+            self._gen_panel,
+            "",
             pos=(-0.88, 0, -0.76),
             scale=0.022,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._gen_details_label.hide()
 
-        self._advanced_frame = DirectFrame(
-            parent=self._gen_panel,
-            frameColor=(0.03, 0.09, 0.13, 0.35),
-            frameSize=(-0.90, -0.04, -1.88, -0.82),
-            relief=None,
+        self._advanced_frame = make_panel(
+            self._gen_panel,
+            frame_size=(-0.90, -0.04, -1.88, -0.82),
+            nested=True,
         )
         self._advanced_entries: dict[str, DirectEntry] = {}
         adv_fields = [
@@ -941,25 +904,20 @@ class ScenarioEditor:
             ("friendly_reserve_factor", "Reserve", -1.80),
         ]
         for key, label, z in adv_fields:
-            DirectLabel(
-                parent=self._advanced_frame,
-                text=label,
+            make_label(
+                self._advanced_frame,
+                label,
                 pos=(-0.88, 0, z),
                 scale=0.022,
-                text_fg=CYAN,
-                text_align=TextNode.ALeft,
-                frameColor=(0, 0, 0, 0),
+                fg=CYAN,
             )
-            entry = DirectEntry(
-                parent=self._advanced_frame,
+            entry = make_entry(
+                self._advanced_frame,
                 pos=(-0.42, 0, z),
                 scale=0.022,
                 width=10,
-                initialText="",
-                numLines=1,
-                focus=0,
+                command=self._on_advanced_field_edited,
             )
-            entry["command"] = self._on_advanced_field_edited
             self._advanced_entries[key] = entry
         self._btn_group_style = _btn(
             self._advanced_frame,
@@ -968,14 +926,11 @@ class ScenarioEditor:
             self._cycle_group_style,
             scale=0.022,
         )
-        self._templates_label = DirectLabel(
-            parent=self._advanced_frame,
-            text="Templates: …",
+        self._templates_label = make_label(
+            self._advanced_frame,
+            "Templates: …",
             pos=(-0.88, 0, -1.88),
             scale=0.018,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._btn_cycle_templates = _btn(
             self._advanced_frame,
@@ -984,30 +939,23 @@ class ScenarioEditor:
             self._cycle_allowed_templates,
             scale=0.018,
         )
-        self._param_summary_label = DirectLabel(
-            parent=self._advanced_frame,
-            text="",
+        self._param_summary_label = make_label(
+            self._advanced_frame,
+            "",
             pos=(-0.88, 0, -0.86),
             scale=0.018,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
 
-        self._roster_frame = DirectFrame(
-            parent=self._gen_panel,
-            frameColor=(0.03, 0.09, 0.13, 0.35),
-            frameSize=(-0.90, -0.04, -1.88, -0.82),
-            relief=None,
+        self._roster_frame = make_panel(
+            self._gen_panel,
+            frame_size=(-0.90, -0.04, -1.88, -0.82),
+            nested=True,
         )
-        DirectLabel(
-            parent=self._roster_frame,
-            text="[ CUSTOM ROSTER ]",
+        make_header(
+            self._roster_frame,
+            "[ CUSTOM ROSTER ]",
             pos=(-0.88, 0, -0.86),
             scale=0.024,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
         )
         self._btn_add_roster_row = _btn(
             self._roster_frame,
@@ -1386,6 +1334,69 @@ class ScenarioEditor:
             self._show_generic_fields(False)
             self._frame_btn.hide()
             self._slots_label.hide()
+        self._layout_property_form(kind)
+
+    def _layout_property_form(self, kind: str) -> None:
+        """Stack visible property widgets so jet payload never overlaps flares/actions."""
+        z = self._form_content_top_z
+        row = 0.050
+        compact = 0.046
+
+        def _place(widget, x: float, zz: float) -> None:
+            widget.setPos(x, 0, zz)
+
+        _place(self._id_label, 0.10, z)
+        _place(self._id_entry, 0.38, z)
+        z -= row
+
+        if kind == "jet":
+            _place(self._field_a_label, 0.10, z)
+            _place(self._field_a_entry, 0.38, z)
+            z -= row
+            _place(self._field_b_label, 0.10, z)
+            _place(self._field_b_entry, 0.38, z)
+            z -= row + 0.010
+            weapons = list(self._payload_entries)
+            for i, weapon in enumerate(weapons):
+                r, c = divmod(i, 2)
+                zz = z - compact * r
+                x_label = 0.10 if c == 0 else 0.48
+                x_entry = 0.28 if c == 0 else 0.66
+                _place(self._payload_labels[weapon], x_label, zz)
+                _place(self._payload_entries[weapon], x_entry, zz)
+            z -= compact * max(1, (len(weapons) + 1) // 2) + 0.014
+            _place(self._frame_btn, 0.46, z)
+            z -= 0.054
+            _place(self._slots_label, 0.10, z)
+            z -= 0.054
+            _place(self._btn_apply, 0.20, z)
+            _place(self._btn_delete, 0.44, z)
+            return
+
+        if kind in ("target", "sam_site", "aaa_site", "tank", "carrier", "corvette"):
+            _place(self._field_a_label, 0.10, z)
+            _place(self._field_a_entry, 0.38, z)
+            z -= row
+            _place(self._field_b_label, 0.10, z)
+            _place(self._field_b_entry, 0.38, z)
+            z -= row + 0.010
+            if kind in ("tank", "carrier", "corvette"):
+                _place(self._frame_btn, 0.46, z)
+                z -= 0.054
+            if kind in ("carrier", "corvette"):
+                _place(self._btn_hold, 0.22, z)
+                _place(self._btn_add_route, 0.58, z)
+                z -= 0.054
+            elif kind == "tank" and not self._btn_add_route.isHidden():
+                _place(self._btn_add_route, 0.46, z)
+                z -= 0.054
+            _place(self._btn_apply, 0.20, z)
+            _place(self._btn_delete, 0.44, z)
+            return
+
+        # jammer / home_base / empty selection: ID + actions only
+        _place(self._btn_apply, 0.20, z)
+        _place(self._btn_delete, 0.44, z)
 
     def _sync_hold_button(self, hold: bool) -> None:
         self._btn_hold["text"] = "Hold: ON" if hold else "Hold: OFF"
@@ -1767,6 +1778,41 @@ class ScenarioEditor:
 
         subject_ids = [t["target_id"] for t in (data.get("targets") or [])]
         subject_ids.extend(s["target_id"] for s in (data.get("sam_sites") or []))
+        # Only require enemy tanks/corvettes on DESTROY when the draft's jet
+        # payloads can actually cover their HP. Otherwise CNP awards nothing,
+        # jets idle-burn to bingo, and every Launch aborts.
+        armor_cap = 0
+        ship_cap = 0
+        for jet in data.get("jets") or []:
+            for weapon, count in (jet.get("payload") or {}).items():
+                spec = wn_config.WEAPON_CATALOG.get(weapon)
+                if spec is None:
+                    continue
+                dmg = int(spec.damage_per_hit) * int(count or 0)
+                if float(spec.suitability.get("GROUND_VEHICLE", 0.0) or 0.0) > 0.0:
+                    armor_cap += dmg
+                if float(spec.suitability.get("SURFACE_VESSEL", 0.0) or 0.0) > 0.0:
+                    ship_cap += dmg
+        tank_hp = 0
+        for tank in data.get("tanks") or []:
+            if tank.get("faction") != "ENEMY":
+                continue
+            frame = str(tank.get("frame_type") or "MBT_STANDARD")
+            catalog_hp = int(TANK_FRAME_CATALOG.get(frame, TANK_FRAME_CATALOG["MBT_STANDARD"]).hp)
+            hp = tank.get("hp")
+            tank_hp += int(hp if hp is not None else catalog_hp)
+        if tank_hp > 0 and armor_cap >= tank_hp:
+            for tank in data.get("tanks") or []:
+                if tank.get("faction") == "ENEMY":
+                    subject_ids.append(tank["unit_id"])
+        ship_hp = 0
+        for ship in data.get("corvettes") or []:
+            frame = str(ship.get("frame_type") or "CORVETTE_STANDARD")
+            ship_hp += int(NAVAL_FRAME_CATALOG[frame].hp)
+        if ship_hp > 0 and ship_cap >= ship_hp:
+            for ship in data.get("corvettes") or []:
+                subject_ids.append(ship["unit_id"])
+        jet_ids = [j["agent_id"] for j in (data.get("jets") or [])]
         objs = [
             o.model_dump() if hasattr(o, "model_dump") else dict(o)
             for o in (data.get("mission_objectives") or [])
@@ -1779,15 +1825,36 @@ class ScenarioEditor:
             ),
             None,
         )
+        return_idx = next(
+            (
+                i
+                for i, o in enumerate(objs)
+                if o.get("objective_id") == "OBJ_RETURN_ALL"
+            ),
+            None,
+        )
         if subject_ids:
-            if legacy_idx is None and not objs:
-                objs = [synthesize_legacy_destroy_objective(subject_ids).model_dump()]
+            if legacy_idx is None and not any(
+                o.get("objective_type") == "DESTROY" for o in objs
+            ):
+                objs.insert(
+                    0, synthesize_legacy_destroy_objective(subject_ids).model_dump()
+                )
+                if return_idx is not None:
+                    return_idx += 1
+                legacy_idx = 0
             elif legacy_idx is None and len(objs) == 1 and objs[0].get("objective_type") == "DESTROY":
                 objs[0]["subject_ids"] = list(subject_ids)
             elif legacy_idx is not None:
                 objs[legacy_idx]["subject_ids"] = list(subject_ids)
-            elif not objs:
-                objs = [synthesize_legacy_destroy_objective(subject_ids).model_dump()]
+        if jet_ids:
+            ret = synthesize_legacy_return_objective(jet_ids).model_dump()
+            if return_idx is None:
+                objs.append(ret)
+            else:
+                objs[return_idx] = ret
+        elif return_idx is not None:
+            objs.pop(return_idx)
         data["mission_objectives"] = objs
         data.setdefault("combat_seed", 0)
         data["scenario_version"] = data.get("scenario_version", SUPPORTED_SCENARIO_VERSION)
@@ -2043,23 +2110,28 @@ class ScenarioEditor:
             except Exception:
                 pass
         self._list_buttons = []
+        self._list_overflow_label.hide()
+        entities = list(self._all_entities())
         z = self._list_anchor_z
-        for kind, ent in self._all_entities():
+        visible = entities[: self._list_max_visible]
+        for kind, ent in visible:
             label = f"{kind.replace('_', ' ')}  {self._id_of(kind, ent)}"
-            btn = DirectButton(
-                parent=self._panel,
-                text=label,
-                pos=(0.46, 0, z),
-                scale=0.032,
-                command=self.open_property_form,
-                extraArgs=[ent],
-                frameColor=BTN_BG,
-                text_fg=CYAN,
-                relief=1,
-                pad=(0.12, 0.06),
+            btn = _btn(
+                self._panel,
+                label,
+                (0.46, 0, z),
+                self.open_property_form,
+                extra_args=[ent],
+                scale=0.028,
+                style="ghost",
             )
             self._list_buttons.append(btn)
-            z -= 0.055
+            z -= 0.048
+        overflow = len(entities) - len(visible)
+        if overflow > 0:
+            self._list_overflow_label["text"] = f"+{overflow} more on map"
+            self._list_overflow_label.setPos(0.10, 0, z)
+            self._list_overflow_label.show()
 
     def _set_banner(self, messages: list[str]) -> None:
         self.banner_messages = list(messages)
@@ -2602,26 +2674,22 @@ class ScenarioEditor:
         }
         z = self._roster_anchor_z - 0.22 * len(self._roster_rows)
         widgets: list = []
-        count_label = DirectLabel(
-            parent=self._roster_frame,
-            text="#",
+        count_label = make_label(
+            self._roster_frame,
+            "#",
             pos=(-0.88, 0, z),
             scale=0.020,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+            fg=CYAN,
         )
         widgets.append(count_label)
-        count_entry = DirectEntry(
-            parent=self._roster_frame,
+        count_entry = make_entry(
+            self._roster_frame,
             pos=(-0.72, 0, z),
             scale=0.020,
             width=4,
-            initialText=str(initial["count"]),
-            numLines=1,
-            focus=0,
+            initial=str(initial["count"]),
+            command=self._on_roster_edited,
         )
-        count_entry["command"] = self._on_roster_edited
         widgets.append(count_entry)
         row_index = len(self._roster_rows)
         frame_btn = _btn(
@@ -2637,36 +2705,30 @@ class ScenarioEditor:
         weapons = list(wn_config.WEAPON_CATALOG)
         for i, weapon in enumerate(weapons):
             wz = z - 0.05 - 0.04 * i
-            wlabel = DirectLabel(
-                parent=self._roster_frame,
-                text=weapon,
+            wlabel = make_label(
+                self._roster_frame,
+                weapon,
                 pos=(-0.88, 0, wz),
                 scale=0.016,
-                text_fg=CYAN,
-                text_align=TextNode.ALeft,
-                frameColor=(0, 0, 0, 0),
+                fg=CYAN,
             )
             widgets.append(wlabel)
-            entry = DirectEntry(
-                parent=self._roster_frame,
+            entry = make_entry(
+                self._roster_frame,
                 pos=(-0.55, 0, wz),
                 scale=0.018,
                 width=5,
-                initialText=str(int((initial.get("payload") or {}).get(weapon, 0))),
-                numLines=1,
-                focus=0,
+                initial=str(int((initial.get("payload") or {}).get(weapon, 0))),
+                command=self._on_roster_edited,
             )
-            entry["command"] = self._on_roster_edited
             payload_entries[weapon] = entry
             widgets.append(entry)
-        slots_label = DirectLabel(
-            parent=self._roster_frame,
-            text="0 / 0 slots",
+        slots_label = make_label(
+            self._roster_frame,
+            "0 / 0 slots",
             pos=(-0.30, 0, z - 0.05),
             scale=0.016,
-            text_fg=CYAN,
-            text_align=TextNode.ALeft,
-            frameColor=(0, 0, 0, 0),
+            fg=TEXT,
         )
         widgets.append(slots_label)
         remove_btn = _btn(
@@ -2676,6 +2738,7 @@ class ScenarioEditor:
             self._remove_roster_row,
             extra_args=[row_index],
             scale=0.016,
+            style="danger",
         )
         widgets.append(remove_btn)
         row = {

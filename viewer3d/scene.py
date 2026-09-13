@@ -65,7 +65,7 @@ GROUND_COLOR = (0.02, 0.03, 0.06, 1.0)
 SAM_DISC_COLOR = (0.82, 0.22, 0.22, 0.18)
 AAA_DISC_COLOR = (0.90, 0.55, 0.15, 0.22)
 JAM_DISC_COLOR = (0.55, 0.25, 0.75, 0.16)
-GLYPH_SCALE = 1.6
+GLYPH_SCALE = 1.85
 HIGHLIGHT_DURATION = 0.45
 STRIKE_COLOR = (1.0, 0.90, 0.32, 1.0)
 DESTRUCTION_COLOR = (1.0, 1.0, 1.0, 1.0)
@@ -154,14 +154,30 @@ def _attach_glyph(parent: NodePath, name: str, points_xz, color) -> NodePath:
 
 
 def _dart_geom(name: str, color) -> GeomNode:
-    """Small double-sided dart: nose +Y, wings in X, shallow tail Z inset."""
+    """Elongated double-sided dart: long nose +Y so heading reads clearly.
+
+    Aspect is roughly 3:1 (nose→tail vs wingtip→wingtip). Wings sit aft of
+    mid-body so the silhouette reads as an arrow from orbit/chase cameras.
+    """
     verts = [
-        (0.0, 0.7, 0.0),
-        (-0.5, -0.4, -0.08),
-        (0.5, -0.4, -0.08),
-        (0.0, -0.15, 0.08),
+        (0.0, 1.35, 0.0),  # nose
+        (-0.42, -0.15, -0.06),  # left wing leading
+        (-0.55, -0.45, -0.08),  # left wingtip
+        (-0.12, -0.95, 0.02),  # left tail
+        (0.0, -0.75, 0.12),  # dorsal fin / spine
+        (0.12, -0.95, 0.02),  # right tail
+        (0.55, -0.45, -0.08),  # right wingtip
+        (0.42, -0.15, -0.06),  # right wing leading
     ]
-    tris = [(0, 1, 2), (1, 2, 3)]
+    # Fan from nose for the forward body, then aft deck triangles.
+    tris = [
+        (0, 1, 7),  # nose plate
+        (1, 2, 3),  # left wing
+        (1, 3, 4),  # left aft
+        (7, 4, 5),  # right aft (via spine)
+        (7, 5, 6),  # right wing
+        (1, 4, 7),  # center deck
+    ]
     fmt = GeomVertexFormat.get_v3c4()
     vdata = GeomVertexData(name, fmt, Geom.UH_static)
     vertex = GeomVertexWriter(vdata, "vertex")
@@ -171,8 +187,8 @@ def _dart_geom(name: str, color) -> GeomNode:
         vertex.add_data3(x, y, z)
         col.add_data4(r, g, b, a)
     prim = GeomTriangles(Geom.UH_static)
-    for a, b, c in tris:
-        prim.add_vertices(a, b, c)
+    for i, j, k in tris:
+        prim.add_vertices(i, j, k)
     prim.close_primitive()
     geom = Geom(vdata)
     geom.add_primitive(prim)
@@ -465,8 +481,9 @@ def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
         heading = handles.jet_heading_deg.get(aid, 0.0)
         glyph = handles.jet_glyphs.get(aid)
         if glyph is not None and not glyph.is_empty():
-            # pitch=0.0: optional climb-rate pitch tilt deferred to a later phase.
-            glyph.set_hpr(heading, 0.0, -new_bank)
+            # Sim heading is clockwise from +y (0=+y, 90=+x). Panda3D H is
+            # the opposite sense (H=90 sends local +Y to world -X), so negate.
+            glyph.set_hpr(-heading, 0.0, -new_bank)
 
 
 def apply_sampled_jet_poses(
@@ -633,8 +650,8 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
             handles.carriers[c.unit_id] = anchor
         x, y = float(c.position[0]), float(c.position[1])
         anchor.set_pos(x, y, 0.18)
-        # Panda H matches sim heading (0=+y).
-        anchor.set_h(float(c.heading))
+        # Panda H matches sim heading after negation (sim CW from +y; Panda CCW).
+        anchor.set_h(-float(c.heading))
         glyph = anchor.find(f"**/glyph-{c.unit_id}")
         if c.destroyed or c.hp <= 0:
             if not glyph.is_empty():
@@ -688,7 +705,7 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
             handles.corvettes[c.unit_id] = anchor
         x, y = float(c.position[0]), float(c.position[1])
         anchor.set_pos(x, y, 0.16)
-        anchor.set_h(float(c.heading))
+        anchor.set_h(-float(c.heading))
         glyph = anchor.find(f"**/glyph-{c.unit_id}")
         destroyed = bool(c.destroyed or c.hp <= 0)
         if destroyed:
@@ -739,7 +756,7 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
             handles.tanks[t.unit_id] = anchor
         x, y = float(t.position[0]), float(t.position[1])
         anchor.set_pos(x, y, 0.14)
-        anchor.set_h(float(t.heading))
+        anchor.set_h(-float(t.heading))
         glyph = anchor.find(f"**/glyph-{t.unit_id}")
         destroyed = bool(t.destroyed or t.hp <= 0)
         if destroyed:
