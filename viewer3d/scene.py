@@ -511,7 +511,8 @@ def apply_sampled_jet_poses(
         glyph = handles.jet_glyphs.get(aid)
         if glyph is not None and not glyph.is_empty():
             bank = handles.rendered_bank_deg.get(aid, 0.0)
-            glyph.set_hpr(pose.heading_deg, 0.0, -bank)
+            # pose.heading_deg is sim convention (CW from +y); Panda H is CCW.
+            glyph.set_hpr(-pose.heading_deg, 0.0, -bank)
 
 
 def update_tick(

@@ -15,10 +15,11 @@ import math
 import sys
 import time
 
-from panda3d.core import ClockObject, loadPrcFileData
+from panda3d.core import ClockObject, WindowProperties, loadPrcFileData
 
 loadPrcFileData("", "window-title WraithNet 3D")
 loadPrcFileData("", "audio-library-name null")
+loadPrcFileData("", "fullscreen #f")
 
 from direct.showbase.ShowBase import ShowBase
 
@@ -73,6 +74,13 @@ from wraithnet.paths import user_data_dir
 #   "live"        -- at least one tick received
 #   "finished"     -- EndEvent or running=False tick
 
+# Live Launch watch: space ticks on a human timeline so a fast sim does not
+# collapse a 60-tick mission into ~2s of wall-clock accept times (and so the
+# TickBuffer never snap-skips to the final pair).
+LIVE_PRESENTATION_TPS = 3.0
+LIVE_TICK_SPACING_S = 1.0 / LIVE_PRESENTATION_TPS
+WATCH_MAX_BACKLOG_TICKS = 10_000
+
 
 class WraithNetViewer3D(ShowBase):
     def __init__(
@@ -89,6 +97,11 @@ class WraithNetViewer3D(ShowBase):
         self.disable_mouse()
         if self.win is not None:
             self.set_background_color(0.02, 0.03, 0.06, 1.0)
+            self._maximize_window()
+            # HWND can still be finishing setup during __init__; re-assert once.
+            self.task_mgr.do_method_later(
+                0.05, self._maximize_window_task, "maximize-window"
+            )
 
         self._editor_mode = editor_mode
         self._offline_replay = replay_path is not None
@@ -108,11 +121,13 @@ class WraithNetViewer3D(ShowBase):
         self._tick_buffer = TickBuffer(
             interp_delay_s=DEFAULT_INTERP_DELAY_S,
             max_extrapolation_alpha=MAX_EXTRAPOLATION_ALPHA,
-            max_backlog_ticks=DEFAULT_MAX_BACKLOG_TICKS,
-            catchup_backlog_ticks=CATCHUP_BACKLOG_TICKS,
+            # Retain a full mission for paced watch (no mid-run snap-to-latest).
+            max_backlog_ticks=WATCH_MAX_BACKLOG_TICKS,
+            catchup_backlog_ticks=WATCH_MAX_BACKLOG_TICKS,
             catchup_max_rate=CATCHUP_MAX_RATE,
         )
         self._pres_wall_last: float | None = None
+        self._live_pres_epoch: float | None = None
         self._sampled_poses: dict[str, SampledPose] = {}
         self._orbit = OrbitCamera(self)
         self._chase = ChaseCamera(self)
@@ -162,6 +177,50 @@ class WraithNetViewer3D(ShowBase):
 
         if replay_path is not None:
             self._load_offline_replay(replay_path)
+
+    def _maximize_window(self) -> None:
+        """Fill the screen as a normal maximized window (not exclusive fullscreen)."""
+        if self.win is None:
+            return
+        # Keep decorations / taskbar; never request exclusive fullscreen.
+        props = WindowProperties()
+        props.set_fullscreen(False)
+        self.win.request_properties(props)
+
+        if sys.platform == "win32":
+            handle = self.win.get_window_handle()
+            if handle is not None:
+                hwnd = int(handle.get_int_handle())
+                if hwnd:
+                    import ctypes
+
+                    user32 = ctypes.windll.user32
+                    # Panda may hand back a child HWND; maximize the top-level frame.
+                    GA_ROOT = 2
+                    root = int(user32.GetAncestor(hwnd, GA_ROOT) or 0)
+                    if root:
+                        hwnd = root
+                    # SW_MAXIMIZE — title bar + taskbar remain usable.
+                    user32.ShowWindow(hwnd, 3)
+                    return
+
+        # Fallback: size to the display without exclusive fullscreen.
+        pipe = self.pipe
+        if pipe is None:
+            return
+        width = int(pipe.get_display_width())
+        height = int(pipe.get_display_height())
+        if width <= 0 or height <= 0:
+            return
+        props = WindowProperties()
+        props.set_fullscreen(False)
+        props.set_origin(0, 0)
+        props.set_size(width, height)
+        self.win.request_properties(props)
+
+    def _maximize_window_task(self, task):
+        self._maximize_window()
+        return task.done
 
     def _editor_map_world_pos(self):
         if self._editor is None or self.view_mode != "editor":
@@ -281,6 +340,8 @@ class WraithNetViewer3D(ShowBase):
         self._tick_buffer.reset()
         self._pres_wall_last = None
         self._last_present_wallclock = None
+        self._live_pres_epoch = None
+        self._stream_ended = False
         self._disconnect_reason = None
         # Spawn + connect first so StreamClient can attach while the live
         # server is still up; preview is local and does not wait on the child.
@@ -459,6 +520,7 @@ class WraithNetViewer3D(ShowBase):
         self._last_present_wallclock = None
         self._presented_tick = None
         self._sampled_poses = {}
+        self._live_pres_epoch = None
 
     def _advance_presentation(self, dt: float | None = None) -> None:
         """Advance presentation time and apply samples/events."""
@@ -476,7 +538,9 @@ class WraithNetViewer3D(ShowBase):
                     wall_dt * self._playback_rate, catchup=False
                 )
             else:
-                self._tick_buffer.advance(wall_dt, catchup=True)
+                # Synthetic accept times already pace the mission; catching up
+                # would 8× through Launch and reintroduce the end-screen flash.
+                self._tick_buffer.advance(wall_dt, catchup=False)
         self._pres_wall_last = now
         self._apply_presentation_state()
         if (
@@ -553,6 +617,7 @@ class WraithNetViewer3D(ShowBase):
                 self._latest_tick = None
                 self._ticks = []
                 self._stream_ended = False
+                self._live_pres_epoch = None
                 if (
                     old is not None
                     and old.root is not None
@@ -598,7 +663,12 @@ class WraithNetViewer3D(ShowBase):
             if aid not in self._first_seen_wallclock:
                 self._first_seen_wallclock[aid] = now
 
-        self._tick_buffer.push(tick, t_accept=now)
+        # Space ticks on a watchable timeline (tick index × spacing), not the
+        # wall clock of a bursty sim finish.
+        if self._live_pres_epoch is None:
+            self._live_pres_epoch = now
+        t_accept = self._live_pres_epoch + float(tick.tick) * LIVE_TICK_SPACING_S
+        self._tick_buffer.push(tick, t_accept=t_accept)
         self._latest_tick = tick
         self._ticks.append(tick)
         # Do not mark finished here — presentation may still be catching up.
