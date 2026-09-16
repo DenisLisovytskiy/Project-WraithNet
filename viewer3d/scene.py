@@ -4,6 +4,28 @@ authoritative Trace JetFrame.altitude; bank easing remains cosmetic.
 
 Ground entities use camera-facing billboard glyphs. Jets use a small,
 non-billboarded procedural dart mesh oriented in full 3D (Phase 25).
+
+Presentation notes (holographic mission-briefing style, design doc §6.3)
+-----------------------------------------------------------------------
+Everything below is procedural primitives only -- no textures, shaders or
+models -- and none of it moves an entity:
+
+* Every glyph is a *group* node (`glyph-<id>`) holding a dark backing
+  ring, the colored fill and a bright keyline, so a symbol stays readable
+  over a range disc, a city block or open water. `set_color()` on the
+  group still recolors only the fill, which is what `update_tick` and the
+  jam/RTB flashes rely on.
+* Ground entities are drawn as *pins*: a stem from their true ground point
+  up to the glyph plus a ground reticle at the anchor. The anchor position
+  is untouched; the lift only stops the billboard from being sliced in
+  half by the terrain it stands on.
+* Jets get the mirror-image cue: a drop line down to the map and a ground
+  reticle at their ground track. Both live under a single `altcue-<id>`
+  node whose Z scale is the rendered altitude, so the cue follows the
+  authoritative altitude without any extra geometry rebuilds.
+* Range discs are boundaries, not washes: a nearly transparent interior,
+  a gradient rim band inside the true radius, a crisp edge circle *at*
+  the true radius and inward bearing ticks.
 """
 
 from __future__ import annotations
@@ -38,6 +60,16 @@ from viewer3d.flight_dynamics import (
 from viewer3d.highlights import TickHighlights
 from viewer3d.motion import SampledPose
 from viewer3d.terrain_mesh import build_terrain_root, resolve_header_terrain
+from viewer3d.ui_chrome import (
+    ACCENT,
+    ACCENT_DIM,
+    BORDER_BRIGHT,
+    BORDER_SOFT,
+    BORDER_STRONG,
+    STATUS_FRIENDLY,
+    STATUS_INACTIVE,
+    tint,
+)
 from wraithnet.trace_schemas import (
     CarrierFrame,
     CorvetteFrame,
@@ -58,13 +90,35 @@ TARGET_COLORS = {
     "SAM_SITE": (210 / 255, 60 / 255, 60 / 255, 1.0),
     "AAA_SITE": (230 / 255, 140 / 255, 40 / 255, 1.0),
 }
-DESTROYED_COLOR = (70 / 255, 70 / 255, 70 / 255, 1.0)
+DESTROYED_COLOR = STATUS_INACTIVE
 JAMMER_COLOR = (170 / 255, 90 / 255, 220 / 255, 1.0)
-GRID_COLOR = (0.15, 0.55, 0.72, 0.9)
-GROUND_COLOR = (0.02, 0.03, 0.06, 1.0)
-SAM_DISC_COLOR = (0.82, 0.22, 0.22, 0.18)
-AAA_DISC_COLOR = (0.90, 0.55, 0.15, 0.22)
-JAM_DISC_COLOR = (0.55, 0.25, 0.75, 0.16)
+
+# --- world chrome: agrees with viewer3d.ui_chrome so the panels and the map
+# read as one instrument. Minor gridlines are deliberately much quieter than
+# before; the hierarchy now comes from GRID_MAJOR_COLOR / GRID_EDGE_COLOR.
+GRID_COLOR = tint(ACCENT_DIM, 0.62, alpha=0.42)
+GRID_MAJOR_COLOR = (*BORDER_STRONG[:3], 0.80)
+GRID_EDGE_COLOR = (*BORDER_BRIGHT[:3], 0.95)
+GRID_INNER_EDGE_COLOR = (*BORDER_SOFT[:3], 0.55)
+#: Every Nth cell line is promoted to a major gridline.
+GRID_MAJOR_EVERY = 5
+#: Minor lines fade this far toward transparent at the map boundary.
+GRID_DEPTH_FADE = 0.62
+GROUND_COLOR = (0.014, 0.030, 0.042, 1.0)
+#: Glow band standing on the map boundary -- the horizon treatment.
+HORIZON_COLOR = (*BORDER_BRIGHT[:3], 0.20)
+#: Band height as a fraction of the map's longer side.
+HORIZON_HEIGHT_FRACTION = 0.055
+#: Atmospheric wash pooling at the map edge (depth cue).
+HAZE_COLOR = tint(ACCENT, 0.40, alpha=0.09)
+
+# Keyline / halo used by every glyph so symbols survive any backdrop.
+GLYPH_KEYLINE_COLOR = (0.88, 0.97, 1.0, 0.92)
+GLYPH_HALO_COLOR = (0.015, 0.035, 0.048, 0.86)
+
+SAM_DISC_COLOR = (0.90, 0.26, 0.24, 1.0)
+AAA_DISC_COLOR = (0.95, 0.58, 0.18, 1.0)
+JAM_DISC_COLOR = (0.62, 0.32, 0.85, 1.0)
 GLYPH_SCALE = 1.85
 HIGHLIGHT_DURATION = 0.45
 STRIKE_COLOR = (1.0, 0.90, 0.32, 1.0)
@@ -72,12 +126,12 @@ DESTRUCTION_COLOR = (1.0, 1.0, 1.0, 1.0)
 JAM_FLASH_COLOR = (1.0, 0.35, 1.0, 1.0)
 UNJAM_FLASH_COLOR = (0.31, 0.86, 1.0, 1.0)
 RTB_FLASH_COLOR = (0.31, 0.63, 1.0, 1.0)
-HOME_BASE_COLOR = (0.35, 0.78, 0.55, 1.0)
-CARRIER_COLOR = (0.55, 0.65, 0.75, 1.0)
-CARRIER_RECOVERY_RING = (0.45, 0.75, 0.95, 0.28)
-CORVETTE_COLOR = (0.75, 0.35, 0.28, 1.0)
-CORVETTE_SAM_RING = (0.85, 0.25, 0.25, 0.16)
-CORVETTE_CIWS_RING = (0.95, 0.55, 0.2, 0.2)
+HOME_BASE_COLOR = STATUS_FRIENDLY
+CARRIER_COLOR = (0.62, 0.78, 0.86, 1.0)
+CARRIER_RECOVERY_RING = (0.45, 0.78, 0.95, 1.0)
+CORVETTE_COLOR = (0.80, 0.42, 0.34, 1.0)
+CORVETTE_SAM_RING = (0.88, 0.28, 0.26, 1.0)
+CORVETTE_CIWS_RING = (0.96, 0.58, 0.22, 1.0)
 TANK_FRIENDLY_COLOR = (0.35, 0.7, 0.45, 1.0)
 TANK_ENEMY_COLOR = (0.75, 0.4, 0.25, 1.0)
 MISSILE_COLOR = (1.0, 0.82, 0.25, 1.0)
@@ -144,13 +198,165 @@ def _polygon_geom(name: str, points_xz: list[tuple[float, float]], color) -> Geo
     return node
 
 
-def _attach_glyph(parent: NodePath, name: str, points_xz, color) -> NodePath:
-    np = parent.attach_new_node(_polygon_geom(name, points_xz, color))
-    np.set_billboard_point_eye()
-    np.set_light_off()
-    np.set_two_sided(True)
-    np.set_scale(GLYPH_SCALE)
-    return np
+def _gradient_geom(name: str, verts, tris) -> GeomNode:
+    """Triangles with a per-vertex color. ``verts`` is ``[(x, y, z, rgba)]``."""
+    fmt = GeomVertexFormat.get_v3c4()
+    vdata = GeomVertexData(name, fmt, Geom.UH_static)
+    vertex = GeomVertexWriter(vdata, "vertex")
+    col = GeomVertexWriter(vdata, "color")
+    for x, y, z, rgba in verts:
+        vertex.add_data3(x, y, z)
+        col.add_data4(*rgba)
+    prim = GeomTriangles(Geom.UH_static)
+    for i, j, k in tris:
+        prim.add_vertices(i, j, k)
+    prim.close_primitive()
+    geom = Geom(vdata)
+    geom.add_primitive(prim)
+    node = GeomNode(name)
+    node.add_geom(geom)
+    return node
+
+
+def _polyline_geom(
+    name: str, points_xz, color, thickness: float = 1.6, closed: bool = True
+) -> GeomNode:
+    """Outline of a glyph polygon, in the same local XZ plane as the fill."""
+    segs = LineSegs(name)
+    segs.set_thickness(thickness)
+    segs.set_color(*color)
+    x0, z0 = points_xz[0]
+    segs.move_to(x0, 0.0, z0)
+    for x, z in points_xz[1:]:
+        segs.draw_to(x, 0.0, z)
+    if closed:
+        segs.draw_to(x0, 0.0, z0)
+    return segs.create()
+
+
+def _scaled_pts(points_xz, factor: float):
+    return [(x * factor, z * factor) for x, z in points_xz]
+
+
+def _ring_band_geom(
+    name: str,
+    inner_radius: float,
+    outer_radius: float,
+    inner_color,
+    outer_color,
+    segments: int = 64,
+) -> GeomNode:
+    """Flat XY annulus whose color ramps from the inner to the outer edge."""
+    verts = []
+    tris = []
+    for i in range(segments + 1):
+        ang = 2 * math.pi * i / segments
+        cos_a, sin_a = math.cos(ang), math.sin(ang)
+        verts.append((inner_radius * cos_a, inner_radius * sin_a, 0.0, inner_color))
+        verts.append((outer_radius * cos_a, outer_radius * sin_a, 0.0, outer_color))
+    for i in range(segments):
+        a, b, c, d = 2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3
+        tris.append((a, b, c))
+        tris.append((b, d, c))
+    return _gradient_geom(name, verts, tris)
+
+
+def _attach_glyph(
+    parent: NodePath,
+    name: str,
+    points_xz,
+    color,
+    *,
+    pin: bool = False,
+    inner: float | None = None,
+    halo: bool = True,
+    keyline=GLYPH_KEYLINE_COLOR,
+) -> NodePath:
+    """Camera-facing symbol: dark halo ring + colored fill + bright keyline.
+
+    The result is a group node, so ``set_color()`` on it recolors the fill
+    while the halo and keyline keep their own colors -- that is what makes a
+    glyph legible over a range disc or a city block. ``pin=True`` lifts the
+    symbol clear of the ground and attaches a stem plus a ground reticle
+    under ``parent``, which marks the entity's true ground point without
+    moving the anchor.
+    """
+    group = parent.attach_new_node(name)
+    group.set_billboard_point_eye()
+    group.set_light_off()
+    group.set_two_sided(True)
+    group.set_transparency(TransparencyAttrib.MAlpha)
+    group.set_scale(GLYPH_SCALE)
+
+    if halo:
+        # Only meaningful for a glyph centered on the origin; the home-base
+        # pole/flag are drawn offset, so they opt out.
+        backing = group.attach_new_node(
+            _polygon_geom("sym-halo", _scaled_pts(points_xz, 1.34), GLYPH_HALO_COLOR)
+        )
+        backing.set_color(*GLYPH_HALO_COLOR)
+
+    group.attach_new_node(_polygon_geom("sym-fill", points_xz, color)).set_depth_offset(1)
+
+    edge = group.attach_new_node(_polyline_geom("sym-edge", points_xz, keyline, 1.8))
+    edge.set_color(*keyline)
+    edge.set_depth_offset(2)
+
+    if inner is not None:
+        detail = group.attach_new_node(
+            _polyline_geom("sym-inner", _scaled_pts(points_xz, inner), keyline, 1.2)
+        )
+        detail.set_color(*tint(keyline, 0.85, alpha=0.65))
+        detail.set_depth_offset(2)
+
+    if pin:
+        lift = -min(z for _x, z in points_xz) * GLYPH_SCALE + 0.14
+        group.set_z(lift)
+        _attach_ground_pin(parent, color, lift)
+    return group
+
+
+def _attach_ground_pin(parent: NodePath, color, height: float) -> NodePath:
+    """Stem from the anchor's ground point up to a lifted glyph, plus a tick.
+
+    Purely a legibility aid: it ties a billboarded symbol back to the exact
+    map coordinate it stands on.
+    """
+    pin = parent.attach_new_node("pin")
+    stem_color = tint(color, 0.85, alpha=0.55)
+    segs = LineSegs("pin-stem")
+    segs.set_thickness(1.6)
+    segs.set_color(*stem_color)
+    segs.move_to(0.0, 0.0, -0.12)
+    segs.draw_to(0.0, 0.0, height)
+    pin.attach_new_node(segs.create())
+    mark = pin.attach_new_node(_reticle_geom("pin-base", 0.62, color))
+    mark.set_z(-0.10)
+    pin.set_light_off()
+    pin.set_transparency(TransparencyAttrib.MAlpha)
+    pin.set_depth_offset(1)
+    return pin
+
+
+def _reticle_geom(name: str, radius: float, color, ticks: int = 4) -> GeomNode:
+    """Flat XY ground marker: a thin ring with short cardinal ticks."""
+    segs = LineSegs(name)
+    segs.set_thickness(1.8)
+    segs.set_color(*tint(color, 1.0, alpha=0.80))
+    steps = 24
+    for i in range(steps + 1):
+        ang = 2 * math.pi * i / steps
+        px, py = radius * math.cos(ang), radius * math.sin(ang)
+        if i == 0:
+            segs.move_to(px, py, 0.0)
+        else:
+            segs.draw_to(px, py, 0.0)
+    for i in range(ticks):
+        ang = 2 * math.pi * i / ticks + math.pi / 4.0
+        cos_a, sin_a = math.cos(ang), math.sin(ang)
+        segs.move_to(radius * 1.05 * cos_a, radius * 1.05 * sin_a, 0.0)
+        segs.draw_to(radius * 1.75 * cos_a, radius * 1.75 * sin_a, 0.0)
+    return segs.create()
 
 
 def _dart_geom(name: str, color) -> GeomNode:
@@ -197,13 +403,83 @@ def _dart_geom(name: str, color) -> GeomNode:
     return node
 
 
+#: Silhouette loop through `_dart_geom`'s perimeter vertices, plus the spine.
+_DART_OUTLINE = ((0, 1, 2, 3, 5, 6, 7, 0), (0, 4), (3, 4, 5))
+
+
+def _dart_outline_geom(name: str, color) -> GeomNode:
+    """Edge-light wireframe over the dart so it reads against any backdrop."""
+    verts = [
+        (0.0, 1.35, 0.0),
+        (-0.42, -0.15, -0.06),
+        (-0.55, -0.45, -0.08),
+        (-0.12, -0.95, 0.02),
+        (0.0, -0.75, 0.12),
+        (0.12, -0.95, 0.02),
+        (0.55, -0.45, -0.08),
+        (0.42, -0.15, -0.06),
+    ]
+    segs = LineSegs(name)
+    segs.set_thickness(1.7)
+    segs.set_color(*color)
+    for path in _DART_OUTLINE:
+        segs.move_to(*verts[path[0]])
+        for idx in path[1:]:
+            segs.draw_to(*verts[idx])
+    return segs.create()
+
+
 def _attach_jet_dart(parent: NodePath, name: str, color) -> NodePath:
-    """Jet glyph without billboarding -- true 3D heading/bank via set_hpr."""
-    np = parent.attach_new_node(_dart_geom(name, color))
-    np.set_light_off()
-    np.set_two_sided(True)
-    np.set_scale(GLYPH_SCALE)
-    return np
+    """Jet glyph without billboarding -- true 3D heading/bank via set_hpr.
+
+    A group, like `_attach_glyph`: the keyline child keeps its own color so
+    the jam/RTB `set_color()` flashes only tint the body.
+    """
+    group = parent.attach_new_node(name)
+    group.set_light_off()
+    group.set_two_sided(True)
+    group.set_transparency(TransparencyAttrib.MAlpha)
+    group.set_scale(GLYPH_SCALE)
+    group.attach_new_node(_dart_geom("sym-fill", color))
+    edge = group.attach_new_node(_dart_outline_geom("sym-edge", GLYPH_KEYLINE_COLOR))
+    edge.set_color(*GLYPH_KEYLINE_COLOR)
+    edge.set_depth_offset(2)
+    # Explicit, so get_color()/set_color() round-trip for the jam/RTB flashes.
+    group.set_color(*color)
+    return group
+
+
+def _attach_altitude_cue(parent: NodePath, name: str, color) -> NodePath:
+    """Drop line + ground reticle tying a jet glyph to its map position.
+
+    Built one world-unit tall and Z-scaled to the rendered altitude by
+    `_update_altitude_cue`, so nothing is rebuilt per frame and no altitude
+    value is invented here -- it only draws the altitude the sim already has.
+    """
+    cue = parent.attach_new_node(name)
+    segs = LineSegs("drop-line")
+    segs.set_thickness(1.5)
+    segs.set_color(*tint(color, 0.9, alpha=0.55))
+    segs.move_to(0.0, 0.0, -0.04)
+    segs.draw_to(0.0, 0.0, -1.0)
+    cue.attach_new_node(segs.create())
+    mark = cue.attach_new_node(_reticle_geom("ground-mark", 0.85, color))
+    mark.set_z(-1.0)
+    cue.set_light_off()
+    cue.set_transparency(TransparencyAttrib.MAlpha)
+    cue.set_depth_offset(1)
+    return cue
+
+
+def _update_altitude_cue(handles: SceneHandles, agent_id: str, altitude: float) -> None:
+    """Stretch a jet's altitude cue so its reticle lands on the map plane."""
+    anchor = handles.jets.get(agent_id)
+    if anchor is None or anchor.is_empty():
+        return
+    cue = anchor.find(f"**/altcue-{agent_id}")
+    if cue.is_empty():
+        return
+    cue.set_sz(max(float(altitude), 0.02))
 
 
 def _triangle_pts():
@@ -251,24 +527,200 @@ def _ground_quad(parent: NodePath, width: float, height: float) -> NodePath:
     return np
 
 
+def _grid_fade(x: float, y: float, cx: float, cy: float, reach: float) -> float:
+    """Alpha multiplier for a gridline vertex -- quieter toward the boundary.
+
+    A flat-alpha grid gives the map no sense of depth or scale; ramping the
+    minor lines down toward the edge does, and costs nothing but vertices.
+    """
+    if reach <= 0.0:
+        return 1.0
+    d = min(math.hypot(x - cx, y - cy) / reach, 1.0)
+    return max(1.0 - GRID_DEPTH_FADE * (d**1.4), 0.18)
+
+
 def _grid_lines(parent: NodePath, width: float, height: float, step: float = 5.0) -> NodePath:
-    segs = LineSegs("grid")
-    segs.set_thickness(1.2)
-    segs.set_color(*GRID_COLOR)
-    x = 0.0
-    while x <= width + 1e-9:
-        segs.move_to(x, 0.0, 0.02)
-        segs.draw_to(x, height, 0.02)
-        x += step
-    y = 0.0
-    while y <= height + 1e-9:
-        segs.move_to(0.0, y, 0.02)
-        segs.draw_to(width, y, 0.02)
-        y += step
-    np = parent.attach_new_node(segs.create())
-    np.set_light_off()
-    np.set_transparency(TransparencyAttrib.MAlpha)
-    return np
+    """Two-tier tactical grid: faded minor cells under bold major lines."""
+    root = parent.attach_new_node("grid")
+    cx, cy = width / 2.0, height / 2.0
+    reach = math.hypot(cx, cy)
+    major_step = step * GRID_MAJOR_EVERY
+
+    minor = LineSegs("grid-minor")
+    minor.set_thickness(1.0)
+    major = LineSegs("grid-major")
+    major.set_thickness(2.2)
+    mr, mg, mb, ma = GRID_COLOR
+
+    def _run(fixed: float, axis: str, is_major: bool) -> None:
+        """One full gridline, chopped per cell so the fade can vary along it."""
+        span = height if axis == "y" else width
+        segs = major if is_major else minor
+        pos = 0.0
+        while pos < span - 1e-9:
+            nxt = min(pos + step, span)
+            for value, start in ((pos, True), (nxt, False)):
+                px, py = (fixed, value) if axis == "y" else (value, fixed)
+                if is_major:
+                    segs.set_color(*GRID_MAJOR_COLOR)
+                else:
+                    segs.set_color(mr, mg, mb, ma * _grid_fade(px, py, cx, cy, reach))
+                if start:
+                    segs.move_to(px, py, 0.02)
+                else:
+                    segs.draw_to(px, py, 0.02)
+            pos = nxt
+
+    lines_x = int(round(width / step))
+    for i in range(lines_x + 1):
+        x = min(i * step, width)
+        _run(x, "y", abs(x % major_step) < 1e-6 or abs(x - width) < 1e-6)
+    lines_y = int(round(height / step))
+    for i in range(lines_y + 1):
+        y = min(i * step, height)
+        _run(y, "x", abs(y % major_step) < 1e-6 or abs(y - height) < 1e-6)
+
+    for segs in (minor, major):
+        node = root.attach_new_node(segs.create())
+        node.set_light_off()
+        node.set_transparency(TransparencyAttrib.MAlpha)
+    return root
+
+
+def _world_boundary(parent: NodePath, width: float, height: float) -> NodePath:
+    """Defined map edge: a bright keyline, an inset rule and corner brackets."""
+    root = parent.attach_new_node("world-boundary")
+    inset = min(width, height) * 0.016
+    bracket = min(width, height) * 0.085
+
+    edge = LineSegs("boundary-edge")
+    edge.set_thickness(2.8)
+    edge.set_color(*GRID_EDGE_COLOR)
+    for i, (px, py) in enumerate(
+        ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height), (0.0, 0.0))
+    ):
+        if i == 0:
+            edge.move_to(px, py, 0.04)
+        else:
+            edge.draw_to(px, py, 0.04)
+
+    rule = LineSegs("boundary-inset")
+    rule.set_thickness(1.2)
+    rule.set_color(*GRID_INNER_EDGE_COLOR)
+    for i, (px, py) in enumerate(
+        (
+            (inset, inset),
+            (width - inset, inset),
+            (width - inset, height - inset),
+            (inset, height - inset),
+            (inset, inset),
+        )
+    ):
+        if i == 0:
+            rule.move_to(px, py, 0.05)
+        else:
+            rule.draw_to(px, py, 0.05)
+
+    corners = LineSegs("boundary-corners")
+    corners.set_thickness(4.0)
+    corners.set_color(*GRID_EDGE_COLOR)
+    for ox, oy, sx, sy in (
+        (0.0, 0.0, 1.0, 1.0),
+        (width, 0.0, -1.0, 1.0),
+        (width, height, -1.0, -1.0),
+        (0.0, height, 1.0, -1.0),
+    ):
+        corners.move_to(ox + sx * bracket, oy, 0.07)
+        corners.draw_to(ox, oy, 0.07)
+        corners.draw_to(ox, oy + sy * bracket, 0.07)
+
+    for segs in (edge, rule, corners):
+        node = root.attach_new_node(segs.create())
+        node.set_light_off()
+        node.set_transparency(TransparencyAttrib.MAlpha)
+    return root
+
+
+def _horizon_curtain(parent: NodePath, width: float, height: float) -> NodePath:
+    """Low glow band standing on the boundary, fading out with altitude.
+
+    Replaces the old hard cut from lit grid straight into black: the map now
+    has a lit horizon line. Kept deliberately short -- a tall wall reads as a
+    flat wash over a third of the frame instead of as a horizon.
+    """
+    wall_h = HORIZON_HEIGHT_FRACTION * max(width, height)
+    base = HORIZON_COLOR
+    top = (base[0], base[1], base[2], 0.0)
+    verts = []
+    tris = []
+    corners = ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height), (0.0, 0.0))
+    for i in range(len(corners) - 1):
+        (x0, y0), (x1, y1) = corners[i], corners[i + 1]
+        b = len(verts)
+        verts.extend(
+            [
+                (x0, y0, 0.0, base),
+                (x1, y1, 0.0, base),
+                (x1, y1, wall_h, top),
+                (x0, y0, wall_h, top),
+            ]
+        )
+        tris.extend([(b, b + 1, b + 2), (b, b + 2, b + 3)])
+    node = parent.attach_new_node(_gradient_geom("horizon-curtain", verts, tris))
+    node.set_light_off()
+    node.set_transparency(TransparencyAttrib.MAlpha)
+    node.set_two_sided(True)
+    node.set_depth_write(False)
+    return node
+
+
+def _ground_haze(parent: NodePath, width: float, height: float) -> NodePath:
+    """Atmospheric wash inside the boundary, brightest at the map edge.
+
+    A depth cue that stays *on* the map: an outward skirt past the boundary
+    stretches almost edge-on from a low camera and turns into a large muddy
+    smear rather than atmosphere.
+    """
+    band = min(width, height) * 0.22
+    edge = HAZE_COLOR
+    middle = (edge[0], edge[1], edge[2], 0.0)
+    outer = ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height), (0.0, 0.0))
+    inner = (
+        (band, band),
+        (width - band, band),
+        (width - band, height - band),
+        (band, height - band),
+        (band, band),
+    )
+    verts = []
+    tris = []
+    for i in range(len(outer) - 1):
+        b = len(verts)
+        verts.extend(
+            [
+                (outer[i][0], outer[i][1], 0.0, edge),
+                (outer[i + 1][0], outer[i + 1][1], 0.0, edge),
+                (inner[i + 1][0], inner[i + 1][1], 0.0, middle),
+                (inner[i][0], inner[i][1], 0.0, middle),
+            ]
+        )
+        tris.extend([(b, b + 1, b + 2), (b, b + 2, b + 3)])
+    node = parent.attach_new_node(_gradient_geom("ground-haze", verts, tris))
+    node.set_pos(0.0, 0.0, 0.03)
+    node.set_light_off()
+    node.set_transparency(TransparencyAttrib.MAlpha)
+    node.set_depth_write(False)
+    return node
+
+
+#: Alpha budget for a range disc: a near-invisible interior, a rim that
+#: carries the read, and a crisp edge exactly on the true radius.
+_DISC_CORE_ALPHA = 0.030
+_DISC_RIM_ALPHA = 0.34
+_DISC_EDGE_ALPHA = 0.92
+#: Fraction of the radius occupied by the rim gradient band.
+_DISC_RIM_BAND = 0.14
+_DISC_BEARING_TICKS = 12
 
 
 def _ground_disc(
@@ -281,30 +733,130 @@ def _ground_disc(
     z: float = 0.05,
     segments: int = 48,
 ) -> NodePath:
-    fmt = GeomVertexFormat.get_v3c4()
-    vdata = GeomVertexData(name, fmt, Geom.UH_static)
-    vertex = GeomVertexWriter(vdata, "vertex")
-    col = GeomVertexWriter(vdata, "color")
-    r, g, b, a = color
-    vertex.add_data3(cx, cy, z)
-    col.add_data4(r, g, b, a)
+    """A range boundary at ``radius`` -- rim-led, not a filled wash.
+
+    ``radius`` is still the literal engagement/jam radius: the edge circle
+    sits exactly on it and the rim band grows inward, so overlapping discs
+    stop swamping the terrain and each other while still reading as areas.
+    Returns a group node named ``name`` (callers hide it wholesale).
+    """
+    group = parent.attach_new_node(name)
+    group.set_pos(cx, cy, z)
+    r, g, b = color[0], color[1], color[2]
+    core = (r, g, b, _DISC_CORE_ALPHA)
+    rim_inner = (r, g, b, 0.0)
+    rim_outer = (r, g, b, _DISC_RIM_ALPHA)
+    edge_color = (min(r * 1.15, 1.0), min(g * 1.15, 1.0), min(b * 1.15, 1.0), _DISC_EDGE_ALPHA)
+
+    inner_r = radius * (1.0 - _DISC_RIM_BAND)
+    group.attach_new_node(
+        _ring_band_geom("disc-core", 0.0, inner_r, core, core, segments)
+    )
+    group.attach_new_node(
+        _ring_band_geom("disc-rim", inner_r, radius, rim_inner, rim_outer, segments)
+    )
+
+    outline = LineSegs("disc-edge")
+    outline.set_thickness(2.2)
+    outline.set_color(*edge_color)
     for i in range(segments + 1):
         ang = 2 * math.pi * i / segments
-        vertex.add_data3(cx + radius * math.cos(ang), cy + radius * math.sin(ang), z)
-        col.add_data4(r, g, b, a)
-    prim = GeomTriangles(Geom.UH_static)
-    for i in range(1, segments + 1):
-        prim.add_vertices(0, i, i + 1)
-    prim.close_primitive()
-    geom = Geom(vdata)
-    geom.add_primitive(prim)
-    node = GeomNode(name)
-    node.add_geom(geom)
-    np = parent.attach_new_node(node)
-    np.set_light_off()
-    np.set_transparency(TransparencyAttrib.MAlpha)
-    np.set_two_sided(True)
-    return np
+        px, py = radius * math.cos(ang), radius * math.sin(ang)
+        if i == 0:
+            outline.move_to(px, py, 0.0)
+        else:
+            outline.draw_to(px, py, 0.0)
+    for i in range(_DISC_BEARING_TICKS):
+        ang = 2 * math.pi * i / _DISC_BEARING_TICKS
+        cos_a, sin_a = math.cos(ang), math.sin(ang)
+        outline.move_to(radius * cos_a, radius * sin_a, 0.0)
+        outline.draw_to(radius * 0.90 * cos_a, radius * 0.90 * sin_a, 0.0)
+    group.attach_new_node(outline.create())
+
+    group.set_light_off()
+    group.set_transparency(TransparencyAttrib.MAlpha)
+    group.set_two_sided(True)
+    # Overlapping discs must blend rather than punch holes in one another.
+    group.set_depth_write(False)
+    return group
+
+
+def _jam_dome(
+    parent: NodePath,
+    name: str,
+    radius: float,
+    color,
+    z: float = 0.05,
+    segments: int = 48,
+) -> NodePath:
+    """EW coverage as a wireframe hemisphere, not another flat ground disc.
+
+    Requirement 6: a jam bubble and a SAM footprint mean different things, so
+    they must not share a treatment. The ground circle still sits exactly on
+    ``radius``; the dome height is decoration.
+    """
+    group = parent.attach_new_node(name)
+    group.set_pos(0.0, 0.0, z)
+    r, g, b = color[0], color[1], color[2]
+    dome_h = radius * 0.34
+
+    group.attach_new_node(
+        _ring_band_geom(
+            "dome-core",
+            0.0,
+            radius,
+            (r, g, b, _DISC_CORE_ALPHA),
+            (r, g, b, _DISC_RIM_ALPHA * 0.55),
+            segments,
+        )
+    )
+
+    wire = LineSegs("dome-wire")
+    wire.set_thickness(1.6)
+    wire.set_color(r, g, b, 0.55)
+    arc_steps = 16
+    for meridian in range(4):
+        phi = math.pi * meridian / 4.0
+        cos_p, sin_p = math.cos(phi), math.sin(phi)
+        for i in range(arc_steps + 1):
+            t = math.pi * i / arc_steps
+            rr = radius * math.cos(t - math.pi / 2.0)
+            px = rr * cos_p
+            py = rr * sin_p
+            pz = dome_h * math.sin(t)
+            if i == 0:
+                wire.move_to(px, py, pz)
+            else:
+                wire.draw_to(px, py, pz)
+    for frac in (0.55, 0.86):
+        ring_r = radius * math.sqrt(max(1.0 - frac * frac, 0.0))
+        ring_z = dome_h * frac
+        for i in range(segments + 1):
+            ang = 2 * math.pi * i / segments
+            px, py = ring_r * math.cos(ang), ring_r * math.sin(ang)
+            if i == 0:
+                wire.move_to(px, py, ring_z)
+            else:
+                wire.draw_to(px, py, ring_z)
+    group.attach_new_node(wire.create())
+
+    edge = LineSegs("dome-edge")
+    edge.set_thickness(2.4)
+    edge.set_color(min(r * 1.15, 1.0), min(g * 1.15, 1.0), min(b * 1.15, 1.0), _DISC_EDGE_ALPHA)
+    for i in range(segments + 1):
+        ang = 2 * math.pi * i / segments
+        px, py = radius * math.cos(ang), radius * math.sin(ang)
+        if i == 0:
+            edge.move_to(px, py, 0.0)
+        else:
+            edge.draw_to(px, py, 0.0)
+    group.attach_new_node(edge.create())
+
+    group.set_light_off()
+    group.set_transparency(TransparencyAttrib.MAlpha)
+    group.set_two_sided(True)
+    group.set_depth_write(False)
+    return group
 
 
 def _jet_color(agent_id: str, header: TraceHeader):
@@ -362,7 +914,10 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     root = render_root.attach_new_node("wraithnet-scene")
     terrain = resolve_header_terrain(header)
     terrain_root = build_terrain_root(root, terrain)
+    _ground_haze(root, header.grid_width, header.grid_height)
     _grid_lines(root, header.grid_width, header.grid_height, step=terrain.cell_size)
+    _world_boundary(root, header.grid_width, header.grid_height)
+    _horizon_curtain(root, header.grid_width, header.grid_height)
 
     handles = SceneHandles(
         root=root,
@@ -377,7 +932,9 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         color = TARGET_COLORS.get(ttype, (0.8, 0.8, 0.8, 1.0))
         anchor = root.attach_new_node(f"target-{tid}")
         anchor.set_pos(pos[0], pos[1], 0.15)
-        _attach_glyph(anchor, f"glyph-{tid}", _target_points(ttype), color)
+        _attach_glyph(
+            anchor, f"glyph-{tid}", _target_points(ttype), color, pin=True, inner=0.52
+        )
         if ttype == "SAM_SITE" or tid in header.sam_site_ids:
             _ground_disc(
                 anchor,
@@ -401,8 +958,15 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     for jid, pos in header.jammer_positions.items():
         anchor = root.attach_new_node(f"jammer-{jid}")
         anchor.set_pos(pos[0], pos[1], 0.15)
-        _attach_glyph(anchor, f"glyph-{jid}", _ngon_pts(6, 0.5, math.pi / 6), JAMMER_COLOR)
-        _ground_disc(anchor, f"jam-ring-{jid}", 0.0, 0.0, header.jam_radius, JAM_DISC_COLOR)
+        _attach_glyph(
+            anchor,
+            f"glyph-{jid}",
+            _ngon_pts(6, 0.5, math.pi / 6),
+            JAMMER_COLOR,
+            pin=True,
+            inner=0.5,
+        )
+        _jam_dome(anchor, f"jam-ring-{jid}", header.jam_radius, JAM_DISC_COLOR)
         handles.jammers[jid] = anchor
 
     home = getattr(header, "home_base", None)
@@ -411,21 +975,28 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         home_np = root.attach_new_node("home-base")
         home_np.set_pos(hx, hy, 0.2)
         _attach_glyph(
-            home_np, "home-pole", [(0.0, 0.0), (0.12, 0.0), (0.12, 1.2), (0.0, 1.2)], (0.85, 0.85, 0.9, 1.0)
+            home_np,
+            "home-pole",
+            [(0.0, 0.0), (0.12, 0.0), (0.12, 1.2), (0.0, 1.2)],
+            tint(BORDER_BRIGHT, 1.0, alpha=1.0),
+            halo=False,
         )
         _attach_glyph(
             home_np,
             "home-flag",
             [(0.12, 1.2), (0.85, 0.95), (0.12, 0.7)],
             HOME_BASE_COLOR,
+            halo=False,
         )
-        _ground_disc(home_np, "home-pad", 0.0, 0.0, 1.4, (0.35, 0.78, 0.55, 0.22))
+        _ground_disc(home_np, "home-pad", 0.0, 0.0, 1.4, HOME_BASE_COLOR)
         handles.home_base = home_np
 
     for aid in header.jet_ids:
         anchor = root.attach_new_node(f"jet-{aid}")
         anchor.set_pos(cx, cy, GROUND_ALTITUDE)
-        glyph = _attach_jet_dart(anchor, f"glyph-{aid}", _jet_color(aid, header))
+        jet_color = _jet_color(aid, header)
+        glyph = _attach_jet_dart(anchor, f"glyph-{aid}", jet_color)
+        _attach_altitude_cue(anchor, f"altcue-{aid}", jet_color)
         anchor.hide()  # no jet position in the header; first tick reveals them
         handles.jets[aid] = anchor
         handles.jet_glyphs[aid] = glyph
@@ -478,6 +1049,7 @@ def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
         handles.rendered_bank_deg[aid] = new_bank
         pos = anchor.get_pos()
         anchor.set_pos(pos.x, pos.y, new_z)
+        _update_altitude_cue(handles, aid, new_z)
         heading = handles.jet_heading_deg.get(aid, 0.0)
         glyph = handles.jet_glyphs.get(aid)
         if glyph is not None and not glyph.is_empty():
@@ -505,6 +1077,7 @@ def apply_sampled_jet_poses(
             z = handles.desired_altitude.get(aid, GROUND_ALTITUDE)
             handles.rendered_altitude[aid] = z
         anchor.set_pos(pose.x, pose.y, z)
+        _update_altitude_cue(handles, aid, z)
         anchor.show()
         handles.jet_heading_deg[aid] = pose.heading_deg
         handles.last_jet_xy[aid] = (pose.x, pose.y)
@@ -565,7 +1138,9 @@ def update_tick(
             continue
         x, y = frame.position
         if apply_jet_pose:
-            anchor.set_pos(x, y, handles.rendered_altitude.get(aid, GROUND_ALTITUDE))
+            z_now = handles.rendered_altitude.get(aid, GROUND_ALTITUDE)
+            anchor.set_pos(x, y, z_now)
+            _update_altitude_cue(handles, aid, z_now)
             anchor.show()
             handles.jet_heading_deg[aid] = float(frame.heading)
             handles.last_jet_xy[aid] = (x, y)
@@ -590,7 +1165,9 @@ def update_tick(
         if anchor is None or anchor.is_empty():
             continue
         if frame.hp_remaining <= 0:
-            anchor.set_color(*DESTROYED_COLOR)
+            # Priority 1 so the glyph's own keyline/halo colors give way and
+            # the whole marker really does go dim grey, not just its fill.
+            anchor.set_color(*DESTROYED_COLOR, 1)
             anchor.set_render_mode_wireframe()
             ring = anchor.find("**/sam-ring-*")
             if not ring.is_empty():
@@ -599,6 +1176,7 @@ def update_tick(
             ttype = header.target_types[frame.target_id]
             r, g, b, a = TARGET_COLORS.get(ttype, (0.8, 0.8, 0.8, 1.0))
             anchor.clear_render_mode()
+            anchor.clear_color()
             glyph = anchor.find("**/glyph-*")
             if not glyph.is_empty():
                 glyph.set_color(r, g, b, a)
@@ -637,6 +1215,7 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 f"glyph-{c.unit_id}",
                 _carrier_deck_points(),
                 CARRIER_COLOR,
+                pin=True,
             )
             from wraithnet import config as wn_config
 
@@ -686,6 +1265,7 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 f"glyph-{c.unit_id}",
                 _corvette_hull_points(),
                 CORVETTE_COLOR,
+                pin=True,
             )
             _ground_disc(
                 anchor,
@@ -753,6 +1333,7 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 f"glyph-{t.unit_id}",
                 _tank_hull_points(),
                 color,
+                pin=True,
             )
             handles.tanks[t.unit_id] = anchor
         x, y = float(t.position[0]), float(t.position[1])

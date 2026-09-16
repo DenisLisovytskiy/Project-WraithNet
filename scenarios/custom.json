@@ -117,6 +117,15 @@
       ],
       "hp_required": 3,
       "target_type": "HARDENED_BUNKER"
+    },
+    {
+      "target_id": "Target_1",
+      "position": [
+        34.375,
+        77.5768518447876
+      ],
+      "hp_required": 1,
+      "target_type": "HARDENED_BUNKER"
     }
   ],
   "sam_sites": [
@@ -1822,6 +1831,7 @@
         "Target_02",
         "Target_03",
         "Target_04",
+        "Target_1",
         "SAM_01",
         "SAM_02"
       ],
@@ -1935,6 +1945,6 @@
     "deliberate_cooperative_objective_ids": [
       "Target_03"
     ],
-    "modified_after_generation": false
+    "modified_after_generation": true
   }
 }

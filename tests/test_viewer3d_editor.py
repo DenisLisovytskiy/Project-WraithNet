@@ -531,6 +531,10 @@ def test_jet_property_form_layout_does_not_overlap():
         assert apply_z > editor._form_bottom_z
         assert apply_z > path_z
         assert editor._frame_btn.getPos()[2] > path_z
+        assert editor._path_entry["overflow"]
+        long_path = r"C:\PERSONAL\Projekty\Project-WraithNet\scenarios\custom.json"
+        editor._path_entry.enterText(long_path)
+        assert editor._path_entry.get() == long_path
     finally:
         _destroy_app(app)
 

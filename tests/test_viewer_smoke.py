@@ -15,6 +15,7 @@ pygame = pytest.importorskip("pygame")
 from wraithnet.trace_schemas import JetFrame, StrikeEvent, TargetFrame, TraceHeader, TraceTick
 from viewer.render import (
     WINDOW_SIZE,
+    CANVAS_SIZE,
     draw_destruction_pulses,
     draw_end_of_run_overlay,
     draw_grid_background,
@@ -321,5 +322,111 @@ def test_end_of_run_overlay_mission_aborted_and_fuel_bars_do_not_raise():
             )
             draw_jets(surface, header, tick, show_sensor_radius=False)
             draw_home_base(surface, header)
+    finally:
+        pygame.quit()
+
+
+def test_draw_hud_and_overlay_still_blit_canonical_copy(monkeypatch):
+    """Restyle may change typeface and chrome, not the locked HUD strings."""
+    from viewer import render as render_mod
+    from viewer.hud_text import overlay_lines, sensor_line, status_line, tick_line
+
+    seen: list[str] = []
+
+    def _collect(surface, text, xy, color, size=22, *, face="regular"):
+        seen.append(text)
+        return 16
+
+    monkeypatch.setattr(render_mod, "_blit_text", _collect)
+    monkeypatch.setattr(
+        render_mod, "_text_size", lambda text, size, *, face="regular": (len(text) * 8, 16)
+    )
+    monkeypatch.setattr(
+        render_mod,
+        "_font",
+        lambda size=22, *, face="ui": pygame.font.Font(None, 16),
+    )
+
+    pygame.init()
+    try:
+        pygame.font.init()
+        surface = pygame.Surface(WINDOW_SIZE)
+        header = _header()
+        tick = TraceTick(
+            tick=3,
+            jets=[_jet("Jet_1", (10.0, 10.0))],
+            targets=[TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False)],
+            strikes=[],
+            running=True,
+            swarm_wiped_out=False,
+        )
+        draw_hud(
+            surface,
+            header,
+            tick,
+            tick_index=3,
+            total_ticks=10,
+            show_sensor_radius=True,
+            playing=True,
+            ticks_per_second=4.0,
+        )
+        assert "WraithNet Replay" in seen
+        assert tick_line(tick, 3, 10) in seen
+        assert status_line(True, 4.0) in seen
+        assert sensor_line(True) in seen
+        assert "Space   play / pause" in seen
+        assert any(s.startswith("[ ") and s.endswith(" ]") for s in seen)
+
+        seen.clear()
+        # overlay uses _font.render directly; just prove it still draws.
+        draw_end_of_run_overlay(surface, header, [tick])
+        lines = overlay_lines(header, [tick])
+        assert lines[0] in ("END OF TRACE", "SWARM WIPED OUT", "MISSION COMPLETE", "MISSION ABORTED")
+    finally:
+        pygame.quit()
+
+
+def test_hud_control_block_fits_inside_the_sidebar(monkeypatch):
+    """Every control line, including Esc, must stay inside the 900px HUD."""
+    from viewer import fonts as viewer_fonts
+    from viewer import render as render_mod
+
+    bottoms: list[int] = []
+    real = render_mod._blit_text
+
+    def _track(surface, text, xy, color, size=22, *, face="regular"):
+        height = real(surface, text, xy, color, size, face=face)
+        if text == "Esc   quit":
+            bottoms.append(xy[1] + height)
+        return height
+
+    monkeypatch.setattr(render_mod, "_blit_text", _track)
+    pygame.init()
+    try:
+        pygame.font.init()
+        viewer_fonts.clear_cache()
+        surface = pygame.Surface(WINDOW_SIZE)
+        header = _header()
+        tick = TraceTick(
+            tick=0,
+            jets=[_jet("Jet_1", (10.0, 10.0)), _jet("Jet_2", (20.0, 20.0))],
+            targets=[TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False)],
+            strikes=[],
+            running=True,
+            swarm_wiped_out=False,
+        )
+        draw_hud(
+            surface,
+            header,
+            tick,
+            0,
+            8,
+            True,
+            playing=True,
+            ticks_per_second=4.0,
+        )
+        assert bottoms, "Esc control line was not drawn"
+        assert bottoms[0] <= CANVAS_SIZE
+        assert bottoms[0] > 700
     finally:
         pygame.quit()
