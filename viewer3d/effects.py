@@ -34,6 +34,14 @@ from panda3d.core import (
     TransparencyAttrib,
 )
 
+from viewer3d.ui_chrome import (
+    BORDER_BRIGHT,
+    STATUS_HOSTILE,
+    STATUS_INACTIVE,
+    STATUS_WARNING,
+    tint,
+)
+
 # weapon_type -> ("gun_tracer" | "missile" | "bomb", duration_seconds).
 # Unrecognized weapon_type values fall back to ("missile", 0.65) -- see
 # design doc §5.2's table. Keep this a flat, easily-extended dict, not a
@@ -123,11 +131,21 @@ def bomb_path_samples(
             samples.append(_lerp3(a, b, t))
     return samples
 
-_MISSILE_COLOR = (1.0, 0.85, 0.25, 1.0)
-_BOMB_COLOR = (0.85, 0.75, 0.45, 1.0)
-_TRACER_COLOR = (1.0, 0.95, 0.45, 1.0)
-_EXPLOSION_COLOR = (1.0, 0.55, 0.15, 1.0)
-_WRECK_COLOR = (0.55, 0.45, 0.35, 1.0)
+# Weapon/destruction colors are derived from the shared design tokens in
+# `viewer3d.ui_chrome` instead of being free-floating literals: ordnance is
+# the palette's warning accent, a hit flashes hostile-hot, and a wreck decays
+# to the inactive grey the HUD uses for dead units.
+_MISSILE_COLOR = (*STATUS_WARNING[:3], 1.0)
+_BOMB_COLOR = tint(STATUS_WARNING, 0.86, alpha=1.0)
+_TRACER_COLOR = (1.0, 0.94, 0.62, 1.0)
+_EXPLOSION_COLOR = (
+    (STATUS_WARNING[0] + STATUS_HOSTILE[0]) / 2.0 + 0.05,
+    (STATUS_WARNING[1] + STATUS_HOSTILE[1]) / 2.0,
+    (STATUS_WARNING[2] + STATUS_HOSTILE[2]) / 2.0,
+    1.0,
+)
+_SHOCKWAVE_COLOR = (*BORDER_BRIGHT[:3], 0.85)
+_WRECK_COLOR = (*STATUS_INACTIVE[:3], 1.0)
 
 
 def _disc_geom(name: str, radius: float, color, segments: int = 16) -> GeomNode:
@@ -170,19 +188,47 @@ def _safe_remove(node: NodePath) -> None:
         node.remove_node()
 
 
+def _ring_geom(name: str, radius: float, color, segments: int = 32) -> GeomNode:
+    """Billboard-plane circle outline (local XZ, matching `_disc_geom`)."""
+    segs = LineSegs(name)
+    segs.set_thickness(2.0)
+    segs.set_color(*color)
+    for i in range(segments + 1):
+        ang = 2 * math.pi * i / segments
+        px, pz = radius * math.cos(ang), radius * math.sin(ang)
+        if i == 0:
+            segs.move_to(px, 0.0, pz)
+        else:
+            segs.draw_to(px, 0.0, pz)
+    return segs.create()
+
+
 def spawn_destruction_explosion(
     root: NodePath, position: tuple[float, float, float], scale: float = 1.0
 ) -> None:
-    """A brief expanding-then-fading flash at `position`."""
+    """A brief expanding-then-fading flash at `position`.
+
+    Two layers, so a hit reads as an event rather than a blob: a hot core
+    disc plus a faster, thinner shockwave ring in the chrome's bright edge
+    color. Both live under the same holder, so cleanup is unchanged.
+    """
     flash = root.attach_new_node("fx-explosion")
     flash.set_pos(position[0], position[1], position[2])
     disc = _attach_billboard_disc(flash, "explosion-disc", 0.9 * scale, _EXPLOSION_COLOR)
     disc.set_scale(0.35)
+    shock = flash.attach_new_node("explosion-shock")
+    shock.set_billboard_point_eye()
+    shock.set_light_off()
+    shock.set_transparency(TransparencyAttrib.MAlpha)
+    shock.attach_new_node(_ring_geom("explosion-ring", 0.9 * scale, _SHOCKWAVE_COLOR))
+    shock.set_scale(0.3)
     duration = 0.5
     Sequence(
         Parallel(
             LerpScaleInterval(disc, duration, 2.4 * scale, startScale=0.35),
             LerpColorScaleInterval(disc, duration, (1.0, 1.0, 1.0, 0.0)),
+            LerpScaleInterval(shock, duration * 0.75, 3.6 * scale, startScale=0.3),
+            LerpColorScaleInterval(shock, duration * 0.75, (1.0, 1.0, 1.0, 0.0)),
         ),
         Func(_safe_remove, flash),
     ).start()

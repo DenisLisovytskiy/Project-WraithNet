@@ -76,6 +76,17 @@ _ETC = _PANDA_DIR / "etc"
 if _ETC.is_dir():
     datas.append((str(_ETC), os.path.join("panda3d", "etc")))
 
+# Bundled UI typefaces (viewer3d/fonts.py). Destination keeps the
+# `assets/fonts/` layout the loader probes for, relative to `sys._MEIPASS`
+# (i.e. `_internal/assets/fonts/` in PyInstaller 6 onedir). The .ttf files
+# are OFL-licensed, so the two LICENSE-*.txt files ship with them; a missing
+# font is non-fatal (the loader degrades to Panda3D's built-in face), which
+# is why this is a plain glob and not a hard assert.
+_FONT_DIR = REPO_ROOT / "assets" / "fonts"
+if _FONT_DIR.is_dir():
+    for _asset in sorted(_FONT_DIR.glob("*.ttf")) + sorted(_FONT_DIR.glob("LICENSE-*.txt")):
+        datas.append((str(_asset), os.path.join("assets", "fonts")))
+
 # Destination "." in PyInstaller 6 onedir lands in `_internal/` (not next
 # to WraithNet.exe). collect_all("panda3d") already copies these DLLs into
 # `_internal/panda3d/` on panda3d 1.10.16 — confirmed in the Phase 29

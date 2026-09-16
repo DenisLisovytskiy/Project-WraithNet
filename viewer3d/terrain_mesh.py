@@ -1,6 +1,12 @@
 """Batched terrain geometry for the 3D viewer (Phase 36).
 
 Uses only stored TerrainGrid cells/heights — no render-time randomness.
+
+Palette: the cell fills all sit in the same dark cyan/teal family as
+`viewer3d.ui_chrome`, so terrain reads as the substrate *under* the
+holographic grid rather than as a second art style painted on top. Massing
+(trees, buildings) is dark; what makes it legible is the glowing edge
+wireframe drawn over the building blocks, not a bright fill.
 """
 
 from __future__ import annotations
@@ -14,19 +20,23 @@ from panda3d.core import (
     GeomVertexData,
     GeomVertexFormat,
     GeomVertexWriter,
+    LineSegs,
     NodePath,
     TransparencyAttrib,
 )
 
+from viewer3d.ui_chrome import BORDER_SOFT, tint
 from wraithnet.terrain import TerrainGrid, all_plains_terrain
 from wraithnet.trace_schemas import TraceHeader
 
-WATER_COLOR = (0.04, 0.12, 0.28, 0.82)
-PLAINS_COLOR = (0.02, 0.03, 0.06, 1.0)
-FOREST_BASE_COLOR = (0.03, 0.07, 0.04, 1.0)
-CITY_BASE_COLOR = (0.08, 0.08, 0.10, 1.0)
-TREE_COLOR = (0.10, 0.28, 0.14, 1.0)
-BUILDING_COLOR = (0.22, 0.24, 0.28, 1.0)
+WATER_COLOR = (0.020, 0.098, 0.170, 0.78)
+PLAINS_COLOR = (0.014, 0.030, 0.042, 1.0)
+FOREST_BASE_COLOR = (0.018, 0.052, 0.048, 1.0)
+CITY_BASE_COLOR = (0.030, 0.056, 0.070, 1.0)
+TREE_COLOR = (0.072, 0.215, 0.165, 1.0)
+BUILDING_COLOR = (0.050, 0.082, 0.108, 1.0)
+#: Glowing keyline over the building blocks — the holographic "massing" read.
+BUILDING_EDGE_COLOR = tint(BORDER_SOFT, 1.0, alpha=0.62)
 
 
 def resolve_header_terrain(header: TraceHeader) -> TerrainGrid:
@@ -111,6 +121,31 @@ def _box_batch(
     return node
 
 
+def _box_edges(
+    name: str,
+    boxes: list[tuple[float, float, float, float, float, float]],
+    color: tuple[float, float, float, float],
+) -> GeomNode | None:
+    """One batched wireframe over `boxes`: roof outline plus vertical corners.
+
+    Kept to a single GeomNode so the terrain root stays inside its batch
+    budget (see `terrain_batch_node_count`).
+    """
+    if not boxes:
+        return None
+    segs = LineSegs(name)
+    segs.set_thickness(1.3)
+    segs.set_color(*color)
+    for x0, y0, x1, y1, z0, z1 in boxes:
+        segs.move_to(x0, y0, z1)
+        for px, py in ((x1, y0), (x1, y1), (x0, y1), (x0, y0)):
+            segs.draw_to(px, py, z1)
+        for px, py in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            segs.move_to(px, py, z0)
+            segs.draw_to(px, py, z1)
+    return segs.create()
+
+
 def _tree_layout(col: int, row: int, seed: int) -> list[tuple[float, float]]:
     """Deterministic tree offsets inside a cell (fractional 0–1)."""
     h = (seed ^ (col * 73856093) ^ (row * 19349663)) & 0xFFFFFFFF
@@ -188,6 +223,13 @@ def build_terrain_root(parent: NodePath, terrain: TerrainGrid) -> NodePath:
         np = root.attach_new_node(bld_node)
         np.set_light_off()
         np.set_two_sided(True)
+
+    edge_node = _box_edges("terrain-building-edges", building_boxes, BUILDING_EDGE_COLOR)
+    if edge_node is not None:
+        np = root.attach_new_node(edge_node)
+        np.set_light_off()
+        np.set_transparency(TransparencyAttrib.MAlpha)
+        np.set_depth_offset(1)
 
     # Cosmetic water shimmer: slight Z scale pulse driven by viewer task later.
     water_np = root.find("**/terrain-water")

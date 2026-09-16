@@ -25,21 +25,40 @@ from typing import Literal
 
 from direct.gui.DirectGui import DirectEntry, DirectLabel
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import MouseButton, OrthographicLens, TextNode
+from panda3d.core import MouseButton, OrthographicLens, PandaNode, TextNode
 from pydantic import ValidationError
 
 from viewer3d.cameras import _camera_node
 from viewer3d.scene import build_static_scene, jet_altitude, sync_static_unit_glyphs
 from viewer3d.ui_chrome import (
+    ACCENT_DIM,
+    BORDER_W,
+    CONTENT_W,
     CYAN,
+    PANEL_PAD,
     RED,
+    ROW_H,
+    ROW_H_TIGHT,
+    SPACE_1,
+    SPACE_2,
+    SPACE_3,
     TEXT,
     TEXT_MUTED,
+    TEXT_SECONDARY,
+    TYPE_BODY,
+    TYPE_HEADER,
+    TYPE_LABEL,
+    TYPE_MICRO,
+    Stack,
+    clamp_scale,
     make_button,
     make_entry,
-    make_header,
+    make_field_grid,
+    make_field_row,
     make_label,
     make_panel,
+    make_section,
+    panel_content_top,
 )
 from wraithnet import config as wn_config
 from wraithnet.generation_presets import parameters_for_preset
@@ -304,7 +323,107 @@ class OrthoEditorCamera:
             return
 
 
-def _btn(parent, text, pos, command, extra_args=None, scale=0.034, style="default"):
+# =========================================================================
+# Panel geometry
+#
+# Every number below derives from the ui_chrome spacing scale, so the editor
+# shares one rhythm with the HUD instead of carrying a hand-tuned `z` per
+# widget. Rows come from `Stack`/`ROW_H`; columns come from `_columns()`;
+# panel heights are *measured* from the rows that were actually laid out
+# (`_set_panel_bottom`) rather than guessed, which is what keeps nested cards
+# from spilling past their parent and leaves no empty box behind a short form.
+# =========================================================================
+
+#: Gap between a panel's outer border and the screen edge.
+_EDGE = SPACE_3
+#: Offset from a panel edge to its content: border ring + inner padding.
+_INSET = BORDER_W + PANEL_PAD
+#: Both editor panels are exactly one `CONTENT_W` column wide.
+_PANEL_W = CONTENT_W + 2.0 * _INSET
+_PANEL_TOP = -_EDGE
+#: Provisional bottom; every panel is shrunk to its content after layout.
+_PANEL_DRAFT_BOTTOM = -1.98
+
+# Left panel, in a2dTopLeft space (+x runs right from the left screen edge).
+_L_LEFT = _EDGE
+_L_RIGHT = _EDGE + _PANEL_W
+_L_X = _L_LEFT + _INSET
+
+# Right panel, in a2dTopRight space (x is negative, running left from the edge).
+_R_RIGHT = -_EDGE
+_R_LEFT = -_EDGE - _PANEL_W
+_R_X = _R_LEFT + _INSET
+
+#: Inset of a card nested one step inside a panel, and that card's content.
+_NEST_PAD = SPACE_2
+_CARD_W = _PANEL_W - 2.0 * _NEST_PAD
+_CARD_CONTENT_W = _CARD_W - 2.0 * _INSET
+
+#: Horizontal gutter between layout columns.
+_COL_GAP = SPACE_2
+#: Ink a row leaves below its baseline; what a panel must clear under its last.
+_ROW_SINK = SPACE_2
+#: Cap-height fraction: a text block's baseline sits this far below its top.
+_TEXT_RISE = 0.72
+#: Natural vertical extent of a one-line button plate, in text units. Measured
+#: from `make_button`, whose bounds are (-0.230, 0.902) at every scale.
+_BTN_BOTTOM = -0.23
+_BTN_TOP = 0.90
+#: Horizontal padding `make_button` leaves either side of its label.
+_BTN_PAD_X = 0.28
+#: A DirectEntry plate is ~2.0 text units tall, so any row holding one needs
+#: the full `ROW_H` pitch; button/label-only rows fit `ROW_H_TIGHT`.
+_ENTRY_PAD_X = 0.33
+#: Weapon count fields per row, in the property card and each roster row.
+#: Two columns (not three) so catalog names like `AMRAAM`/`GUN_POD` keep a
+#: readable label column instead of colliding with the count field.
+_PAYLOAD_COLUMNS = 2
+_ROSTER_PAYLOAD_ROWS = -(-len(wn_config.WEAPON_CATALOG) // _PAYLOAD_COLUMNS)
+#: Label vs. numeric-entry split inside one payload cell. Counts are 1-2
+#: digits, so the entry can stay narrow and the name gets the rest.
+_PAYLOAD_LABEL_RATIO = 0.62
+_PAYLOAD_ENTRY_RATIO = 0.34
+
+
+def _columns(
+    x: float, count: int, *, width: float = CONTENT_W, gap: float = _COL_GAP
+) -> tuple[list[float], float]:
+    """Left edges and span of `count` equal columns filling `width` from `x`."""
+    span = (width - (count - 1) * gap) / max(count, 1)
+    return [x + i * (span + gap) for i in range(count)], span
+
+
+def _entry_chars(width: float, scale: float) -> float:
+    """`make_entry(width=...)` value whose plate is `width` units wide."""
+    return max(width / clamp_scale(scale) - _ENTRY_PAD_X, 1.0)
+
+
+def _btn(
+    parent,
+    text,
+    pos,
+    command,
+    extra_args=None,
+    scale=TYPE_BODY,
+    style="default",
+    width=None,
+    align=TextNode.ACenter,
+):
+    """Editor button on the shared type scale.
+
+    `width` pins the plate to a layout column (in aspect2d units) so button
+    grids share real edges, instead of every plate sizing itself to its own
+    label -- which is why the two columns of Add-* buttons used to be centred
+    differently from each other. `pos` is then the column centre for
+    `ACenter` or its left edge for `ALeft`.
+    """
+    frame_size = None
+    if width is not None:
+        units = float(width) / clamp_scale(scale)
+        if align == TextNode.ALeft:
+            frame_size = (-_BTN_PAD_X, units - _BTN_PAD_X, _BTN_BOTTOM, _BTN_TOP)
+        else:
+            frame_size = (-units / 2.0, units / 2.0, _BTN_BOTTOM, _BTN_TOP)
     return make_button(
         parent,
         text,
@@ -313,7 +432,94 @@ def _btn(parent, text, pos, command, extra_args=None, scale=0.034, style="defaul
         extra_args=extra_args,
         scale=scale,
         style=style,
+        align=align,
+        frame_size=frame_size,
     )
+
+
+def _section_at(parent, text: str, stack: Stack, *, width: float = CONTENT_W,
+                scale: float = TYPE_BODY):
+    """`[ BRACKET ]` header + rule that consumes its own height from `stack`."""
+    section = make_section(
+        parent, text, pos=(stack.x, 0, stack.z), width=width, scale=scale
+    )
+    stack.gap(stack.z - section.next_z)
+    return section
+
+
+def _panel_bottom_for(content_bottom: float) -> float:
+    """Outer edge `z` of a panel whose content ends at `content_bottom`."""
+    return content_bottom - PANEL_PAD - BORDER_W
+
+
+def _set_panel_bottom(panel, content_bottom: float) -> float:
+    """Shrink a `make_panel` result to hug content ending at `content_bottom`.
+
+    `make_panel` fixes `frameSize` at construction time and paints the border
+    as the outer frame with an inset fill on top, so both rects have to move
+    together. Returns the new outer bottom edge.
+    """
+    frame = panel["frameSize"]
+    if frame is None:
+        return 0.0
+    left, right, _old, top = (float(v) for v in frame)
+    bottom = min(_panel_bottom_for(content_bottom), top - 2.0 * BORDER_W - 1e-4)
+    panel["frameSize"] = (left, right, bottom, top)
+    fill = getattr(panel, "_chrome_fill", None)
+    if fill is not None:
+        f_left, f_right, _f_bottom, f_top = (float(v) for v in fill["frameSize"])
+        fill["frameSize"] = (f_left, f_right, bottom + BORDER_W, f_top)
+    panel._chrome_frame_size = (left, right, bottom, top)  # noqa: SLF001
+    return bottom
+
+
+def _text_block_height(widget, scale: float, *, min_rows: int = 1) -> float:
+    """Rendered height of a (possibly word-wrapped) label, in aspect2d units.
+
+    The generation panel's status/details/template lines are data-driven, so
+    the rows below them are flowed against the measured height instead of a
+    reserved guess that either clips or leaves a hole.
+    """
+    rows, line = min_rows, 1.15
+    try:
+        node = widget.component("text0").textNode
+        rows = max(int(node.get_num_rows()), min_rows)
+        line = float(node.get_line_height()) or 1.15
+    except Exception:  # noqa: BLE001 — a fontless build still has to lay out
+        pass
+    return rows * line * clamp_scale(scale)
+
+
+def _rect_contains(rect, x: float, z: float, margin: float = SPACE_1) -> bool:
+    """Is `(x, z)` inside `rect` (left, right, bottom, top), plus `margin`?"""
+    left, right, bottom, top = rect
+    return (
+        left - margin <= x <= right + margin
+        and bottom - margin <= z <= top + margin
+    )
+
+
+#: Generator parameters shown in the Advanced card, in grid order. Labels are
+#: spelled out (the old "Fr. tanks" / "Fn tanks" pair was unreadable) and the
+#: friendly/enemy split is marked consistently with an (FR)/(EN) suffix.
+_ADVANCED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("objective_count", "Objectives"),
+    ("sam_count", "SAM sites"),
+    ("jammer_count", "Jammers"),
+    ("aaa_count", "AAA sites"),
+    ("friendly_tank_count", "Tanks FR"),
+    ("enemy_tank_count", "Tanks EN"),
+    ("friendly_carrier_count", "Carrier FR"),
+    ("enemy_corvette_count", "Corvette EN"),
+    ("objective_hp_min", "HP min"),
+    ("objective_hp_max", "HP max"),
+    ("friendly_count_min", "Jets min"),
+    ("friendly_count_max", "Jets max"),
+    ("friendly_reserve_factor", "Reserve"),
+    ("threat_overlap", "Overlap"),
+    ("base_safety_radius", "Base radius"),
+    ("entity_min_separation", "Separation"),
+)
 
 
 @dataclass
@@ -393,266 +599,403 @@ class ScenarioEditor:
         self._refresh_edit_mode_ui()
 
     def _build_panels(self) -> None:
+        """Left console: instruction line, mode band, entity list, property
+        card, file actions -- one column, one row rhythm, sized to content.
+
+        The band is the only region that changes shape: `[ PLACE ]` in entity
+        mode, the nested `[ TERRAIN MODE ]` card in terrain mode. Everything
+        under it hangs off `_lower_node` so a taller band slides the lower
+        half down in one move instead of overlapping it.
+        """
         parent = getattr(self.base, "a2dTopLeft", None) or getattr(
             self.base, "aspect2d", None
         )
         self._panel = make_panel(
-            parent, frame_size=(0.02, 0.92, -1.85, -0.02)
+            parent,
+            frame_size=(_L_LEFT, _L_RIGHT, _PANEL_DRAFT_BOTTOM, _PANEL_TOP),
+            title="[ SCENARIO EDITOR ]",
+            title_scale=TYPE_HEADER,
         )
-        make_header(
-            self._panel,
-            "[ SCENARIO EDITOR ]",
-            pos=(0.08, 0, -0.08),
-            scale=0.040,
-        )
-        self._btn_add_jet = _btn(
-            self._panel, "Add Jet", (0.22, 0, -0.16), self.begin_placement, ["jet"]
-        )
-        self._btn_add_target = _btn(
-            self._panel, "Add Target", (0.52, 0, -0.16), self.begin_placement, ["target"]
-        )
-        self._btn_add_sam = _btn(
-            self._panel, "Add SAM", (0.22, 0, -0.24), self.begin_placement, ["sam_site"]
-        )
-        self._btn_add_aaa = _btn(
-            self._panel, "Add AAA", (0.52, 0, -0.24), self.begin_placement, ["aaa_site"]
-        )
-        self._btn_add_jammer = _btn(
-            self._panel, "Add Jammer", (0.22, 0, -0.32), self.begin_placement, ["jammer"]
-        )
-        self._btn_add_tank = _btn(
-            self._panel, "Add Tank", (0.52, 0, -0.32), self.begin_placement, ["tank"]
-        )
-        self._btn_add_carrier = _btn(
-            self._panel, "Add Carrier", (0.22, 0, -0.40), self.begin_placement, ["carrier"]
-        )
-        self._btn_add_corvette = _btn(
-            self._panel, "Add Corvette", (0.52, 0, -0.40), self.begin_placement, ["corvette"]
-        )
-        self._btn_home_base = _btn(
-            self._panel, "Place Home Base", (0.22, 0, -0.48), self.begin_placement, ["home_base"]
-        )
-        self._btn_edit_terrain = _btn(
-            self._panel, "Edit Terrain", (0.52, 0, -0.48), self.enter_terrain_mode
-        )
+        stack = Stack(panel_content_top(self._panel), row_h=ROW_H, x=_L_X)
 
+        # What the next map click will do. One line in both edit modes.
+        self._hint = OnscreenText(
+            text="Click Add, then click the map to place.",
+            parent=self._panel,
+            pos=(_L_X, stack.z),
+            scale=TYPE_LABEL,
+            fg=TEXT_MUTED,
+            align=TextNode.ALeft,
+            mayChange=True,
+            wordwrap=CONTENT_W / TYPE_LABEL,
+        )
+        stack.gap(ROW_H_TIGHT)
+
+        # --- mode band: [ PLACE ] grid or the nested [ TERRAIN MODE ] card ---
+        self._band_top_z = stack.z
+        self._place_section = _section_at(self._panel, "[ PLACE ]", stack)
+        add_cols, add_col_w = _columns(_L_X, 2)
+        placements = (
+            ("Add Jet", self.begin_placement, ["jet"]),
+            ("Add Target", self.begin_placement, ["target"]),
+            ("Add SAM", self.begin_placement, ["sam_site"]),
+            ("Add AAA", self.begin_placement, ["aaa_site"]),
+            ("Add Jammer", self.begin_placement, ["jammer"]),
+            ("Add Tank", self.begin_placement, ["tank"]),
+            ("Add Carrier", self.begin_placement, ["carrier"]),
+            ("Add Corvette", self.begin_placement, ["corvette"]),
+            ("Place Home Base", self.begin_placement, ["home_base"]),
+            ("Edit Terrain", self.enter_terrain_mode, None),
+        )
+        place_buttons = []
+        row_z = stack.z
+        for index, (text, command, extra) in enumerate(placements):
+            col = index % 2
+            if col == 0:
+                row_z = stack.row()
+            place_buttons.append(
+                _btn(
+                    self._panel,
+                    text,
+                    (add_cols[col] + add_col_w / 2.0, 0, row_z),
+                    command,
+                    extra_args=extra,
+                    width=add_col_w,
+                )
+            )
+        (
+            self._btn_add_jet,
+            self._btn_add_target,
+            self._btn_add_sam,
+            self._btn_add_aaa,
+            self._btn_add_jammer,
+            self._btn_add_tank,
+            self._btn_add_carrier,
+            self._btn_add_corvette,
+            self._btn_home_base,
+            self._btn_edit_terrain,
+        ) = place_buttons
+        self._place_band_h = self._band_top_z - stack.z
+
+        self._build_terrain_card()
+
+        # --- everything below the band, on one slidable node ----------------
+        self._lower_node = self._panel.attach_new_node(PandaNode("editor-lower"))
+        low = Stack(self._band_top_z - self._place_band_h, row_h=ROW_H, x=_L_X)
+        low.gap(SPACE_3)
+
+        self._entities_section = _section_at(self._lower_node, "[ ENTITIES ]", low)
+        self._list_anchor_z = low.z
+        self._list_max_visible = 5
+        low.gap(self._list_max_visible * ROW_H_TIGHT)
+        self._list_overflow_z = low.z
+        self._list_overflow_label = make_label(
+            self._lower_node,
+            "",
+            pos=(_L_X, 0, self._list_overflow_z),
+            scale=TYPE_LABEL,
+            fg=TEXT_MUTED,
+        )
+        self._list_overflow_label.hide()
+        low.gap(ROW_H_TIGHT)
+
+        self._build_property_card(low)
+        self._build_file_section(low)
+
+        self._lower_content_bottom_z = low.z + ROW_H - _ROW_SINK
+        _set_panel_bottom(self._panel, self._lower_content_bottom_z)
+
+        bl = getattr(self.base, "a2dBottomLeft", None) or parent
+        self._banner = OnscreenText(
+            text="",
+            parent=bl,
+            pos=(_L_X, _EDGE + SPACE_2),
+            scale=TYPE_LABEL,
+            fg=RED,
+            align=TextNode.ALeft,
+            mayChange=True,
+            wordwrap=CONTENT_W / TYPE_LABEL,
+        )
+        self._banner.hide()
+        self._back_btn = _btn(
+            getattr(self.base, "a2dTopRight", None) or parent,
+            "Back to Editor",
+            (_R_X + CONTENT_W / 2.0, 0, panel_content_top(self._panel)),
+            self._back_to_editing,
+            style="primary",
+            width=CONTENT_W / 2.0,
+        )
+        self._back_btn.hide()
+        self._build_generate_panel()
+
+    # --- left panel sections ---------------------------------------------
+
+    def _build_terrain_card(self) -> None:
+        """Nested `[ TERRAIN MODE ]` card, occupying the mode band.
+
+        It is built at the band's top edge and shrunk to its own rows, so its
+        borders can no longer land on the panel header above it or the
+        `[ PROPERTIES ]` card below it.
+        """
+        card_left = _L_LEFT + _NEST_PAD
+        card_right = _L_RIGHT - _NEST_PAD
         self._terrain_panel = make_panel(
             self._panel,
-            frame_size=(0.04, 0.88, -0.92, -0.08),
+            frame_size=(
+                card_left,
+                card_right,
+                self._band_top_z + _PANEL_DRAFT_BOTTOM,
+                self._band_top_z,
+            ),
             nested=True,
+            title="[ TERRAIN MODE ]",
+            title_scale=TYPE_BODY,
         )
-        make_header(
-            self._terrain_panel,
-            "[ TERRAIN MODE ]",
-            pos=(0.08, 0, -0.14),
-            scale=0.034,
-        )
+        x = card_left + _INSET
+        width = _CARD_CONTENT_W
+        stack = Stack(panel_content_top(self._terrain_panel), row_h=ROW_H_TIGHT, x=x)
+        two, two_w = _columns(x, 2, width=width)
+        three, three_w = _columns(x, 3, width=width)
+
+        z = stack.row()
         self._btn_brush = _btn(
             self._terrain_panel,
             "Brush: PLAINS",
-            (0.30, 0, -0.22),
+            (two[0] + two_w / 2.0, 0, z),
             self._cycle_terrain_brush,
-            scale=0.032,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
         self._btn_radius = _btn(
             self._terrain_panel,
             "Radius: 1",
-            (0.68, 0, -0.22),
+            (two[1] + two_w / 2.0, 0, z),
             self._cycle_brush_radius,
-            scale=0.032,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
+
+        z = stack.row()
         self._btn_city_height = _btn(
             self._terrain_panel,
             "City Ht: Random",
-            (0.30, 0, -0.30),
+            (two[0] + two_w / 2.0, 0, z),
             self._cycle_city_height_mode,
-            scale=0.030,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
-        self._fixed_height_entry = make_entry(
+        self._terrain_height_label, self._fixed_height_entry = make_field_row(
             self._terrain_panel,
-            pos=(0.72, 0, -0.30),
-            scale=0.028,
-            width=5,
+            "Height",
+            pos=(two[1], 0, z),
+            width=two_w,
+            scale=TYPE_LABEL,
+            label_ratio=0.46,
+            entry_chars=_entry_chars(two_w * 0.52, TYPE_LABEL),
             initial="10",
         )
+        stack.gap(ROW_H - ROW_H_TIGHT)  # an entry plate is taller than a button
+
+        z = stack.row()
         self._btn_fill = _btn(
-            self._terrain_panel, "Fill Map", (0.22, 0, -0.38), self._fill_terrain_clicked, scale=0.030
+            self._terrain_panel,
+            "Fill Map",
+            (two[0] + two_w / 2.0, 0, z),
+            self._fill_terrain_clicked,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
         self._btn_gen_terrain = _btn(
             self._terrain_panel,
             "Generate Terrain",
-            (0.58, 0, -0.38),
+            (two[1] + two_w / 2.0, 0, z),
             self._toggle_terrain_gen_panel,
-            scale=0.028,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
+
+        z = stack.row()
         self._btn_terrain_undo = _btn(
-            self._terrain_panel, "Undo", (0.18, 0, -0.46), self._terrain_undo, scale=0.030
+            self._terrain_panel,
+            "Undo",
+            (three[0] + three_w / 2.0, 0, z),
+            self._terrain_undo,
+            scale=TYPE_LABEL,
+            width=three_w,
         )
         self._btn_terrain_redo = _btn(
-            self._terrain_panel, "Redo", (0.38, 0, -0.46), self._terrain_redo, scale=0.030
+            self._terrain_panel,
+            "Redo",
+            (three[1] + three_w / 2.0, 0, z),
+            self._terrain_redo,
+            scale=TYPE_LABEL,
+            width=three_w,
         )
         self._btn_entity_mode = _btn(
             self._terrain_panel,
             "Entity Mode",
-            (0.66, 0, -0.46),
+            (three[2] + three_w / 2.0, 0, z),
             self.enter_entity_mode,
-            scale=0.030,
+            scale=TYPE_LABEL,
+            width=three_w,
         )
+
+        z = stack.row()
         self._btn_relocate = _btn(
             self._terrain_panel,
             "Relocate Invalid",
-            (0.40, 0, -0.54),
+            (two[0] + two_w / 2.0, 0, z),
             self._relocate_invalid_clicked,
-            scale=0.028,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
         self._btn_relocate_confirm = _btn(
             self._terrain_panel,
             "Confirm Relocate",
-            (0.40, 0, -0.62),
+            (two[1] + two_w / 2.0, 0, z),
             self._confirm_relocate,
-            scale=0.028,
+            scale=TYPE_LABEL,
             style="primary",
+            width=two_w,
         )
         self._btn_relocate_confirm.hide()
+        self._terrain_content_bottom_z = z - _ROW_SINK
+
+        # Nested one step further: the terrain generator's own fractions.
+        gen_left = card_left + _NEST_PAD
+        gen_right = card_right - _NEST_PAD
+        gen_top = self._terrain_content_bottom_z - SPACE_2
         self._terrain_gen_frame = make_panel(
             self._terrain_panel,
-            frame_size=(0.06, 0.86, -0.90, -0.68),
+            frame_size=(gen_left, gen_right, gen_top + _PANEL_DRAFT_BOTTOM, gen_top),
             nested=True,
+            title="[ GENERATE TERRAIN ]",
+            title_scale=TYPE_LABEL,
         )
-        make_label(
-            self._terrain_gen_frame,
-            "water / forest / city fractions",
-            pos=(0.08, 0, -0.72),
-            scale=0.024,
+        gen_x = gen_left + _INSET
+        gen_w = (gen_right - gen_left) - 2.0 * _INSET
+        gen_stack = Stack(panel_content_top(self._terrain_gen_frame), row_h=ROW_H, x=gen_x)
+        frac_cols, frac_w = _columns(gen_x, 3, width=gen_w)
+        z = gen_stack.row()
+        fraction_fields = (
+            ("Water", "0.20"),
+            ("Forest", "0.20"),
+            ("City", "0.10"),
         )
-        self._terrain_water_entry = make_entry(
-            self._terrain_gen_frame,
-            pos=(0.20, 0, -0.78),
-            scale=0.026,
-            width=5,
-            initial="0.20",
-        )
-        self._terrain_forest_entry = make_entry(
-            self._terrain_gen_frame,
-            pos=(0.42, 0, -0.78),
-            scale=0.026,
-            width=5,
-            initial="0.20",
-        )
-        self._terrain_city_entry = make_entry(
-            self._terrain_gen_frame,
-            pos=(0.64, 0, -0.78),
-            scale=0.026,
-            width=5,
-            initial="0.10",
-        )
+        fraction_entries = []
+        for col, (label, initial) in enumerate(fraction_fields):
+            _label, entry = make_field_row(
+                self._terrain_gen_frame,
+                label,
+                pos=(frac_cols[col], 0, z),
+                width=frac_w,
+                scale=TYPE_MICRO,
+                label_ratio=0.46,
+                entry_chars=_entry_chars(frac_w * 0.52, TYPE_MICRO),
+                initial=initial,
+            )
+            fraction_entries.append(entry)
+        (
+            self._terrain_water_entry,
+            self._terrain_forest_entry,
+            self._terrain_city_entry,
+        ) = fraction_entries
+        z = gen_stack.row()
         self._btn_run_terrain_gen = _btn(
             self._terrain_gen_frame,
             "Run Generate",
-            (0.40, 0, -0.86),
+            (gen_x + gen_w / 2.0, 0, z),
             self._generate_terrain_clicked,
-            scale=0.028,
+            scale=TYPE_LABEL,
             style="primary",
+            width=gen_w / 2.0,
         )
+        gen_bottom = _set_panel_bottom(self._terrain_gen_frame, z - _ROW_SINK)
         self._terrain_gen_frame.hide()
+
+        self._terrain_expanded_bottom_z = gen_bottom - SPACE_1
+        _set_panel_bottom(self._terrain_panel, self._terrain_content_bottom_z)
         self._terrain_panel.hide()
 
-        self._list_anchor_z = -0.60
-        self._list_max_visible = 5
-        make_header(
-            self._panel,
-            "[ ENTITIES ]",
-            pos=(0.08, 0, -0.545),
-            scale=0.032,
-        )
-        self._hint = OnscreenText(
-            text="Click Add, then click the map to place.",
-            parent=self._panel,
-            pos=(0.08, -0.505),
-            scale=0.020,
-            fg=TEXT_MUTED,
-            align=TextNode.ALeft,
-            mayChange=True,
-        )
-        self._list_overflow_label = make_label(
-            self._panel,
-            "",
-            pos=(0.10, 0, -0.60),
-            scale=0.022,
-            fg=TEXT_MUTED,
-        )
-        self._list_overflow_label.hide()
+    def _build_property_card(self, low: Stack) -> None:
+        """Nested `[ PROPERTIES ]` card.
 
-        # Tall properties card: jet payload + flares need ~0.7 of vertical space.
-        self._form_top_z = -0.88
-        self._form_bottom_z = -1.58
-        self._form_content_top_z = -0.94
+        ID / generic / ordnance rows are static -- every entity kind uses the
+        same three label+entry rows -- so only the frame/slots and action rows
+        are re-flowed per kind by `_layout_property_form`, which then hugs the
+        card to whatever it actually showed.
+        """
+        low.gap(SPACE_2)
+        self._form_top_z = low.z
         self._form_frame = make_panel(
-            self._panel,
-            frame_size=(0.06, 0.86, self._form_bottom_z, self._form_top_z),
+            self._lower_node,
+            frame_size=(
+                _L_LEFT + _NEST_PAD,
+                _L_RIGHT - _NEST_PAD,
+                self._form_top_z + _PANEL_DRAFT_BOTTOM,
+                self._form_top_z,
+            ),
             nested=True,
+            title="[ PROPERTIES ]",
+            title_scale=TYPE_BODY,
         )
-        make_header(
-            self._form_frame,
-            "[ PROPERTIES ]",
-            pos=(0.08, 0, self._form_top_z - 0.04),
-            scale=0.030,
-        )
+        self._form_x = _L_LEFT + _NEST_PAD + _INSET
+        self._form_w = _CARD_CONTENT_W
+        stack = Stack(panel_content_top(self._form_frame), row_h=ROW_H, x=self._form_x)
+        self._form_content_top_z = stack.z
+
+        label_ratio = 0.32
+        value_x = self._form_x + self._form_w * label_ratio
+        value_chars = _entry_chars(self._form_w * (1.0 - label_ratio), TYPE_LABEL)
+
+        z = stack.row()
         self._id_label = make_label(
-            self._form_frame,
-            "ID",
-            pos=(0.10, 0, self._form_content_top_z),
-            scale=0.028,
-            fg=CYAN,
+            self._form_frame, "ID", pos=(self._form_x, 0, z), scale=TYPE_LABEL, fg=CYAN
         )
         self._id_entry = make_entry(
-            self._form_frame,
-            pos=(0.40, 0, self._form_content_top_z),
-            scale=0.028,
-            width=14,
+            self._form_frame, pos=(value_x, 0, z), scale=TYPE_LABEL, width=value_chars
+        )
+        z = stack.row()
+        self._field_a_label = make_label(
+            self._form_frame, "JDAM", pos=(self._form_x, 0, z), scale=TYPE_LABEL, fg=CYAN
         )
         self._field_a_entry = make_entry(
-            self._form_frame,
-            pos=(0.40, 0, self._form_content_top_z - 0.05),
-            scale=0.028,
-            width=14,
+            self._form_frame, pos=(value_x, 0, z), scale=TYPE_LABEL, width=value_chars
         )
-        self._field_a_label = make_label(
-            self._form_frame,
-            "JDAM",
-            pos=(0.10, 0, self._form_content_top_z - 0.05),
-            scale=0.026,
-            fg=CYAN,
+        z = stack.row()
+        self._field_b_label = make_label(
+            self._form_frame, "AIM9X", pos=(self._form_x, 0, z), scale=TYPE_LABEL, fg=CYAN
         )
         self._field_b_entry = make_entry(
-            self._form_frame,
-            pos=(0.40, 0, self._form_content_top_z - 0.10),
-            scale=0.028,
-            width=14,
+            self._form_frame, pos=(value_x, 0, z), scale=TYPE_LABEL, width=value_chars
         )
-        self._field_b_label = make_label(
+        self._form_tail_generic_z = stack.z
+
+        self._ordnance_section = _section_at(
             self._form_frame,
-            "AIM9X",
-            pos=(0.10, 0, self._form_content_top_z - 0.10),
-            scale=0.026,
-            fg=CYAN,
+            "[ ORDNANCE ]",
+            stack,
+            width=self._form_w,
+            scale=TYPE_LABEL,
         )
+        weapons = list(wn_config.WEAPON_CATALOG)
+        pay_cols, pay_w = _columns(self._form_x, _PAYLOAD_COLUMNS, width=self._form_w)
+        pay_chars = _entry_chars(pay_w * _PAYLOAD_ENTRY_RATIO, TYPE_MICRO)
         self._payload_entries: dict[str, DirectEntry] = {}
         self._payload_labels: dict[str, DirectLabel] = {}
-        weapons = list(wn_config.WEAPON_CATALOG)
-        for weapon in weapons:
-            label = make_label(
+        z = stack.z
+        for index, weapon in enumerate(weapons):
+            col = index % _PAYLOAD_COLUMNS
+            if col == 0:
+                z = stack.row()
+            label, entry = make_field_row(
                 self._form_frame,
                 weapon,
-                pos=(0.10, 0, self._form_content_top_z),
-                scale=0.022,
-                fg=CYAN,
-            )
-            entry = make_entry(
-                self._form_frame,
-                pos=(0.28, 0, self._form_content_top_z),
-                scale=0.024,
-                width=5,
+                pos=(pay_cols[col], 0, z),
+                width=pay_w,
+                scale=TYPE_MICRO,
+                label_ratio=_PAYLOAD_LABEL_RATIO,
+                entry_chars=pay_chars,
                 initial="0",
                 command=self._on_payload_typed,
             )
@@ -660,49 +1003,62 @@ class ScenarioEditor:
             entry.hide()
             self._payload_labels[weapon] = label
             self._payload_entries[weapon] = entry
+        self._form_tail_jet_z = stack.z
+
+        # Kind-dependent tail. Positions are assigned by
+        # `_layout_property_form`; the jet form is the tallest, so its two
+        # tail rows set how much room the card can ever need.
         self._frame_btn = _btn(
             self._form_frame,
             "Frame: STRIKE_FIGHTER",
-            (0.46, 0, self._form_content_top_z),
+            (self._form_x, 0, self._form_tail_jet_z),
             self._cycle_frame_type,
-            scale=0.026,
+            scale=TYPE_LABEL,
+            width=self._form_w * 0.70,
+            align=TextNode.ALeft,
         )
         self._slots_label = make_label(
             self._form_frame,
             "0 / 7 slots",
-            pos=(0.10, 0, self._form_content_top_z),
-            scale=0.024,
+            pos=(self._form_x + self._form_w, 0, self._form_tail_jet_z),
+            scale=TYPE_LABEL,
             fg=TEXT,
+            align=TextNode.ARight,
         )
+        action_cols, action_w = _columns(self._form_x, 2, width=self._form_w)
         self._btn_apply = _btn(
             self._form_frame,
             "Apply",
-            (0.20, 0, self._form_content_top_z),
+            (action_cols[0] + action_w / 2.0, 0, self._form_tail_jet_z),
             self._apply_form,
-            scale=0.026,
+            scale=TYPE_LABEL,
             style="primary",
+            width=action_w,
         )
         self._btn_delete = _btn(
             self._form_frame,
             "Delete",
-            (0.42, 0, self._form_content_top_z),
+            (action_cols[1] + action_w / 2.0, 0, self._form_tail_jet_z),
             self._delete_selected,
-            scale=0.026,
+            scale=TYPE_LABEL,
             style="danger",
+            width=action_w,
         )
         self._btn_hold = _btn(
             self._form_frame,
             "Hold: ON",
-            (0.68, 0, self._form_content_top_z),
+            (action_cols[0] + action_w / 2.0, 0, self._form_tail_jet_z),
             self._toggle_hold_position,
-            scale=0.024,
+            scale=TYPE_LABEL,
+            width=action_w,
         )
         self._btn_add_route = _btn(
             self._form_frame,
             "Add Route Point",
-            (0.68, 0, self._form_content_top_z),
+            (action_cols[1] + action_w / 2.0, 0, self._form_tail_jet_z),
             self._arm_route_point,
-            scale=0.022,
+            scale=TYPE_LABEL,
+            width=action_w,
         )
         self._field_a_entry["command"] = self._on_payload_typed
         self._field_b_entry["command"] = self._on_payload_typed
@@ -710,265 +1066,341 @@ class ScenarioEditor:
         self._slots_label.hide()
         self._btn_hold.hide()
         self._btn_add_route.hide()
+        self._show_generic_fields(False)
+        self._show_payload_fields(False)
+
+        # Reserve the card's worst case so the file actions underneath never
+        # move when the form changes. A carrier/corvette is the tallest tail:
+        # frame/slots row + hold/route row + Apply/Delete.
+        self._form_max_bottom_z = _panel_bottom_for(
+            self._form_tail_jet_z - 3 * ROW_H - _ROW_SINK
+        )
+        low.gap(self._form_top_z - self._form_max_bottom_z)
         self._layout_property_form("jammer")
 
+    def _build_file_section(self, low: Stack) -> None:
+        low.gap(SPACE_2)
+        self._file_section = _section_at(self._lower_node, "[ SCENARIO FILE ]", low)
+        path_ratio = 0.14
+        path_x = _L_X + CONTENT_W * path_ratio
+        z = low.row()
+        self._path_label = make_label(
+            self._lower_node, "Path", pos=(_L_X, 0, z), scale=TYPE_LABEL, fg=CYAN
+        )
         self._path_entry = make_entry(
-            self._panel,
-            pos=(0.48, 0, -1.66),
-            scale=0.028,
-            width=18,
+            self._lower_node,
+            pos=(path_x, 0, z),
+            scale=TYPE_MICRO,
+            width=_entry_chars(CONTENT_W * (1.0 - path_ratio), TYPE_MICRO),
             initial=self._path,
+            overflow=True,
         )
-        make_label(
-            self._panel,
-            "Path",
-            pos=(0.08, 0, -1.66),
-            scale=0.028,
-            fg=CYAN,
+        file_cols, file_w = _columns(_L_X, 3)
+        z = low.row()
+        self._btn_save = _btn(
+            self._lower_node,
+            "Save",
+            (file_cols[0] + file_w / 2.0, 0, z),
+            self._save_clicked,
+            width=file_w,
         )
-        self._btn_save = _btn(self._panel, "Save", (0.18, 0, -1.74), self._save_clicked, scale=0.030)
-        self._btn_load = _btn(self._panel, "Load", (0.40, 0, -1.74), self._load_clicked, scale=0.030)
+        self._btn_load = _btn(
+            self._lower_node,
+            "Load",
+            (file_cols[1] + file_w / 2.0, 0, z),
+            self._load_clicked,
+            width=file_w,
+        )
         self._btn_preview = _btn(
-            self._panel, "Preview", (0.66, 0, -1.74), self._preview_clicked, scale=0.030
+            self._lower_node,
+            "Preview",
+            (file_cols[2] + file_w / 2.0, 0, z),
+            self._preview_clicked,
+            width=file_w,
         )
+        z = low.row()
         self._btn_launch = _btn(
-            self._panel, "Launch", (0.40, 0, -1.84), self._launch_clicked, style="primary", scale=0.032
-        )
-
-        bl = getattr(self.base, "a2dBottomLeft", None) or parent
-        self._banner = OnscreenText(
-            text="",
-            parent=bl,
-            pos=(0.08, 0.08),
-            scale=0.032,
-            fg=RED,
-            align=TextNode.ALeft,
-            mayChange=True,
-            wordwrap=32,
-        )
-        self._banner.hide()
-        self._back_btn = _btn(
-            getattr(self.base, "a2dTopRight", None) or parent,
-            "Back to Editor",
-            (-0.28, 0, -0.08),
-            self._back_to_editing,
+            self._lower_node,
+            "Launch",
+            (_L_X + CONTENT_W / 2.0, 0, z),
+            self._launch_clicked,
             style="primary",
+            width=CONTENT_W,
         )
-        self._back_btn.hide()
-        self._build_generate_panel()
 
     def _build_generate_panel(self) -> None:
-        """Right-side Quick Generate panel (separate from the entity panel)."""
+        """Right-side Quick Generate console.
+
+        Seed / actions / status stack on the panel's own rhythm; the Advanced
+        and Custom Roster cards are expandable and are flowed under the status
+        text by `_relayout_generation_panel`, which also shrinks the panel to
+        fit. Collapsed, this panel is now a third of its old height.
+        """
         parent = getattr(self.base, "a2dTopRight", None) or getattr(
             self.base, "aspect2d", None
         )
         self._gen_panel = make_panel(
-            parent, frame_size=(-0.92, -0.02, -1.90, -0.02)
+            parent,
+            frame_size=(_R_LEFT, _R_RIGHT, _PANEL_DRAFT_BOTTOM, _PANEL_TOP),
+            title="[ QUICK GENERATE ]",
+            title_scale=TYPE_HEADER,
         )
-        make_header(
-            self._gen_panel,
-            "[ QUICK GENERATE ]",
-            pos=(-0.88, 0, -0.08),
-            scale=0.038,
-        )
+        stack = Stack(panel_content_top(self._gen_panel), row_h=ROW_H, x=_R_X)
+        two, two_w = _columns(_R_X, 2)
+        three, three_w = _columns(_R_X, 3)
+
+        self._seed_section = _section_at(self._gen_panel, "[ MISSION SEED ]", stack)
+        z = stack.row()
         self._btn_difficulty = _btn(
             self._gen_panel,
             "Difficulty: STANDARD",
-            (-0.46, 0, -0.16),
+            (_R_X + CONTENT_W / 2.0, 0, z),
             self._cycle_difficulty,
-            scale=0.032,
+            width=CONTENT_W,
+        )
+        z = stack.row()
+        seed_label_w = CONTENT_W * 0.14
+        seed_btn_w = CONTENT_W * 0.28
+        seed_entry_w = CONTENT_W - seed_label_w - seed_btn_w - _COL_GAP
+        self._seed_label = make_label(
+            self._gen_panel, "Seed", pos=(_R_X, 0, z), scale=TYPE_LABEL, fg=CYAN
         )
         self._seed_entry = make_entry(
             self._gen_panel,
-            pos=(-0.55, 0, -0.24),
-            scale=0.028,
-            width=16,
+            pos=(_R_X + seed_label_w, 0, z),
+            scale=TYPE_LABEL,
+            width=_entry_chars(seed_entry_w, TYPE_LABEL),
             initial="0",
         )
-        make_label(
-            self._gen_panel,
-            "Seed",
-            pos=(-0.88, 0, -0.24),
-            scale=0.028,
-            fg=CYAN,
-        )
         self._btn_new_seed = _btn(
-            self._gen_panel, "New Seed", (-0.22, 0, -0.24), self._new_seed, scale=0.028
+            self._gen_panel,
+            "New Seed",
+            (_R_X + CONTENT_W - seed_btn_w / 2.0, 0, z),
+            self._new_seed,
+            scale=TYPE_LABEL,
+            width=seed_btn_w,
         )
+        z = stack.row()
         self._btn_friendly_mode = _btn(
             self._gen_panel,
             "AUTO-BALANCED",
-            (-0.46, 0, -0.32),
+            (_R_X + CONTENT_W / 2.0, 0, z),
             self._cycle_friendly_mode,
-            scale=0.028,
+            width=CONTENT_W,
         )
+
+        stack.gap(SPACE_2)
+        self._generate_section = _section_at(self._gen_panel, "[ GENERATE ]", stack)
+        z = stack.row()
         self._btn_generate = _btn(
             self._gen_panel,
             "Generate",
-            (-0.72, 0, -0.40),
+            (two[0] + two_w / 2.0, 0, z),
             self._generate_clicked,
-            scale=0.032,
             style="primary",
+            width=two_w,
         )
         self._btn_advanced = _btn(
             self._gen_panel,
-            "Advanced…",
-            (-0.42, 0, -0.40),
+            "Advanced...",
+            (two[1] + two_w / 2.0, 0, z),
             self._toggle_advanced,
-            scale=0.028,
+            width=two_w,
         )
+        z = stack.row()
         self._btn_undo_generation = _btn(
             self._gen_panel,
             "Undo Generation",
-            (-0.18, 0, -0.40),
+            (_R_X + CONTENT_W / 2.0, 0, z),
             self._undo_generation,
-            scale=0.026,
+            scale=TYPE_LABEL,
+            width=CONTENT_W,
         )
+        z = stack.row()
         self._btn_confirm_replace = _btn(
             self._gen_panel,
             "Replace",
-            (-0.72, 0, -0.48),
+            (three[0] + three_w / 2.0, 0, z),
             self._confirm_replace_generation,
-            scale=0.028,
+            scale=TYPE_LABEL,
             style="primary",
+            width=three_w,
         )
         self._btn_use_anyway = _btn(
             self._gen_panel,
             "Use Anyway",
-            (-0.42, 0, -0.48),
+            (three[1] + three_w / 2.0, 0, z),
             self._confirm_use_anyway,
-            scale=0.028,
+            scale=TYPE_LABEL,
+            width=three_w,
         )
         self._btn_cancel_pending = _btn(
             self._gen_panel,
             "Cancel",
-            (-0.18, 0, -0.48),
+            (three[2] + three_w / 2.0, 0, z),
             self._cancel_pending_generation,
-            scale=0.028,
+            scale=TYPE_LABEL,
             style="danger",
+            width=three_w,
         )
         self._btn_confirm_replace.hide()
         self._btn_use_anyway.hide()
         self._btn_cancel_pending.hide()
 
+        stack.gap(SPACE_2)
+        self._status_section = _section_at(self._gen_panel, "[ STATUS ]", stack)
+        z = stack.row()
         self._gen_meta_label = make_label(
             self._gen_panel,
             "Manual scenario",
-            pos=(-0.88, 0, -0.56),
-            scale=0.026,
+            pos=(_R_X, 0, z),
+            scale=TYPE_LABEL,
             fg=TEXT,
+            wordwrap=CONTENT_W / TYPE_LABEL,
         )
+        # Flow region: status text length is data-driven, so the rows under it
+        # are measured at refresh time rather than reserved here.
+        self._gen_flow_top_z = stack.z + _TEXT_RISE * TYPE_MICRO
         self._gen_status_label = make_label(
             self._gen_panel,
             "No generation yet.",
-            pos=(-0.88, 0, -0.62),
-            scale=0.024,
+            pos=(_R_X, 0, stack.z),
+            scale=TYPE_MICRO,
+            fg=TEXT_SECONDARY,
+            wordwrap=CONTENT_W / TYPE_MICRO,
         )
+        self._details_btn_w = CONTENT_W * 0.28
         self._btn_status_details = _btn(
             self._gen_panel,
             "Details",
-            (-0.22, 0, -0.70),
+            (_R_X + CONTENT_W - self._details_btn_w / 2.0, 0, stack.z),
             self._toggle_status_details,
-            scale=0.026,
+            scale=TYPE_LABEL,
+            width=self._details_btn_w,
         )
         self._gen_details_label = make_label(
             self._gen_panel,
             "",
-            pos=(-0.88, 0, -0.76),
-            scale=0.022,
+            pos=(_R_X, 0, stack.z),
+            scale=TYPE_MICRO,
+            fg=TEXT_SECONDARY,
+            wordwrap=CONTENT_W / TYPE_MICRO,
         )
         self._gen_details_label.hide()
 
+        self._build_advanced_card()
+        self._build_roster_card()
+        self._refresh_undo_button()
+        self._refresh_pending_buttons()
+        self._relayout_generation_panel()
+
+    # --- right panel expandable cards ------------------------------------
+
+    def _build_advanced_card(self) -> None:
+        """Nested `[ ADVANCED ]` card: the 16 generator parameters as one grid.
+
+        Built against a local origin of `z = 0` so `_relayout_generation_panel`
+        can slot it under whatever the status text currently occupies with a
+        single `set_z`.
+        """
+        card_left = _R_LEFT + _NEST_PAD
+        card_right = _R_RIGHT - _NEST_PAD
         self._advanced_frame = make_panel(
             self._gen_panel,
-            frame_size=(-0.90, -0.04, -1.88, -0.82),
+            frame_size=(card_left, card_right, _PANEL_DRAFT_BOTTOM, 0.0),
+            pos=(0, 0, self._gen_flow_top_z),
             nested=True,
+            title="[ ADVANCED ]",
+            title_scale=TYPE_LABEL,
         )
-        self._advanced_entries: dict[str, DirectEntry] = {}
-        adv_fields = [
-            ("objective_count", "Objectives", -0.90),
-            ("sam_count", "SAMs", -0.96),
-            ("jammer_count", "Jammers", -1.02),
-            ("aaa_count", "AAA", -1.08),
-            ("friendly_tank_count", "Fr. tanks", -1.14),
-            ("enemy_tank_count", "En. tanks", -1.20),
-            ("enemy_corvette_count", "Corvettes", -1.26),
-            ("friendly_carrier_count", "Carriers", -1.32),
-            ("objective_hp_min", "HP min", -1.38),
-            ("objective_hp_max", "HP max", -1.44),
-            ("threat_overlap", "Threat ovlp", -1.50),
-            ("base_safety_radius", "Base safety", -1.56),
-            ("entity_min_separation", "Entity sep", -1.62),
-            ("friendly_count_min", "Fr. jets min", -1.68),
-            ("friendly_count_max", "Fr. jets max", -1.74),
-            ("friendly_reserve_factor", "Reserve", -1.80),
-        ]
-        for key, label, z in adv_fields:
-            make_label(
-                self._advanced_frame,
-                label,
-                pos=(-0.88, 0, z),
-                scale=0.022,
-                fg=CYAN,
-            )
-            entry = make_entry(
-                self._advanced_frame,
-                pos=(-0.42, 0, z),
-                scale=0.022,
-                width=10,
-                command=self._on_advanced_field_edited,
-            )
-            self._advanced_entries[key] = entry
+        x = card_left + _INSET
+        width = _CARD_CONTENT_W
+        stack = Stack(panel_content_top(self._advanced_frame), row_h=ROW_H, x=x)
+        self._advanced_grid = make_field_grid(
+            self._advanced_frame,
+            _ADVANCED_FIELDS,
+            pos=(x, 0, stack.z),
+            width=width,
+            columns=2,
+            row_h=ROW_H,
+            scale=TYPE_MICRO,
+            label_ratio=0.60,
+            entry_chars=4.0,
+            gap=_COL_GAP,
+            command=self._on_advanced_field_edited,
+        )
+        # Contract kept for callers/tests: a plain dict keyed by parameter name.
+        self._advanced_entries: dict[str, DirectEntry] = self._advanced_grid.entries
+        stack.gap(self._advanced_grid.height)
+
+        two, two_w = _columns(x, 2, width=width)
+        z = stack.row()
         self._btn_group_style = _btn(
             self._advanced_frame,
             "Style: MIXED",
-            (-0.42, 0, -1.84),
+            (two[0] + two_w / 2.0, 0, z),
             self._cycle_group_style,
-            scale=0.022,
-        )
-        self._templates_label = make_label(
-            self._advanced_frame,
-            "Templates: …",
-            pos=(-0.88, 0, -1.88),
-            scale=0.018,
+            scale=TYPE_LABEL,
+            width=two_w,
         )
         self._btn_cycle_templates = _btn(
             self._advanced_frame,
             "Cycle templates",
-            (-0.22, 0, -1.88),
+            (two[1] + two_w / 2.0, 0, z),
             self._cycle_allowed_templates,
-            scale=0.018,
+            scale=TYPE_LABEL,
+            width=two_w,
+        )
+        self._advanced_flow_top_z = stack.z + _TEXT_RISE * TYPE_MICRO
+        self._templates_label = make_label(
+            self._advanced_frame,
+            "Templates: ...",
+            pos=(x, 0, stack.z),
+            scale=TYPE_MICRO,
+            fg=TEXT_SECONDARY,
+            wordwrap=width / TYPE_MICRO,
         )
         self._param_summary_label = make_label(
             self._advanced_frame,
             "",
-            pos=(-0.88, 0, -0.86),
-            scale=0.018,
+            pos=(x, 0, stack.z),
+            scale=TYPE_MICRO,
+            fg=ACCENT_DIM,
+            wordwrap=width / TYPE_MICRO,
         )
+        self._advanced_frame.hide()
 
+    def _build_roster_card(self) -> None:
+        """Nested `[ CUSTOM ROSTER ]` card; rows are added/removed at runtime."""
+        card_left = _R_LEFT + _NEST_PAD
+        card_right = _R_RIGHT - _NEST_PAD
         self._roster_frame = make_panel(
             self._gen_panel,
-            frame_size=(-0.90, -0.04, -1.88, -0.82),
+            frame_size=(card_left, card_right, _PANEL_DRAFT_BOTTOM, 0.0),
+            pos=(0, 0, self._gen_flow_top_z),
             nested=True,
+            title="[ CUSTOM ROSTER ]",
+            title_scale=TYPE_LABEL,
         )
-        make_header(
-            self._roster_frame,
-            "[ CUSTOM ROSTER ]",
-            pos=(-0.88, 0, -0.86),
-            scale=0.024,
+        self._roster_x = card_left + _INSET
+        self._roster_w = _CARD_CONTENT_W
+        stack = Stack(
+            panel_content_top(self._roster_frame), row_h=ROW_H, x=self._roster_x
         )
+        z = stack.row()
         self._btn_add_roster_row = _btn(
             self._roster_frame,
             "Add roster row",
-            (-0.46, 0, -0.92),
+            (self._roster_x + self._roster_w / 2.0, 0, z),
             self._add_roster_row,
-            scale=0.024,
+            scale=TYPE_LABEL,
+            width=self._roster_w * 0.6,
         )
-        self._roster_anchor_z = -1.00
-        self._advanced_frame.hide()
+        self._roster_anchor_z = stack.z
+        #: One roster row: count/frame/remove, the payload grid, a slots line.
+        self._roster_row_h = ROW_H + _ROSTER_PAYLOAD_ROWS * ROW_H + ROW_H_TIGHT + SPACE_2
         self._roster_frame.hide()
-        self._refresh_undo_button()
-        self._refresh_pending_buttons()
+        self._resize_roster_frame()
 
     def hide_panels(self) -> None:
         self._panel.hide()
@@ -1337,66 +1769,40 @@ class ScenarioEditor:
         self._layout_property_form(kind)
 
     def _layout_property_form(self, kind: str) -> None:
-        """Stack visible property widgets so jet payload never overlaps flares/actions."""
-        z = self._form_content_top_z
-        row = 0.050
-        compact = 0.046
+        """Flow the kind-dependent tail of the form and hug the card to it.
 
-        def _place(widget, x: float, zz: float) -> None:
-            widget.setPos(x, 0, zz)
-
-        _place(self._id_label, 0.10, z)
-        _place(self._id_entry, 0.38, z)
-        z -= row
-
+        ID, the two generic fields and the ordnance grid are built once on the
+        shared row rhythm, so only the frame/slots and action rows move. The
+        card's bottom edge then follows the last row it actually placed, which
+        is what stops `Apply`/`Delete` from being printed over a payload row
+        and stops an unselected editor showing an empty bordered box.
+        """
         if kind == "jet":
-            _place(self._field_a_label, 0.10, z)
-            _place(self._field_a_entry, 0.38, z)
-            z -= row
-            _place(self._field_b_label, 0.10, z)
-            _place(self._field_b_entry, 0.38, z)
-            z -= row + 0.010
-            weapons = list(self._payload_entries)
-            for i, weapon in enumerate(weapons):
-                r, c = divmod(i, 2)
-                zz = z - compact * r
-                x_label = 0.10 if c == 0 else 0.48
-                x_entry = 0.28 if c == 0 else 0.66
-                _place(self._payload_labels[weapon], x_label, zz)
-                _place(self._payload_entries[weapon], x_entry, zz)
-            z -= compact * max(1, (len(weapons) + 1) // 2) + 0.014
-            _place(self._frame_btn, 0.46, z)
-            z -= 0.054
-            _place(self._slots_label, 0.10, z)
-            z -= 0.054
-            _place(self._btn_apply, 0.20, z)
-            _place(self._btn_delete, 0.44, z)
-            return
+            top = self._form_tail_jet_z
+        elif kind in ("target", "sam_site", "aaa_site", "tank", "carrier", "corvette"):
+            top = self._form_tail_generic_z
+        else:  # jammer / home_base / nothing selected: ID + actions only
+            top = self._form_content_top_z - ROW_H
+        stack = Stack(top, row_h=ROW_H, x=self._form_x)
+        cols, col_w = _columns(self._form_x, 2, width=self._form_w)
 
-        if kind in ("target", "sam_site", "aaa_site", "tank", "carrier", "corvette"):
-            _place(self._field_a_label, 0.10, z)
-            _place(self._field_a_entry, 0.38, z)
-            z -= row
-            _place(self._field_b_label, 0.10, z)
-            _place(self._field_b_entry, 0.38, z)
-            z -= row + 0.010
-            if kind in ("tank", "carrier", "corvette"):
-                _place(self._frame_btn, 0.46, z)
-                z -= 0.054
-            if kind in ("carrier", "corvette"):
-                _place(self._btn_hold, 0.22, z)
-                _place(self._btn_add_route, 0.58, z)
-                z -= 0.054
-            elif kind == "tank" and not self._btn_add_route.isHidden():
-                _place(self._btn_add_route, 0.46, z)
-                z -= 0.054
-            _place(self._btn_apply, 0.20, z)
-            _place(self._btn_delete, 0.44, z)
-            return
+        if kind in ("jet", "tank", "carrier", "corvette"):
+            z = stack.row()
+            self._frame_btn.set_pos(self._form_x, 0, z)
+            self._slots_label.set_pos(self._form_x + self._form_w, 0, z)
+            stack.gap(SPACE_2)
+        if kind in ("carrier", "corvette"):
+            z = stack.row()
+            self._btn_hold.set_pos(cols[0] + col_w / 2.0, 0, z)
+            self._btn_add_route.set_pos(cols[1] + col_w / 2.0, 0, z)
+        elif kind == "tank" and not self._btn_add_route.isHidden():
+            z = stack.row()
+            self._btn_add_route.set_pos(cols[0] + col_w / 2.0, 0, z)
 
-        # jammer / home_base / empty selection: ID + actions only
-        _place(self._btn_apply, 0.20, z)
-        _place(self._btn_delete, 0.44, z)
+        z = stack.row()
+        self._btn_apply.set_pos(cols[0] + col_w / 2.0, 0, z)
+        self._btn_delete.set_pos(cols[1] + col_w / 2.0, 0, z)
+        self._form_bottom_z = _set_panel_bottom(self._form_frame, z - _ROW_SINK)
 
     def _sync_hold_button(self, hold: bool) -> None:
         self._btn_hold["text"] = "Hold: ON" if hold else "Hold: OFF"
@@ -1483,7 +1889,13 @@ class ScenarioEditor:
                 widget.hide()
 
     def _show_payload_fields(self, visible: bool) -> None:
-        for widget in (*self._payload_entries.values(), *self._payload_labels.values()):
+        section = self._ordnance_section
+        for widget in (
+            *self._payload_entries.values(),
+            *self._payload_labels.values(),
+            section.label,
+            section.rule,
+        ):
             if visible:
                 widget.show()
             else:
@@ -2117,20 +2529,21 @@ class ScenarioEditor:
         for kind, ent in visible:
             label = f"{kind.replace('_', ' ')}  {self._id_of(kind, ent)}"
             btn = _btn(
-                self._panel,
+                self._lower_node,
                 label,
-                (0.46, 0, z),
+                (_L_X, 0, z),
                 self.open_property_form,
                 extra_args=[ent],
-                scale=0.028,
+                scale=TYPE_LABEL,
                 style="ghost",
+                width=CONTENT_W,
+                align=TextNode.ALeft,
             )
             self._list_buttons.append(btn)
-            z -= 0.048
+            z -= ROW_H_TIGHT
         overflow = len(entities) - len(visible)
         if overflow > 0:
             self._list_overflow_label["text"] = f"+{overflow} more on map"
-            self._list_overflow_label.setPos(0.10, 0, z)
             self._list_overflow_label.show()
 
     def _set_banner(self, messages: list[str]) -> None:
@@ -2141,6 +2554,51 @@ class ScenarioEditor:
             return
         self._banner.setText("\n".join(messages))
         self._banner.show()
+
+    def aspect_ratio(self) -> float:
+        """Render aspect ratio, or 1.0 when there is no window (headless)."""
+        getter = getattr(self.base, "getAspectRatio", None)
+        try:
+            ratio = float(getter()) if getter is not None else 1.0
+        except (AttributeError, AssertionError, TypeError, ValueError):
+            ratio = 1.0
+        return ratio if ratio > 0.0 else 1.0
+
+    def panel_rects(self) -> list[tuple[float, float, float, float]]:
+        """Both console panels as (left, right, bottom, top) in aspect2d units.
+
+        Read from the live `frameSize` and net transform rather than repeated
+        as constants, so the mouse guard below cannot drift out of sync when a
+        panel is resized (both panels now shrink to their content, and the
+        left one grows in terrain mode).
+        """
+        a2d = getattr(self.base, "aspect2d", None)
+        if a2d is None:
+            return []
+        rects: list[tuple[float, float, float, float]] = []
+        for panel in (self._panel, self._gen_panel):
+            if panel is None or panel.is_hidden():
+                continue
+            frame = panel["frameSize"]
+            if frame is None:
+                continue
+            pos = panel.get_pos(a2d)
+            left, right, bottom, top = (float(v) for v in frame)
+            rects.append(
+                (pos[0] + left, pos[0] + right, pos[2] + bottom, pos[2] + top)
+            )
+        return rects
+
+    def mouse_over_panel(self, mouse_x: float, mouse_y: float) -> bool:
+        """Does a mouseWatcher position land on a console panel?
+
+        Rectangular, not a fixed horizontal band: the panels no longer run the
+        full height of the screen, so a band guard would make the map dead
+        under the (now short) Quick Generate panel while leaving the strip the
+        narrower panels gave back unusable.
+        """
+        x = float(mouse_x) * self.aspect_ratio()
+        return any(_rect_contains(rect, x, float(mouse_y)) for rect in self.panel_rects())
 
     def on_map_click_from_mouse(self) -> None:
         if getattr(self.base, "view_mode", "editor") != "editor":
@@ -2156,7 +2614,7 @@ class ScenarioEditor:
         except (AttributeError, AssertionError, TypeError):
             return
         # Ignore clicks over the left entity panel or right Quick Generate panel.
-        if mx < -0.45 or mx > 0.45:
+        if self.mouse_over_panel(mx, my):
             return
         world = self.camera.screen_to_world(mx, my)
         self.on_ground_clicked(world)
@@ -2197,12 +2655,18 @@ class ScenarioEditor:
                 btn.hide()
             else:
                 btn.show()
+        for widget in (self._place_section.label, self._place_section.rule):
+            if terrain:
+                widget.hide()
+            else:
+                widget.show()
         if terrain:
             self._terrain_panel.show()
             self._hint.setText("Drag on the map to paint terrain. Esc cancels stroke.")
         else:
             self._terrain_panel.hide()
             self._hint.setText("Click Add, then click the map to place.")
+        self._refresh_mode_band()
         self._btn_brush["text"] = f"Brush: {self._terrain_brush}"
         self._btn_radius["text"] = f"Radius: {self._brush_radius}"
         if self._city_height_mode == "RANDOM":
@@ -2213,6 +2677,28 @@ class ScenarioEditor:
             self._terrain_gen_frame.show()
         else:
             self._terrain_gen_frame.hide()
+
+    def _refresh_mode_band(self) -> None:
+        """Size the mode band to the card it is showing and slide the rest.
+
+        `[ TERRAIN MODE ]` needs more rows than `[ PLACE ]` -- more again with
+        the generator fractions open -- so the band's extra height is pushed
+        into `_lower_node` instead of being painted over the entity list and
+        the properties card underneath.
+        """
+        if self._edit_mode == "TERRAIN":
+            content_bottom = (
+                self._terrain_expanded_bottom_z
+                if self._terrain_gen_expanded
+                else self._terrain_content_bottom_z
+            )
+            band_bottom = _set_panel_bottom(self._terrain_panel, content_bottom)
+            band_h = self._band_top_z - band_bottom
+        else:
+            band_h = self._place_band_h
+        shift = max(0.0, band_h - self._place_band_h)
+        self._lower_node.set_z(-shift)
+        _set_panel_bottom(self._panel, self._lower_content_bottom_z - shift)
 
     def _cycle_terrain_brush(self) -> None:
         idx = _BRUSH_CYCLE.index(self._terrain_brush)
@@ -2338,6 +2824,7 @@ class ScenarioEditor:
             self._terrain_gen_frame.show()
         else:
             self._terrain_gen_frame.hide()
+        self._refresh_mode_band()
 
     def _generate_terrain_clicked(self) -> None:
         try:
@@ -2548,23 +3035,74 @@ class ScenarioEditor:
             self._gen_details_label.show()
         else:
             self._gen_details_label.hide()
+        self._relayout_generation_panel()
 
     def _refresh_advanced_visibility(self) -> None:
         mode = self._generation_parameters.friendly_mode
         if self._advanced_expanded:
             self._advanced_frame.show()
-            self._btn_advanced["text"] = "Advanced ▲"
+            self._btn_advanced["text"] = "Hide..."
         else:
             self._advanced_frame.hide()
-            self._btn_advanced["text"] = "Advanced…"
+            self._btn_advanced["text"] = "Advanced..."
         if mode == "CUSTOM_ROSTER":
             self._roster_frame.show()
-            if self._advanced_expanded:
-                # Roster shares the advanced region; keep both usable by
-                # stacking roster under compact controls when advanced open.
-                self._roster_frame.set_pos(0, 0, 0)
         else:
             self._roster_frame.hide()
+        self._relayout_generation_panel()
+
+    def _relayout_generation_panel(self) -> None:
+        """Flow the status text and the expandable cards, then hug the panel.
+
+        Status, details and template lines all wrap to data-driven lengths, and
+        Advanced/Custom Roster can each be open or shut (and used to be drawn
+        on top of one another), so this is measured top-down every refresh
+        rather than reserved as fixed rows.
+        """
+        top = self._gen_flow_top_z
+        self._gen_status_label.set_pos(_R_X, 0, top - _TEXT_RISE * TYPE_MICRO)
+        top -= _text_block_height(self._gen_status_label, TYPE_MICRO) + SPACE_2
+
+        self._btn_status_details.set_pos(
+            _R_X + CONTENT_W - self._details_btn_w / 2.0,
+            0,
+            top - _TEXT_RISE * TYPE_LABEL,
+        )
+        top -= ROW_H_TIGHT
+
+        if self._status_details_expanded:
+            self._gen_details_label.set_pos(_R_X, 0, top - _TEXT_RISE * TYPE_MICRO)
+            top -= _text_block_height(self._gen_details_label, TYPE_MICRO) + SPACE_2
+
+        for card, visible in (
+            (self._advanced_frame, self._advanced_expanded),
+            (
+                self._roster_frame,
+                self._generation_parameters.friendly_mode == "CUSTOM_ROSTER",
+            ),
+        ):
+            if not visible:
+                continue
+            card.set_z(top)
+            top += float(card["frameSize"][2]) - SPACE_2
+
+        _set_panel_bottom(self._gen_panel, top)
+
+    def _relayout_advanced_card(self) -> None:
+        """Flow the templates/summary lines at the foot of `[ ADVANCED ]`."""
+        top = self._advanced_flow_top_z
+        x = _R_LEFT + _NEST_PAD + _INSET
+        self._templates_label.set_pos(x, 0, top - _TEXT_RISE * TYPE_MICRO)
+        top -= _text_block_height(self._templates_label, TYPE_MICRO) + SPACE_1
+        self._param_summary_label.set_pos(x, 0, top - _TEXT_RISE * TYPE_MICRO)
+        top -= _text_block_height(self._param_summary_label, TYPE_MICRO)
+        _set_panel_bottom(self._advanced_frame, top)
+
+    def _resize_roster_frame(self) -> None:
+        """Size `[ CUSTOM ROSTER ]` to however many roster rows exist."""
+        rows = max(len(self._roster_rows), 1)
+        bottom = self._roster_anchor_z - rows * self._roster_row_h + SPACE_2
+        _set_panel_bottom(self._roster_frame, bottom)
 
     def _on_advanced_field_edited(self, _text: str = "") -> None:
         self._mark_parameters_custom_from_widgets()
@@ -2641,6 +3179,8 @@ class ScenarioEditor:
             f"jams={p.jammer_count} friendlies={p.friendly_count_min}-{p.friendly_count_max} "
             f"mode={p.friendly_mode}"
         )
+        self._relayout_advanced_card()
+        self._relayout_generation_panel()
 
     def _rebuild_roster_rows_from_parameters(self) -> None:
         for row in self._roster_rows:
@@ -2650,6 +3190,7 @@ class ScenarioEditor:
                 except Exception:
                     pass
         self._roster_rows = []
+        self._resize_roster_frame()
         for template in self._generation_parameters.custom_roster:
             self._add_roster_row(
                 initial={
@@ -2672,75 +3213,86 @@ class ScenarioEditor:
             "frame_type": "STRIKE_FIGHTER",
             "payload": {w: (2 if w == "JDAM" else 0) for w in wn_config.WEAPON_CATALOG},
         }
-        z = self._roster_anchor_z - 0.22 * len(self._roster_rows)
+        row_index = len(self._roster_rows)
+        x = self._roster_x
+        width = self._roster_w
+        stack = Stack(
+            self._roster_anchor_z - row_index * self._roster_row_h,
+            row_h=ROW_H,
+            x=x,
+        )
         widgets: list = []
-        count_label = make_label(
+
+        # Row head: how many of this template, which airframe, and remove.
+        count_w = width * 0.20
+        frame_w = width * 0.52
+        remove_w = width - count_w - frame_w - 2.0 * _COL_GAP
+        z = stack.row()
+        count_label, count_entry = make_field_row(
             self._roster_frame,
             "#",
-            pos=(-0.88, 0, z),
-            scale=0.020,
-            fg=CYAN,
-        )
-        widgets.append(count_label)
-        count_entry = make_entry(
-            self._roster_frame,
-            pos=(-0.72, 0, z),
-            scale=0.020,
-            width=4,
+            pos=(x, 0, z),
+            width=count_w,
+            scale=TYPE_LABEL,
+            label_ratio=0.28,
+            entry_chars=_entry_chars(count_w * 0.66, TYPE_LABEL),
             initial=str(initial["count"]),
             command=self._on_roster_edited,
         )
-        widgets.append(count_entry)
-        row_index = len(self._roster_rows)
+        widgets.extend((count_label, count_entry))
+        frame_x = x + count_w + _COL_GAP
         frame_btn = _btn(
             self._roster_frame,
             f"Frame: {initial['frame_type']}",
-            (-0.40, 0, z),
+            (frame_x + frame_w / 2.0, 0, z),
             self._cycle_roster_frame,
             extra_args=[row_index],
-            scale=0.018,
+            scale=TYPE_LABEL,
+            width=frame_w,
         )
         widgets.append(frame_btn)
+        remove_btn = _btn(
+            self._roster_frame,
+            "Remove",
+            (x + width - remove_w / 2.0, 0, z),
+            self._remove_roster_row,
+            extra_args=[row_index],
+            scale=TYPE_LABEL,
+            style="danger",
+            width=remove_w,
+        )
+        widgets.append(remove_btn)
+
         payload_entries: dict[str, DirectEntry] = {}
-        weapons = list(wn_config.WEAPON_CATALOG)
-        for i, weapon in enumerate(weapons):
-            wz = z - 0.05 - 0.04 * i
-            wlabel = make_label(
+        pay_cols, pay_w = _columns(x, _PAYLOAD_COLUMNS, width=width)
+        pay_chars = _entry_chars(pay_w * _PAYLOAD_ENTRY_RATIO, TYPE_MICRO)
+        z = stack.z
+        for index, weapon in enumerate(wn_config.WEAPON_CATALOG):
+            col = index % _PAYLOAD_COLUMNS
+            if col == 0:
+                z = stack.row()
+            wlabel, entry = make_field_row(
                 self._roster_frame,
                 weapon,
-                pos=(-0.88, 0, wz),
-                scale=0.016,
-                fg=CYAN,
-            )
-            widgets.append(wlabel)
-            entry = make_entry(
-                self._roster_frame,
-                pos=(-0.55, 0, wz),
-                scale=0.018,
-                width=5,
+                pos=(pay_cols[col], 0, z),
+                width=pay_w,
+                scale=TYPE_MICRO,
+                label_ratio=_PAYLOAD_LABEL_RATIO,
+                entry_chars=pay_chars,
                 initial=str(int((initial.get("payload") or {}).get(weapon, 0))),
                 command=self._on_roster_edited,
             )
             payload_entries[weapon] = entry
-            widgets.append(entry)
+            widgets.extend((wlabel, entry))
         slots_label = make_label(
             self._roster_frame,
             "0 / 0 slots",
-            pos=(-0.30, 0, z - 0.05),
-            scale=0.016,
+            pos=(x + width, 0, stack.z),
+            scale=TYPE_MICRO,
             fg=TEXT,
+            align=TextNode.ARight,
         )
         widgets.append(slots_label)
-        remove_btn = _btn(
-            self._roster_frame,
-            "Remove",
-            (-0.14, 0, z),
-            self._remove_roster_row,
-            extra_args=[row_index],
-            scale=0.016,
-            style="danger",
-        )
-        widgets.append(remove_btn)
         row = {
             "count_entry": count_entry,
             "frame_btn": frame_btn,
@@ -2751,6 +3303,8 @@ class ScenarioEditor:
             "index": row_index,
         }
         self._roster_rows.append(row)
+        self._resize_roster_frame()
+        self._relayout_generation_panel()
         self._refresh_roster_slot_previews()
         if sync_params:
             self._sync_parameters_from_roster_widgets()
@@ -3123,6 +3677,7 @@ class ScenarioEditor:
             else:
                 self._gen_status_label["text"] = "No generation yet."
                 self._gen_details_label["text"] = ""
+            self._relayout_generation_panel()
             return
 
         if report.feasible:
@@ -3139,4 +3694,5 @@ class ScenarioEditor:
         )
         detail_lines = [f"[{i.severity}] {i.code}: {i.message}" for i in report.issues]
         self._gen_details_label["text"] = "\n".join(detail_lines[:12]) or "(no issues)"
+        self._relayout_generation_panel()
 

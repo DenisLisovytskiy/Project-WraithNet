@@ -12,6 +12,7 @@ from viewer.render import (
     WINDOW_SIZE,
     fuel_bar_fill_width,
     heading_indicator_endpoints,
+    overlay_card_origin,
     world_length_to_screen,
     world_to_screen,
 )
@@ -138,3 +139,17 @@ def test_fuel_bar_fill_width_is_proportional():
     assert fuel_bar_fill_width(40.0, 80.0) == FUEL_BAR_WIDTH // 2
     assert fuel_bar_fill_width(100.0, 80.0) == FUEL_BAR_WIDTH
     assert fuel_bar_fill_width(10.0, 0.0) == 0
+
+
+def test_overlay_card_origin_keeps_the_card_inside_the_canvas():
+    ox, oy = overlay_card_origin(440, 220)
+    assert ox >= 0 and oy >= 0
+    assert ox + 440 <= CANVAS_SIZE
+    assert oy + 220 <= CANVAS_SIZE
+    assert ox == (CANVAS_SIZE - 440) // 2
+    assert oy == (CANVAS_SIZE - 220) // 2
+
+
+def test_overlay_card_origin_clamps_an_oversized_card():
+    ox, oy = overlay_card_origin(CANVAS_SIZE + 80, CANVAS_SIZE + 40)
+    assert (ox, oy) == (0, 0)
