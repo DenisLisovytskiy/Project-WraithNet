@@ -283,9 +283,73 @@ def _soft_disc(surface, color, center: tuple[int, int], radius: int, alpha: int)
     surface.blit(disc, (center[0] - radius - 1, center[1] - radius - 1))
 
 
+def _blit_unit(surface, key: str, center: tuple[int, int], *, destroyed: bool = False) -> int:
+    """Blit a keyed sprite. Returns the drawn size, or 0 if no texture."""
+    from viewer.textures import load_sprite, sprite_map_size
+
+    pygame = _require_pygame()
+    src = load_sprite(key)
+    if src is None:
+        return 0
+    size = sprite_map_size(key)
+    spr = pygame.transform.smoothscale(src, (size, size))
+    if destroyed:
+        spr = spr.copy()
+        spr.fill((*DESTROYED_COLOR, 180), special_flags=pygame.BLEND_RGBA_MULT)
+    surface.blit(spr, spr.get_rect(center=center))
+    return size
+
+
+_terrain_cache: dict[int, object] = {}
+
+
+def _paint_terrain(surface, header: TraceHeader) -> None:
+    from viewer.textures import load_terrain
+    from wraithnet.terrain import TerrainGrid
+
+    pygame = _require_pygame()
+    terrain = getattr(header, "terrain", None)
+    cache_key = id(terrain) if terrain is not None else 0
+    cached = _terrain_cache.get(cache_key)
+    if cached is not None:
+        surface.blit(cached, (0, 0))
+        return
+    tiles = {kind: load_terrain(kind) for kind in ("WATER", "PLAINS", "FOREST", "CITY")}
+    if not any(tiles.values()):
+        return
+    layer = pygame.Surface((CANVAS_SIZE, CANVAS_SIZE))
+    layer.fill(BACKGROUND_COLOR)
+    plains = tiles.get("PLAINS")
+
+    def _stamp(kind: str, rect) -> None:
+        tile = tiles.get(kind) or plains
+        if tile is None or rect.width <= 0 or rect.height <= 0:
+            return
+        layer.blit(pygame.transform.smoothscale(tile, (rect.width, rect.height)), rect)
+
+    if isinstance(terrain, TerrainGrid):
+        for row in range(terrain.rows):
+            for col in range(terrain.columns):
+                x0 = col * terrain.cell_size
+                y0 = row * terrain.cell_size
+                x1 = min(x0 + terrain.cell_size, header.grid_width)
+                y1 = min(y0 + terrain.cell_size, header.grid_height)
+                tl = _xy((x0, y1), header)
+                br = _xy((x1, y0), header)
+                rect = pygame.Rect(tl[0], tl[1], max(1, br[0] - tl[0]), max(1, br[1] - tl[1]))
+                cell = terrain.cells[row][col]
+                _stamp(str(cell.terrain_type), rect)
+    elif plains is not None:
+        usable = CANVAS_SIZE - 2 * MARGIN
+        _stamp("PLAINS", pygame.Rect(MARGIN, MARGIN, usable, usable))
+    _terrain_cache[cache_key] = layer
+    surface.blit(layer, (0, 0))
+
+
 def draw_grid_background(surface: Surface, header: TraceHeader) -> None:
     pygame = _require_pygame()
     surface.fill(BACKGROUND_COLOR)
+    _paint_terrain(surface, header)
 
     def _grid(step: float, color, width: int) -> None:
         x = 0.0
@@ -322,9 +386,10 @@ def draw_jammer(surface: Surface, header: TraceHeader) -> None:
         _soft_disc(surface, JAMMER_COLOR, center, jam_r, 36)
         _draw_dashed_circle(surface, JAMMER_COLOR, center, jam_r, width=2)
         hexagon = _polygon(center, JAMMER_RADIUS, 6, math.pi / 6)
-        pygame.draw.polygon(surface, JAMMER_COLOR, hexagon)
-        pygame.draw.polygon(surface, HUD_TEXT_COLOR, hexagon, 1)
-        pygame.draw.circle(surface, BACKGROUND_COLOR, center, 3)
+        if not _blit_unit(surface, "JAMMER", center):
+            pygame.draw.polygon(surface, JAMMER_COLOR, hexagon)
+            pygame.draw.polygon(surface, HUD_TEXT_COLOR, hexagon, 1)
+            pygame.draw.circle(surface, BACKGROUND_COLOR, center, 3)
 
 
 def draw_home_base(surface: Surface, header: TraceHeader) -> None:
@@ -334,6 +399,8 @@ def draw_home_base(surface: Surface, header: TraceHeader) -> None:
     if home is None:
         return
     center = _xy(tuple(home), header)
+    if _blit_unit(surface, "HOME_BASE", center):
+        return
     pad = pygame.Rect(center[0] - 7, center[1] - 5, 14, 10)
     pygame.draw.rect(surface, HOME_BASE_COLOR, pad, 0)
     pygame.draw.rect(surface, HUD_ACCENT_COLOR, pad, 1)
@@ -361,36 +428,39 @@ def draw_targets(surface: Surface, header: TraceHeader, tick: TraceTick) -> None
         color = DESTROYED_COLOR if destroyed else style["color"]
         shape = style["shape"]
         r = TARGET_RADIUS
-        if shape == "diamond":
-            points = [
-                (center[0], center[1] - r),
-                (center[0] + r, center[1]),
-                (center[0], center[1] + r),
-                (center[0] - r, center[1]),
-            ]
-            pygame.draw.polygon(surface, color, points, 2 if destroyed else 0)
-            if not destroyed:
-                pygame.draw.polygon(surface, HUD_TEXT_COLOR, points, 1)
-        elif shape == "octagon":
-            points = _polygon(center, r, 8, math.pi / 8)
-            pygame.draw.polygon(surface, color, points, 2 if destroyed else 0)
-            if not destroyed:
-                pygame.draw.polygon(surface, HUD_TEXT_COLOR, points, 1)
-        else:
-            rect = pygame.Rect(center[0] - r, center[1] - r, 2 * r, 2 * r)
-            pygame.draw.rect(surface, color, rect, 2 if destroyed else 0)
-            if not destroyed:
-                pygame.draw.rect(surface, HUD_TEXT_COLOR, rect, 1)
+        spr_size = _blit_unit(surface, str(target_type), center, destroyed=destroyed)
+        if not spr_size:
+            if shape == "diamond":
+                points = [
+                    (center[0], center[1] - r),
+                    (center[0] + r, center[1]),
+                    (center[0], center[1] + r),
+                    (center[0] - r, center[1]),
+                ]
+                pygame.draw.polygon(surface, color, points, 2 if destroyed else 0)
+                if not destroyed:
+                    pygame.draw.polygon(surface, HUD_TEXT_COLOR, points, 1)
+            elif shape == "octagon":
+                points = _polygon(center, r, 8, math.pi / 8)
+                pygame.draw.polygon(surface, color, points, 2 if destroyed else 0)
+                if not destroyed:
+                    pygame.draw.polygon(surface, HUD_TEXT_COLOR, points, 1)
+            else:
+                rect = pygame.Rect(center[0] - r, center[1] - r, 2 * r, 2 * r)
+                pygame.draw.rect(surface, color, rect, 2 if destroyed else 0)
+                if not destroyed:
+                    pygame.draw.rect(surface, HUD_TEXT_COLOR, rect, 1)
 
         if destroyed:
             continue
+        mark_r = spr_size // 2 if spr_size else r
         hp_required = header.target_hp_required[frame.target_id]
         label = f"{frame.hp_remaining}/{hp_required}"
         tw, th = _text_size(label, TYPE_MICRO, face="mono")
         _blit_text(
             surface,
             label,
-            (center[0] - tw // 2, center[1] - r - th - 2),
+            (center[0] - tw // 2, center[1] - mark_r - th - 2),
             HUD_TEXT_COLOR,
             size=TYPE_MICRO,
             face="mono",
@@ -418,19 +488,23 @@ def draw_jets(
     for frame in tick.jets:
         center = _xy(frame.position, header)
         fill = _jet_color(frame.agent_id, header)
-        pygame.draw.circle(surface, BACKGROUND_COLOR, center, JET_RADIUS + 1)
-        pygame.draw.circle(surface, fill, center, JET_RADIUS)
+        frame_type = (header.jet_frame_types or {}).get(frame.agent_id, "STRIKE_FIGHTER")
+        spr_size = _blit_unit(surface, str(frame_type), center)
+        if not spr_size:
+            pygame.draw.circle(surface, BACKGROUND_COLOR, center, JET_RADIUS + 1)
+            pygame.draw.circle(surface, fill, center, JET_RADIUS)
         origin, tip = heading_indicator_endpoints(frame.position, frame.heading, header)
         pygame.draw.line(surface, HEADING_INDICATOR_COLOR, origin, tip, 2)
         pygame.draw.circle(surface, HEADING_INDICATOR_COLOR, tip, 2)
+        ring_r = (spr_size // 2 + 3) if spr_size else (JET_RADIUS + 4)
         if frame.role is not None:
             ring = ROLE_RING_COLOR.get(frame.role, ROLE_RING_COLOR["IDLE"])
-            pygame.draw.circle(surface, ring, center, JET_RADIUS + 4, 2)
+            pygame.draw.circle(surface, ring, center, ring_r, 2)
         if frame.jammed:
-            pygame.draw.circle(surface, JAMMED_RING_COLOR, center, JET_RADIUS + 8, 2)
+            pygame.draw.circle(surface, JAMMED_RING_COLOR, center, ring_r + 4, 2)
         # HP / fuel sit below the glyph so they do not collide with the heading tick.
         bar_x = center[0] - HP_BAR_WIDTH // 2
-        bar_y = center[1] + JET_RADIUS + 6
+        bar_y = center[1] + (spr_size // 2 if spr_size else JET_RADIUS) + 6
         pygame.draw.rect(
             surface, HUD_NESTED_COLOR, pygame.Rect(bar_x, bar_y, HP_BAR_WIDTH, HP_BAR_HEIGHT)
         )

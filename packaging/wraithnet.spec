@@ -87,6 +87,13 @@ if _FONT_DIR.is_dir():
     for _asset in sorted(_FONT_DIR.glob("*.ttf")) + sorted(_FONT_DIR.glob("LICENSE-*.txt")):
         datas.append((str(_asset), os.path.join("assets", "fonts")))
 
+_TEX_DIR = REPO_ROOT / "assets" / "textures"
+if _TEX_DIR.is_dir():
+    for _asset in sorted(_TEX_DIR.rglob("*.jpeg")) + sorted(_TEX_DIR.rglob("*.jpg")):
+        rel = _asset.relative_to(_TEX_DIR)
+        dest_parts = ["assets", "textures", *rel.parent.parts] if rel.parent != Path(".") else ["assets", "textures"]
+        datas.append((str(_asset), os.path.join(*dest_parts)))
+
 # Destination "." in PyInstaller 6 onedir lands in `_internal/` (not next
 # to WraithNet.exe). collect_all("panda3d") already copies these DLLs into
 # `_internal/panda3d/` on panda3d 1.10.16 — confirmed in the Phase 29

@@ -26,6 +26,7 @@ from panda3d.core import (
 )
 
 from viewer3d.ui_chrome import BORDER_SOFT, tint
+from viewer3d.textures import load_terrain
 from wraithnet.terrain import TerrainGrid, all_plains_terrain
 from wraithnet.trace_schemas import TraceHeader
 
@@ -55,6 +56,9 @@ def _cell_bounds(
     return x0, y0, x1, y1
 
 
+TERRAIN_TILE_WORLD = 12.0
+
+
 def _quad_batch(
     name: str,
     quads: list[tuple[float, float, float, float, float]],
@@ -63,17 +67,20 @@ def _quad_batch(
     """Each quad is ``(x0, y0, x1, y1, z)``."""
     if not quads:
         return None
-    fmt = GeomVertexFormat.get_v3c4()
+    fmt = GeomVertexFormat.get_v3c4t2()
     vdata = GeomVertexData(name, fmt, Geom.UH_static)
     vertex = GeomVertexWriter(vdata, "vertex")
     col = GeomVertexWriter(vdata, "color")
+    uv = GeomVertexWriter(vdata, "texcoord")
     r, g, b, a = color
     prim = GeomTriangles(Geom.UH_static)
+    tile = TERRAIN_TILE_WORLD
     for x0, y0, x1, y1, z in quads:
         base = vertex.get_write_row()
         for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
             vertex.add_data3(x, y, z)
             col.add_data4(r, g, b, a)
+            uv.add_data2(x / tile, y / tile)
         prim.add_vertices(base, base + 1, base + 2)
         prim.add_vertices(base, base + 2, base + 3)
     prim.close_primitive()
@@ -198,12 +205,12 @@ def build_terrain_root(parent: NodePath, terrain: TerrainGrid) -> NodePath:
                 plains_quads.append((x0, y0, x1, y1, 0.0))
 
     batches = (
-        ("terrain-water", water_quads, WATER_COLOR, True),
-        ("terrain-plains", plains_quads, PLAINS_COLOR, False),
-        ("terrain-forest-base", forest_quads, FOREST_BASE_COLOR, False),
-        ("terrain-city-base", city_quads, CITY_BASE_COLOR, False),
+        ("terrain-water", water_quads, WATER_COLOR, True, "WATER"),
+        ("terrain-plains", plains_quads, PLAINS_COLOR, False, "PLAINS"),
+        ("terrain-forest-base", forest_quads, FOREST_BASE_COLOR, False, "FOREST"),
+        ("terrain-city-base", city_quads, CITY_BASE_COLOR, False, "CITY"),
     )
-    for name, quads, color, alpha in batches:
+    for name, quads, color, alpha, kind in batches:
         node = _quad_batch(name, quads, color)
         if node is None:
             continue
@@ -211,6 +218,11 @@ def build_terrain_root(parent: NodePath, terrain: TerrainGrid) -> NodePath:
         np.set_light_off()
         if alpha:
             np.set_transparency(TransparencyAttrib.MAlpha)
+        tex = load_terrain(kind)
+        if tex is not None:
+            np.set_texture(tex)
+            # Keep a slight vertex tint so the holographic palette still reads.
+            np.set_color_scale(0.82, 0.90, 0.94, 1.0)
 
     tree_node = _box_batch("terrain-trees", tree_boxes, TREE_COLOR)
     if tree_node is not None:
