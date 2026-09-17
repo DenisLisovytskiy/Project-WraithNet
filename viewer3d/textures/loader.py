@@ -90,7 +90,7 @@ def _candidate_dirs() -> list[Path]:
             dirs.append(Path(meipass).parent)
         dirs.append(Path(sys.executable).resolve().parent)
     else:
-        dirs.append(Path(__file__).resolve().parent.parent)
+        dirs.append(Path(__file__).resolve().parent.parent.parent)
     return [d / ASSET_SUBDIR for d in dirs]
 
 

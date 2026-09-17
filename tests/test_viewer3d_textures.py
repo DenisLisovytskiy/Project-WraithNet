@@ -31,7 +31,9 @@ def test_missing_texture_returns_none():
 
 def test_missing_directory_degrades(monkeypatch):
     monkeypatch.setattr(
-        textures, "_candidate_dirs", lambda: [Path("no-such-dir") / "assets" / "textures"]
+        textures.loader,
+        "_candidate_dirs",
+        lambda: [Path("no-such-dir") / "assets" / "textures"],
     )
     assert textures.texture_dir() is None
     assert textures.load_sprite("STRIKE_FIGHTER") is None

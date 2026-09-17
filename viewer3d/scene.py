@@ -2,19 +2,14 @@
 Coordinate mapping: sim (x, y) -> Panda3D (x, y). Phase 37: jet Z prefers
 authoritative Trace JetFrame.altitude; bank easing remains cosmetic.
 
-Ground entities use camera-facing billboard glyphs. Jets use a small
-non-billboarded dart, or a textured billboard when `assets/textures/`
-has a matching JPEG (checker keyed to alpha). Heading is still written
-onto `glyph.get_h()` for the dart/tests.
+Ground entities, jets, and ships use non-billboarded procedural meshes.
+Faction is paint: teal-green friendlies vs rust-red hostiles. Heading is
+written onto `glyph.get_h()` for jets and onto vehicle/ship anchors.
 
 Presentation notes (holographic mission-briefing style, design doc §6.3)
 -----------------------------------------------------------------------
-Procedural primitives remain the fallback when a texture is missing:
-
-* Every glyph is a *group* node (`glyph-<id>`). Textured sprites tag
-  `textured-sprite=1` so alive-state `set_color()` does not wash the
-  photograph; jam/RTB flashes still tint the group. Untextured glyphs
-  keep the dark halo + colored fill + keyline.
+* Every glyph is a *group* node (`glyph-<id>`). Meshes tag `jet-mesh`,
+  `ship-mesh`, or `ground-mesh`. Jam/RTB flashes still tint the group.
 * Ground entities are drawn as *pins*: a stem from their true ground point
   up to the glyph plus a ground reticle at the anchor. The anchor position
   is untouched; the lift only stops the billboard from being sliced in
@@ -62,9 +57,13 @@ from viewer3d.highlights import TickHighlights
 from viewer3d.motion import SampledPose
 from viewer3d.terrain_mesh import build_terrain_root, resolve_header_terrain
 from viewer3d.textures import (
-    load_sprite,
-    sprite_half,
-    tank_sprite_key,
+    ENEMY,
+    FRIENDLY,
+    attach_ground_mesh,
+    attach_jet_mesh,
+    attach_ship_mesh,
+    faction_paint,
+    friendly_variant,
 )
 from viewer3d.ui_chrome import (
     ACCENT,
@@ -72,7 +71,6 @@ from viewer3d.ui_chrome import (
     BORDER_BRIGHT,
     BORDER_SOFT,
     BORDER_STRONG,
-    STATUS_FRIENDLY,
     STATUS_INACTIVE,
     tint,
 )
@@ -87,17 +85,16 @@ from wraithnet.trace_schemas import (
 
 JET_ALTITUDE = 8.0  # world-units above the ground plane; presentation only
 
-# Same palette as viewer/render.py::JET_PALETTE (copied, not imported, so
-# viewer3d does not depend on the 2D Pygame package).
-JET_PALETTE = [(80, 200, 255), (255, 160, 60), (170, 255, 120)]
+# Same palette as viewer/render.py::JET_PALETTE is no longer used for 3D
+# jets — friendlies share a teal family so they never read as hostile.
 TARGET_COLORS = {
-    "HARDENED_BUNKER": (150 / 255, 100 / 255, 60 / 255, 1.0),
-    "MOBILE_RADAR": (70 / 255, 120 / 255, 220 / 255, 1.0),
-    "SAM_SITE": (210 / 255, 60 / 255, 60 / 255, 1.0),
-    "AAA_SITE": (230 / 255, 140 / 255, 40 / 255, 1.0),
+    "HARDENED_BUNKER": ENEMY,
+    "MOBILE_RADAR": ENEMY,
+    "SAM_SITE": ENEMY,
+    "AAA_SITE": ENEMY,
 }
 DESTROYED_COLOR = STATUS_INACTIVE
-JAMMER_COLOR = (170 / 255, 90 / 255, 220 / 255, 1.0)
+JAMMER_COLOR = ENEMY
 
 # --- world chrome: agrees with viewer3d.ui_chrome so the panels and the map
 # read as one instrument. Minor gridlines are deliberately much quieter than
@@ -132,14 +129,14 @@ DESTRUCTION_COLOR = (1.0, 1.0, 1.0, 1.0)
 JAM_FLASH_COLOR = (1.0, 0.35, 1.0, 1.0)
 UNJAM_FLASH_COLOR = (0.31, 0.86, 1.0, 1.0)
 RTB_FLASH_COLOR = (0.31, 0.63, 1.0, 1.0)
-HOME_BASE_COLOR = STATUS_FRIENDLY
-CARRIER_COLOR = (0.62, 0.78, 0.86, 1.0)
+HOME_BASE_COLOR = FRIENDLY
+CARRIER_COLOR = FRIENDLY
 CARRIER_RECOVERY_RING = (0.45, 0.78, 0.95, 1.0)
-CORVETTE_COLOR = (0.80, 0.42, 0.34, 1.0)
+CORVETTE_COLOR = ENEMY
 CORVETTE_SAM_RING = (0.88, 0.28, 0.26, 1.0)
 CORVETTE_CIWS_RING = (0.96, 0.58, 0.22, 1.0)
-TANK_FRIENDLY_COLOR = (0.35, 0.7, 0.45, 1.0)
-TANK_ENEMY_COLOR = (0.75, 0.4, 0.25, 1.0)
+TANK_FRIENDLY_COLOR = FRIENDLY
+TANK_ENEMY_COLOR = ENEMY
 MISSILE_COLOR = (1.0, 0.82, 0.25, 1.0)
 
 
@@ -383,19 +380,26 @@ def _attach_unit(
     billboard: bool = True,
     halo: bool = True,
 ) -> NodePath:
-    tex = load_sprite(sprite_key) if sprite_key else None
-    if tex is not None and sprite_key:
-        return _attach_textured_sprite(
-            parent,
-            name,
-            tex,
-            color,
-            pin=pin,
-            billboard=billboard,
-            half=sprite_half(sprite_key),
-        )
+    del sprite_key, billboard  # JPEG unit billboards are retired in viewer3d.
     return _attach_glyph(
         parent, name, points, color, pin=pin, inner=inner, halo=halo
+    )
+
+
+def _attach_ground(
+    parent: NodePath,
+    name: str,
+    key: str,
+    color,
+    points,
+    *,
+    pin: bool = False,
+) -> NodePath:
+    glyph = attach_ground_mesh(parent, name, key, color)
+    if glyph is not None:
+        return glyph
+    return _attach_unit(
+        parent, name, color, sprite_key=key, points=points, pin=pin
     )
 
 
@@ -947,7 +951,7 @@ def _jet_color(agent_id: str, header: TraceHeader):
         idx = header.jet_ids.index(agent_id)
     except ValueError:
         idx = 0
-    return _rgb(JET_PALETTE[idx % len(JET_PALETTE)])
+    return friendly_variant(idx)
 
 
 def jet_altitude(agent_id: str, header: TraceHeader) -> float:
@@ -1012,18 +1016,17 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     for tid in header.target_ids:
         pos = header.target_positions[tid]
         ttype = header.target_types[tid]
-        color = TARGET_COLORS.get(ttype, (0.8, 0.8, 0.8, 1.0))
+        color = faction_paint("ENEMY")
         anchor = root.attach_new_node(f"target-{tid}")
         anchor.set_pos(pos[0], pos[1], 0.15)
-        sprite_key = ttype
-        _attach_unit(
+        mesh_key = "AAA_LIGHT" if ttype == "AAA_SITE" else ttype
+        _attach_ground(
             anchor,
             f"glyph-{tid}",
+            mesh_key,
             color,
-            sprite_key=sprite_key,
             points=_target_points(ttype),
-            pin=True,
-            inner=0.52,
+            pin=False,
         )
         if ttype == "SAM_SITE" or tid in header.sam_site_ids:
             _ground_disc(
@@ -1048,14 +1051,13 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     for jid, pos in header.jammer_positions.items():
         anchor = root.attach_new_node(f"jammer-{jid}")
         anchor.set_pos(pos[0], pos[1], 0.15)
-        _attach_unit(
+        _attach_ground(
             anchor,
             f"glyph-{jid}",
+            "JAMMER",
             JAMMER_COLOR,
-            sprite_key="JAMMER",
             points=_ngon_pts(6, 0.5, math.pi / 6),
-            pin=True,
-            inner=0.5,
+            pin=False,
         )
         _jam_dome(anchor, f"jam-ring-{jid}", header.jam_radius, JAM_DISC_COLOR)
         handles.jammers[jid] = anchor
@@ -1065,31 +1067,14 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         hx, hy = float(home[0]), float(home[1])
         home_np = root.attach_new_node("home-base")
         home_np.set_pos(hx, hy, 0.2)
-        home_tex = load_sprite("HOME_BASE")
-        if home_tex is not None:
-            _attach_textured_sprite(
-                home_np,
-                "home-flag",
-                home_tex,
-                HOME_BASE_COLOR,
-                pin=True,
-                half=sprite_half("HOME_BASE"),
-            )
-        else:
-            _attach_glyph(
-                home_np,
-                "home-pole",
-                [(0.0, 0.0), (0.12, 0.0), (0.12, 1.2), (0.0, 1.2)],
-                tint(BORDER_BRIGHT, 1.0, alpha=1.0),
-                halo=False,
-            )
-            _attach_glyph(
-                home_np,
-                "home-flag",
-                [(0.12, 1.2), (0.85, 0.95), (0.12, 0.7)],
-                HOME_BASE_COLOR,
-                halo=False,
-            )
+        _attach_ground(
+            home_np,
+            "home-flag",
+            "HOME_BASE",
+            HOME_BASE_COLOR,
+            points=[(0.12, 1.2), (0.85, 0.95), (0.12, 0.7)],
+            pin=False,
+        )
         _ground_disc(home_np, "home-pad", 0.0, 0.0, 1.4, HOME_BASE_COLOR)
         handles.home_base = home_np
 
@@ -1098,18 +1083,8 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         anchor.set_pos(cx, cy, GROUND_ALTITUDE)
         jet_color = _jet_color(aid, header)
         frame_type = (header.jet_frame_types or {}).get(aid, "STRIKE_FIGHTER")
-        jet_tex = load_sprite(str(frame_type))
-        if jet_tex is not None:
-            glyph = _attach_textured_sprite(
-                anchor,
-                f"glyph-{aid}",
-                jet_tex,
-                jet_color,
-                pin=False,
-                billboard=True,
-                half=sprite_half(str(frame_type)),
-            )
-        else:
+        glyph = attach_jet_mesh(anchor, f"glyph-{aid}", str(frame_type), jet_color)
+        if glyph is None:
             glyph = _attach_jet_dart(anchor, f"glyph-{aid}", jet_color)
         _attach_altitude_cue(anchor, f"altcue-{aid}", jet_color)
         anchor.hide()  # no jet position in the header; first tick reveals them
@@ -1289,11 +1264,10 @@ def update_tick(
                 ring.hide()
         else:
             ttype = header.target_types[frame.target_id]
-            r, g, b, a = TARGET_COLORS.get(ttype, (0.8, 0.8, 0.8, 1.0))
             anchor.clear_render_mode()
             anchor.clear_color()
             glyph = anchor.find("**/glyph-*")
-            _paint_glyph(glyph, (r, g, b, a))
+            _paint_glyph(glyph, TARGET_COLORS.get(ttype, ENEMY))
 
     _sync_aaa_sprites(handles, tick)
     _update_missile_glyphs(handles, tick)
@@ -1325,14 +1299,19 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         anchor = handles.carriers.get(c.unit_id)
         if anchor is None or anchor.is_empty():
             anchor = handles.root.attach_new_node(f"carrier-{c.unit_id}")
-            _attach_unit(
-                anchor,
-                f"glyph-{c.unit_id}",
-                CARRIER_COLOR,
-                sprite_key=str(getattr(c, "frame_type", None) or "ESCORT_CARRIER"),
-                points=_carrier_deck_points(),
-                pin=True,
+            frame_type = str(getattr(c, "frame_type", None) or "ESCORT_CARRIER")
+            glyph = attach_ship_mesh(
+                anchor, f"glyph-{c.unit_id}", frame_type, CARRIER_COLOR
             )
+            if glyph is None:
+                _attach_unit(
+                    anchor,
+                    f"glyph-{c.unit_id}",
+                    CARRIER_COLOR,
+                    sprite_key=frame_type,
+                    points=_carrier_deck_points(),
+                    pin=False,
+                )
             from wraithnet import config as wn_config
 
             _ground_disc(
@@ -1375,14 +1354,19 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         anchor = handles.corvettes.get(c.unit_id)
         if anchor is None or anchor.is_empty():
             anchor = handles.root.attach_new_node(f"corvette-{c.unit_id}")
-            _attach_unit(
-                anchor,
-                f"glyph-{c.unit_id}",
-                CORVETTE_COLOR,
-                sprite_key=str(getattr(c, "frame_type", None) or "CORVETTE_STANDARD"),
-                points=_corvette_hull_points(),
-                pin=True,
+            frame_type = str(getattr(c, "frame_type", None) or "CORVETTE_STANDARD")
+            glyph = attach_ship_mesh(
+                anchor, f"glyph-{c.unit_id}", frame_type, CORVETTE_COLOR
             )
+            if glyph is None:
+                _attach_unit(
+                    anchor,
+                    f"glyph-{c.unit_id}",
+                    CORVETTE_COLOR,
+                    sprite_key=frame_type,
+                    points=_corvette_hull_points(),
+                    pin=False,
+                )
             _ground_disc(
                 anchor,
                 f"sam-ring-{c.unit_id}",
@@ -1443,16 +1427,13 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         anchor = handles.tanks.get(t.unit_id)
         if anchor is None or anchor.is_empty():
             anchor = handles.root.attach_new_node(f"tank-{t.unit_id}")
-            _attach_unit(
+            _attach_ground(
                 anchor,
                 f"glyph-{t.unit_id}",
+                str(getattr(t, "frame_type", "") or "MBT_STANDARD"),
                 color,
-                sprite_key=tank_sprite_key(
-                    str(getattr(t, "frame_type", "") or "MBT_STANDARD"),
-                    str(getattr(t, "faction", "") or "ENEMY"),
-                ),
                 points=_tank_hull_points(),
-                pin=True,
+                pin=False,
             )
             handles.tanks[t.unit_id] = anchor
         x, y = float(t.position[0]), float(t.position[1])
@@ -1468,19 +1449,21 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
 
 
 def _sync_aaa_sprites(handles: SceneHandles, tick: TraceTick) -> None:
-    """Swap AAA billboards when the tick names AAA_TURRETED vs AAA_LIGHT."""
+    """Swap the AAA mesh when the tick names AAA_TURRETED vs AAA_LIGHT."""
     for frame in list(getattr(tick, "aaa_sites", None) or []):
         key = str(getattr(frame, "frame_type", "") or "AAA_LIGHT")
-        tex = load_sprite(key)
-        if tex is None:
-            continue
         anchor = handles.targets.get(frame.target_id)
         if anchor is None or anchor.is_empty():
             continue
-        card = anchor.find("**/sym-sprite")
-        if card.is_empty():
+        glyph = anchor.find(f"**/glyph-{frame.target_id}")
+        if not glyph.is_empty() and glyph.get_tag("ground-mesh") == key:
+            anchor.set_h(-float(getattr(frame, "heading", 0.0) or 0.0))
             continue
-        card.set_texture(tex)
+        if not glyph.is_empty():
+            glyph.remove_node()
+        color = faction_paint(str(getattr(frame, "faction", "") or "ENEMY"))
+        attach_ground_mesh(anchor, f"glyph-{frame.target_id}", key, color)
+        anchor.set_h(-float(getattr(frame, "heading", 0.0) or 0.0))
 
 
 def _update_missile_glyphs(handles: SceneHandles, tick: TraceTick) -> None:

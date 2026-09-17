@@ -200,7 +200,9 @@ def test_jet_orientation_follows_heading_not_travel_direction():
     )
     apply_jet_flight_easing(handles, 0.016)
     assert handles.jet_heading_deg["Jet_1"] == pytest.approx(90.0)
-    assert glyph.get_h() == pytest.approx(90.0)
+    # Sim heading is CW from +y; Panda H is the opposite sense, so the glyph
+    # stores -heading (90° sim → nose along world +X via H=-90).
+    assert glyph.get_h() == pytest.approx(-90.0)
 
 
 def test_viewer_app_drains_live_stream_without_raising():
