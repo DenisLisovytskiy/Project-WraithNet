@@ -22,7 +22,14 @@ def fast_cnp(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generation_result_runs_through_bridge_without_special_casing(fast_cnp):
-    result = generate_scenario(parameters_for_preset("TRAINING", seed=7))
+    # Compact map keeps transit short so 400 ticks remain meaningful in CI.
+    result = generate_scenario(
+        parameters_for_preset(
+            "TRAINING",
+            seed=7,
+            overrides={"grid_width": 100.0, "grid_height": 100.0},
+        )
+    )
     scenario: ScenarioConfig = result.scenario
     # Bridge must accept an ordinary ScenarioConfig; generation metadata is ignored.
     bridge = WraithNetBridge(scenario=scenario)
@@ -57,7 +64,11 @@ async def test_dynamic_calibration_sample_no_exceptions(fast_cnp):
     for preset in presets:
         solved = aborted = wiped = other = 0
         for seed in range(sample_n):
-            params = parameters_for_preset(preset, seed=seed)
+            params = parameters_for_preset(
+                preset,
+                seed=seed,
+                overrides={"grid_width": 100.0, "grid_height": 100.0},
+            )
             result = generate_scenario(params)
             bridge = WraithNetBridge(scenario=result.scenario)
             await asyncio.wait_for(bridge.run(max_ticks=500), timeout=120)
@@ -90,7 +101,13 @@ async def test_dynamic_calibration_sample_no_exceptions(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_auto_balanced_training_often_progresses(fast_cnp):
-    result = generate_scenario(parameters_for_preset("TRAINING", seed=0))
+    result = generate_scenario(
+        parameters_for_preset(
+            "TRAINING",
+            seed=0,
+            overrides={"grid_width": 100.0, "grid_height": 100.0},
+        )
+    )
     assert result.feasibility.feasible is True
     bridge = WraithNetBridge(scenario=result.scenario)
     await asyncio.wait_for(bridge.run(max_ticks=400), timeout=90)

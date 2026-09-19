@@ -2662,6 +2662,9 @@ class WraithNetModel(mesa.Model):
             recovery_route_forecast=route_forecast,
             observed_gun_threats=observed_gun_threats,
             briefed_seek_positions=self._briefed_seek_positions(),
+            map_diagonal=config.max_grid_distance(
+                self._scenario.grid_width, self._scenario.grid_height
+            ),
         )
 
     def _subject_xy(self, subject_id: str) -> tuple[float, float] | None:

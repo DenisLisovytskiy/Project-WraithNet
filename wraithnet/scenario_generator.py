@@ -2,10 +2,10 @@
 
 Pure simulation-core code: no viewer, filesystem, network, or wall-clock.
 
-Discovery-chain rule (conservative fog-of-war):
-``parent_child_dist <= SENSOR_RADIUS - max_weapon_range - DISCOVERY_MARGIN``,
-city LOS must be clear, and the root center satisfies
-``home_dist + LAUNCH_RING_OUTER_RADIUS <= SENSOR_RADIUS``.
+Discovery-chain rule (local AO fog-of-war):
+``parent_child_dist <= SENSOR_RADIUS - max_weapon_range - DISCOVERY_MARGIN``
+with clear city LOS between linked groups. Root centers may sit beyond
+``SENSOR_RADIUS`` from home — jets transit via mission brief waypoints.
 
 Threat-overlap target (intra-group SAM pairs only):
 ``overlap = max(0, 1 - dist / (2 * SAM_ENGAGEMENT_RANGE))``, accepted within
@@ -197,15 +197,44 @@ def discovery_link_max_distance() -> float:
     return config.SENSOR_RADIUS - max_weapon - DISCOVERY_MARGIN
 
 
-def max_normalized_distance(home_base: tuple[float, float]) -> float:
+def max_normalized_distance(
+    home_base: tuple[float, float],
+    *,
+    grid_width: float | None = None,
+    grid_height: float | None = None,
+    parameters: GenerationParameters | None = None,
+) -> float:
     """Farthest in-bounds corner distance from home (normalization denominator)."""
+    if parameters is not None:
+        grid_width = parameters.grid_width
+        grid_height = parameters.grid_height
+    gw = config.GRID_WIDTH if grid_width is None else float(grid_width)
+    gh = config.GRID_HEIGHT if grid_height is None else float(grid_height)
     corners = (
         (0.0, 0.0),
-        (config.GRID_WIDTH, 0.0),
-        (0.0, config.GRID_HEIGHT),
-        (config.GRID_WIDTH, config.GRID_HEIGHT),
+        (gw, 0.0),
+        (0.0, gh),
+        (gw, gh),
     )
     return max(math.dist(home_base, corner) for corner in corners) or 1.0
+
+
+def terrain_cell_size_for_grid(grid_width: float, grid_height: float) -> float:
+    """Keep roughly 100 cells on the long side (PoC used 20 at 100/5)."""
+    long_side = max(float(grid_width), float(grid_height))
+    return max(5.0, long_side / 100.0)
+
+
+def _grid_tuple(parameters: GenerationParameters) -> tuple[float, float]:
+    return (parameters.grid_width, parameters.grid_height)
+
+
+def _placement_grid_step(
+    parameters: GenerationParameters, terrain: TerrainGrid
+) -> float:
+    """World step for exhaustive fallbacks; scales with cell size on large maps."""
+    return max(2.0, float(parameters.entity_min_separation), float(terrain.cell_size))
+
 
 
 def sam_min_distance_from_home(parameters: GenerationParameters) -> float:
@@ -350,7 +379,7 @@ def _choose_home_base(
     land: list[tuple[int, int]],
 ) -> tuple[float, float]:
     inset = max(parameters.map_margin, LAUNCH_RING_OUTER_RADIUS)
-    if 2.0 * inset >= config.GRID_WIDTH or 2.0 * inset >= config.GRID_HEIGHT:
+    if 2.0 * inset >= parameters.grid_width or 2.0 * inset >= parameters.grid_height:
         raise GenerationError(
             IMPOSSIBLE_GEOMETRY,
             {
@@ -361,23 +390,28 @@ def _choose_home_base(
                     "sam_count": parameters.sam_count,
                     "jammer_count": parameters.jammer_count,
                 },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"inset": inset, "map_margin": parameters.map_margin},
                 "suggestions": ["reduce map_margin"],
             },
         )
     corners = [
         (inset, inset),
-        (config.GRID_WIDTH - inset, inset),
-        (inset, config.GRID_HEIGHT - inset),
-        (config.GRID_WIDTH - inset, config.GRID_HEIGHT - inset),
+        (parameters.grid_width - inset, inset),
+        (inset, parameters.grid_height - inset),
+        (parameters.grid_width - inset, parameters.grid_height - inset),
     ]
     rng.shuffle(corners)
     for corner in corners:
         pos = _land_position_from_sample(terrain, corner, land, rng)
         if pos is None:
             continue
-        if not position_in_bounds(pos, margin=0.0):
+        if not position_in_bounds(
+            pos,
+            margin=0.0,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        ):
             continue
         # Prefer bases that stay near the intended corner inset region.
         if math.dist(pos, corner) <= max(terrain.cell_size * 3.0, inset * 0.5):
@@ -386,7 +420,7 @@ def _choose_home_base(
     candidates = []
     for col, row in land:
         cx, cy = cell_center(terrain, col, row)
-        if min(cx, cy, config.GRID_WIDTH - cx, config.GRID_HEIGHT - cy) >= inset * 0.5:
+        if min(cx, cy, parameters.grid_width - cx, parameters.grid_height - cy) >= inset * 0.5:
             candidates.append((cx, cy))
     if not candidates:
         raise GenerationError(
@@ -395,7 +429,7 @@ def _choose_home_base(
                 "kind": "home_base",
                 "seed": parameters.seed,
                 "requested_counts": {},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"land_cells": len(land)},
                 "suggestions": [
                     "reduce water_fraction",
@@ -412,7 +446,7 @@ def _distance_fraction_ok(
     position: tuple[float, float],
     parameters: GenerationParameters,
 ) -> bool:
-    max_dist = max_normalized_distance(home_base)
+    max_dist = max_normalized_distance(home_base, parameters=parameters)
     frac = distance_from_home(home_base, position) / max_dist
     return (
         parameters.objective_distance_min_fraction
@@ -431,7 +465,12 @@ def _center_candidate_ok(
     require_root_sensor: bool,
     terrain: TerrainGrid,
 ) -> bool:
-    if not position_in_bounds(position, margin=parameters.map_margin):
+    if not position_in_bounds(
+        position,
+        margin=parameters.map_margin,
+        grid_width=parameters.grid_width,
+        grid_height=parameters.grid_height,
+    ):
         return False
     if not _is_ground_land(terrain, position):
         return False
@@ -440,14 +479,13 @@ def _center_candidate_ok(
     if not _distance_fraction_ok(home_base, position, parameters):
         return False
     if require_root_sensor:
-        if (
-            distance_from_home(home_base, position) + LAUNCH_RING_OUTER_RADIUS
-            > config.SENSOR_RADIUS
-        ):
-            return False
-        approach = _root_approach_point(home_base, position)
-        if not has_discovery_los(terrain, approach, position):
-            return False
+        # Mission brief covers over-horizon transit; only require launch LOS when
+        # the root still sits inside the on-station sensor envelope.
+        dist = distance_from_home(home_base, position)
+        if dist + LAUNCH_RING_OUTER_RADIUS <= config.SENSOR_RADIUS:
+            approach = _root_approach_point(home_base, position)
+            if not has_discovery_los(terrain, approach, position):
+                return False
     if not position_respects_separation(position, existing, min_pairwise):
         return False
     if math.dist(position, home_base) < 1e-6:
@@ -508,7 +546,7 @@ def _place_group_centers(
                 "kind": "objective_centers",
                 "seed": parameters.seed,
                 "requested_counts": {"objective_count": n},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {},
                 "suggestions": ["set objective_count >= 1"],
             },
@@ -523,7 +561,7 @@ def _place_group_centers(
                 "kind": "discovery_link",
                 "seed": parameters.seed,
                 "requested_counts": {"objective_count": n},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"link_max": link_max},
                 "suggestions": [
                     "increase SENSOR_RADIUS",
@@ -533,42 +571,27 @@ def _place_group_centers(
         )
 
     # Pre-check: root annulus must be non-empty.
-    # Distance fractions are relative to map diagonal, but discovery still
-    # caps root_max at SENSOR_RADIUS. On large grids, frac_min * diagonal can
-    # exceed that cap — clamp root_min into the discoverable annulus.
-    max_dist = max_normalized_distance(home_base)
-    sensor_cap = config.SENSOR_RADIUS - LAUNCH_RING_OUTER_RADIUS
-    root_max = min(
-        parameters.objective_distance_max_fraction * max_dist,
-        sensor_cap,
-    )
+    # Distance fractions are relative to map diagonal. Over-horizon roots rely on
+    # mission brief transit (briefed_seek_positions); local sensor discovery
+    # applies once jets reach the AO.
+    max_dist = max_normalized_distance(home_base, parameters=parameters)
+    root_max = parameters.objective_distance_max_fraction * max_dist
     root_min = max(
         parameters.base_safety_radius,
         parameters.objective_distance_min_fraction * max_dist,
     )
     if root_min > root_max:
-        # Keep relative spacing inside the sensor-capped band.
-        band_lo = parameters.base_safety_radius
-        if root_max <= band_lo:
-            root_min = root_max
-        else:
-            frac = parameters.objective_distance_min_fraction / max(
-                parameters.objective_distance_max_fraction, 1e-9
-            )
-            root_min = band_lo + frac * (root_max - band_lo)
-    if root_max < root_min:
         raise GenerationError(
             IMPOSSIBLE_GEOMETRY,
             {
                 "kind": "root_center",
                 "seed": parameters.seed,
                 "requested_counts": {"objective_count": n},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {
                     "root_min": root_min,
                     "root_max": root_max,
                     "base_safety_radius": parameters.base_safety_radius,
-                    "sensor_cap": sensor_cap,
                 },
                 "suggestions": [
                     "widen objective_distance fractions",
@@ -611,11 +634,11 @@ def _place_group_centers(
         return _grid_fallback_root()
 
     def _grid_fallback_root() -> bool:
-        step = max(2.0, parameters.entity_min_separation)
+        step = _placement_grid_step(parameters, terrain)
         x = parameters.map_margin
-        while x <= config.GRID_WIDTH - parameters.map_margin:
+        while x <= parameters.grid_width - parameters.map_margin:
             y = parameters.map_margin
-            while y <= config.GRID_HEIGHT - parameters.map_margin:
+            while y <= parameters.grid_height - parameters.map_margin:
                 _note_attempt()
                 cand = (float(x), float(y))
                 cand = _land_position_from_sample(terrain, cand, land, rng)
@@ -659,7 +682,7 @@ def _place_group_centers(
                     "sam_count": parameters.sam_count,
                     "jammer_count": parameters.jammer_count,
                 },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {
                     "base_safety_radius": parameters.base_safety_radius,
                     "group_min_separation": parameters.group_min_separation,
@@ -686,8 +709,6 @@ def _place_group_centers(
 
         for _ in range(parameters.max_placement_attempts):
             _note_attempt()
-            parent_index = rng.randrange(len(records))
-            parent_pos = records[parent_index].position
 
             if style == "CLUSTERED":
                 anchor_index = rng.randrange(min(n_anchors, len(records)))
@@ -698,12 +719,10 @@ def _place_group_centers(
                 band_hi = 1.0 * parameters.group_min_separation
                 cand = _sample_in_annulus(anchor_pos, band_lo, band_hi, rng)
             else:
-                # DISPERSED: sample within discovery link of a random parent.
-                inner = max(pairwise * 0.5, parameters.entity_min_separation)
-                outer = link_max
-                if outer < inner:
-                    continue
-                cand = _sample_in_annulus(parent_pos, inner, outer, rng)
+                # DISPERSED: sample in the mission distance band from home.
+                # Over-horizon AOs use mission brief; do not force SENSOR-link
+                # chaining that collapses every group into a ~link_max blob.
+                cand = _sample_in_annulus(home_base, root_min, root_max, rng)
 
             cand = _land_position_from_sample(terrain, cand, land, rng)
             if cand is None:
@@ -719,14 +738,13 @@ def _place_group_centers(
             ):
                 continue
 
-            # Must attach to some existing center within link_max + LOS.
-            parent_index = _nearest_linkable_parent(
-                cand, positions, link_max, terrain=terrain
-            )
-            if parent_index is None:
-                continue
-
             if style == "CLUSTERED":
+                # Must attach to some existing center within link_max + LOS.
+                parent_index = _nearest_linkable_parent(
+                    cand, positions, link_max, terrain=terrain
+                )
+                if parent_index is None:
+                    continue
                 # Enforce cluster-band vs at least one anchor.
                 anchors = positions[: min(n_anchors, len(positions))]
                 if not any(
@@ -744,6 +762,31 @@ def _place_group_centers(
                         for anchor in anchors
                     ):
                         continue
+            else:
+                # DISPERSED: over-horizon AOs use mission brief; on-station
+                # groups still need launch LOS or a discovery link.
+                dist = distance_from_home(home_base, cand)
+                over_horizon = (
+                    dist + LAUNCH_RING_OUTER_RADIUS > config.SENSOR_RADIUS
+                )
+                if over_horizon:
+                    parent_index = min(
+                        range(len(positions)),
+                        key=lambda i: math.dist(cand, positions[i]),
+                    )
+                else:
+                    approach = _root_approach_point(home_base, cand)
+                    if has_discovery_los(terrain, approach, cand):
+                        parent_index = min(
+                            range(len(positions)),
+                            key=lambda i: math.dist(cand, positions[i]),
+                        )
+                    else:
+                        parent_index = _nearest_linkable_parent(
+                            cand, positions, link_max, terrain=terrain
+                        )
+                        if parent_index is None:
+                            continue
 
             records.append(
                 _CenterRecord(
@@ -785,7 +828,7 @@ def _place_group_centers(
                         "jammer_count": parameters.jammer_count,
                         "placed_centers": len(records),
                     },
-                    "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                    "grid": _grid_tuple(parameters),
                     "active_constraints": {
                         "group_style": parameters.group_style,
                         "group_min_separation": parameters.group_min_separation,
@@ -837,12 +880,12 @@ def _grid_fallback_child(
     terrain: TerrainGrid,
     land: list[tuple[int, int]],
 ) -> bool:
-    step = max(2.0, parameters.entity_min_separation)
+    step = _placement_grid_step(parameters, terrain)
     style = styles[index]
     x = parameters.map_margin
-    while x <= config.GRID_WIDTH - parameters.map_margin + 1e-9:
+    while x <= parameters.grid_width - parameters.map_margin + 1e-9:
         y = parameters.map_margin
-        while y <= config.GRID_HEIGHT - parameters.map_margin + 1e-9:
+        while y <= parameters.grid_height - parameters.map_margin + 1e-9:
             _note_attempt()
             projected = _project_to_land(terrain, (float(x), float(y)), land)
             y += step
@@ -859,11 +902,35 @@ def _grid_fallback_child(
                 terrain=terrain,
             ):
                 continue
-            parent_index = _nearest_linkable_parent(
-                cand, positions, link_max, terrain=terrain
-            )
-            if parent_index is None:
-                continue
+            if style == "CLUSTERED":
+                parent_index = _nearest_linkable_parent(
+                    cand, positions, link_max, terrain=terrain
+                )
+                if parent_index is None:
+                    continue
+            else:
+                dist = distance_from_home(home_base, cand)
+                over_horizon = (
+                    dist + LAUNCH_RING_OUTER_RADIUS > config.SENSOR_RADIUS
+                )
+                if over_horizon:
+                    parent_index = min(
+                        range(len(positions)),
+                        key=lambda i: math.dist(cand, positions[i]),
+                    )
+                else:
+                    approach = _root_approach_point(home_base, cand)
+                    if has_discovery_los(terrain, approach, cand):
+                        parent_index = min(
+                            range(len(positions)),
+                            key=lambda i: math.dist(cand, positions[i]),
+                        )
+                    else:
+                        parent_index = _nearest_linkable_parent(
+                            cand, positions, link_max, terrain=terrain
+                        )
+                        if parent_index is None:
+                            continue
             records.append(
                 _CenterRecord(
                     position=cand,
@@ -897,7 +964,7 @@ def _choose_templates(
                 "kind": "templates",
                 "seed": parameters.seed,
                 "requested_counts": {},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {},
                 "suggestions": ["provide allowed_group_templates"],
             },
@@ -920,7 +987,7 @@ def _choose_templates(
                         "sam_count": parameters.sam_count,
                         "jammer_count": parameters.jammer_count,
                     },
-                    "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                    "grid": _grid_tuple(parameters),
                     "active_constraints": {
                         "sam_left": sam_left,
                         "jammer_left": jam_left,
@@ -997,7 +1064,12 @@ def _place_member_near_center(
         cand = _land_position_from_sample(terrain, sample, land, rng)
         if cand is None:
             continue
-        if not position_in_bounds(cand, margin=parameters.map_margin):
+        if not position_in_bounds(
+            cand,
+            margin=parameters.map_margin,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        ):
             continue
         if math.dist(cand, home_base) < 1e-6:
             continue
@@ -1013,7 +1085,7 @@ def _place_member_near_center(
         return cand
 
     # Grid fallback around center.
-    step = max(1.0, parameters.entity_min_separation)
+    step = max(1.0, _placement_grid_step(parameters, terrain))
     radius = (
         parameters.entity_min_separation
         if desired_distance is None
@@ -1030,7 +1102,12 @@ def _place_member_near_center(
         cand = _project_to_land(terrain, sample, land)
         if cand is None:
             continue
-        if not position_in_bounds(cand, margin=parameters.map_margin):
+        if not position_in_bounds(
+            cand,
+            margin=parameters.map_margin,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        ):
             continue
         if not position_respects_separation(
             cand, existing, parameters.entity_min_separation
@@ -1060,7 +1137,12 @@ def _place_member_near_center(
         if cheb == 0:
             # Center cell already occupied by the canonical entity — skip.
             continue
-        if not position_in_bounds(cand, margin=parameters.map_margin):
+        if not position_in_bounds(
+            cand,
+            margin=parameters.map_margin,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        ):
             continue
         if not position_respects_separation(
             cand, existing, parameters.entity_min_separation * 0.75
@@ -1078,7 +1160,7 @@ def _place_member_near_center(
             "kind": "group_member",
             "seed": parameters.seed,
             "requested_counts": {},
-            "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+            "grid": _grid_tuple(parameters),
             "active_constraints": {
                 "center": center,
                 "entity_min_separation": parameters.entity_min_separation,
@@ -1104,10 +1186,13 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
     """Place home base, objectives, SAMs, and jammers deterministically."""
     try:
         terrain = generate_terrain(
-            config.GRID_WIDTH,
-            config.GRID_HEIGHT,
+            parameters.grid_width,
+            parameters.grid_height,
             parameters.terrain,
             seed=derived_seed(parameters.seed, TERRAIN_SALT),
+            cell_size=terrain_cell_size_for_grid(
+                parameters.grid_width, parameters.grid_height
+            ),
         )
     except TerrainGenerationError as exc:
         raise GenerationError(
@@ -1120,7 +1205,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                     "sam_count": parameters.sam_count,
                     "jammer_count": parameters.jammer_count,
                 },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": dict(exc.details),
                 "suggestions": list(exc.details.get("suggestions", [])),
             },
@@ -1134,7 +1219,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 "kind": "terrain",
                 "seed": parameters.seed,
                 "requested_counts": {},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"land_cells": 0},
                 "suggestions": ["reduce water_fraction"],
             },
@@ -1210,7 +1295,12 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 ok = True
                 tentative_occupied = list(occupied)
                 for cand in candidates:
-                    if not position_in_bounds(cand, margin=parameters.map_margin):
+                    if not position_in_bounds(
+                        cand,
+                        margin=parameters.map_margin,
+                        grid_width=parameters.grid_width,
+                        grid_height=parameters.grid_height,
+                    ):
                         ok = False
                         break
                     if not _is_ground_land(terrain, cand):
@@ -1505,7 +1595,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                     "kind": "aaa",
                     "seed": parameters.seed,
                     "requested_counts": {"aaa_count": aaa_needed},
-                    "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                    "grid": _grid_tuple(parameters),
                     "active_constraints": {
                         "placed": len(aaa_sites),
                         "land_cells": len(land),
@@ -1563,7 +1653,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 "kind": "objective_count_mismatch",
                 "seed": parameters.seed,
                 "requested_counts": {"objective_count": parameters.objective_count},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"emitted": len(result.targets)},
                 "suggestions": [],
             },
@@ -1575,7 +1665,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 "kind": "sam_count_mismatch",
                 "seed": parameters.seed,
                 "requested_counts": {"sam_count": parameters.sam_count},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"emitted": len(result.sam_sites)},
                 "suggestions": [],
             },
@@ -1587,7 +1677,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 "kind": "jammer_count_mismatch",
                 "seed": parameters.seed,
                 "requested_counts": {"jammer_count": parameters.jammer_count},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"emitted": len(result.jammers)},
                 "suggestions": [],
             },
@@ -1599,7 +1689,7 @@ def generate_enemies(parameters: GenerationParameters) -> EnemyGeneration:
                 "kind": "aaa_count_mismatch",
                 "seed": parameters.seed,
                 "requested_counts": {"aaa_count": parameters.aaa_count},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"emitted": len(result.aaa_sites)},
                 "suggestions": [],
             },
@@ -1635,7 +1725,12 @@ def _place_leftover_center(
         cand = _land_position_from_sample(terrain, sample, land, rng)
         if cand is None:
             continue
-        if not position_in_bounds(cand, margin=parameters.map_margin):
+        if not position_in_bounds(
+            cand,
+            margin=parameters.map_margin,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        ):
             continue
         if distance_from_home(home_base, cand) < parameters.base_safety_radius:
             continue
@@ -1658,18 +1753,23 @@ def _place_leftover_center(
         return cand, parent_index
 
     # Grid fallback.
-    step = max(2.0, parameters.entity_min_separation)
+    step = _placement_grid_step(parameters, terrain)
     x = parameters.map_margin
-    while x <= config.GRID_WIDTH - parameters.map_margin + 1e-9:
+    while x <= parameters.grid_width - parameters.map_margin + 1e-9:
         y = parameters.map_margin
-        while y <= config.GRID_HEIGHT - parameters.map_margin + 1e-9:
+        while y <= parameters.grid_height - parameters.map_margin + 1e-9:
             _note_attempt()
             sample = (float(x), float(y))
             y += step
             cand = _project_to_land(terrain, sample, land)
             if cand is None:
                 continue
-            if not position_in_bounds(cand, margin=parameters.map_margin):
+            if not position_in_bounds(
+                cand,
+                margin=parameters.map_margin,
+                grid_width=parameters.grid_width,
+                grid_height=parameters.grid_height,
+            ):
                 continue
             if distance_from_home(home_base, cand) < parameters.base_safety_radius:
                 continue
@@ -1700,7 +1800,7 @@ def _place_leftover_center(
                 "sam_count": parameters.sam_count,
                 "jammer_count": parameters.jammer_count,
             },
-            "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+            "grid": _grid_tuple(parameters),
             "active_constraints": {
                 "group_min_separation": parameters.group_min_separation,
                 "needs_discovery": needs_discovery,
@@ -2162,6 +2262,8 @@ def _roster_passes_static(
     }
     if terrain is not None:
         scenario_kwargs["terrain"] = terrain
+        scenario_kwargs["grid_width"] = terrain.world_width
+        scenario_kwargs["grid_height"] = terrain.world_height
     if objectives is not None:
         scenario_kwargs["mission_objectives"] = objectives
     scenario = scenario_from_data(new_scenario_data(**scenario_kwargs))
@@ -2378,7 +2480,7 @@ def _auto_balanced_roster(
                 "objective_count": parameters.objective_count,
                 "sam_count": parameters.sam_count,
             },
-            "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+            "grid": _grid_tuple(parameters),
             "active_constraints": last_detail,
             "required_damage": total_need,
             "available_slots": last_detail.get("available_slots"),
@@ -2476,7 +2578,7 @@ def generate_friendly_roster(
             "kind": "friendly_mode",
             "seed": parameters.seed,
             "requested_counts": {},
-            "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+            "grid": _grid_tuple(parameters),
             "active_constraints": {"friendly_mode": mode},
             "suggestions": ["use AUTO_BALANCED, RANDOM_LEGAL, or CUSTOM_ROSTER"],
         },
@@ -2519,7 +2621,7 @@ def place_jets_on_launch_ring(
                 "kind": "friendly_launch",
                 "seed": parameters.seed,
                 "requested_counts": {"jet_count": 0},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {},
                 "suggestions": ["provide at least one jet"],
             },
@@ -2542,9 +2644,19 @@ def place_jets_on_launch_ring(
                     LAUNCH_RING_OUTER_RADIUS,
                     rng,
                 )
-                if not position_in_bounds(cand, margin=parameters.map_margin):
+                if not position_in_bounds(
+                    cand,
+                    margin=parameters.map_margin,
+                    grid_width=parameters.grid_width,
+                    grid_height=parameters.grid_height,
+                ):
                     # Launch ring near map edge: still require on-map (margin 0).
-                    if not position_in_bounds(cand, margin=0.0):
+                    if not position_in_bounds(
+                        cand,
+                        margin=0.0,
+                        grid_width=parameters.grid_width,
+                        grid_height=parameters.grid_height,
+                    ):
                         continue
                 if math.dist(cand, home_base) < 1e-6:
                     continue
@@ -2575,7 +2687,12 @@ def place_jets_on_launch_ring(
                     home_base[0] + mid_r * math.cos(angle),
                     home_base[1] + mid_r * math.sin(angle),
                 )
-                if not position_in_bounds(cand, margin=0.0):
+                if not position_in_bounds(
+                    cand,
+                    margin=0.0,
+                    grid_width=parameters.grid_width,
+                    grid_height=parameters.grid_height,
+                ):
                     continue
                 if math.dist(cand, home_base) < 1e-6:
                     continue
@@ -2597,7 +2714,7 @@ def place_jets_on_launch_ring(
                     "kind": "friendly_launch",
                     "seed": parameters.seed,
                     "requested_counts": {"jet_count": len(jets), "placed": len(placed_positions)},
-                    "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                    "grid": _grid_tuple(parameters),
                     "active_constraints": {
                         "launch_inner": LAUNCH_RING_INNER_RADIUS,
                         "launch_outer": LAUNCH_RING_OUTER_RADIUS,
@@ -2610,7 +2727,11 @@ def place_jets_on_launch_ring(
                 },
             )
 
-        heading = initial_heading_toward_map_center(position)
+        heading = initial_heading_toward_map_center(
+            position,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
+        )
         placed_positions.append(position)
         result.append(
             jet.model_copy(
@@ -2677,7 +2798,7 @@ def place_generated_tanks(
                     "friendly_tank_count": friendly_n,
                     "enemy_tank_count": enemy_n,
                 },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"land_cells": 0},
                 "suggestions": ["reduce water_fraction"],
             },
@@ -2687,8 +2808,8 @@ def place_generated_tanks(
     friendly_rng = random.Random(derived_seed(parameters.seed, FRIENDLY_GROUND_SALT))
 
     # Shared engagement zone: land cell near map center, reachable from home.
-    cx = config.GRID_WIDTH * 0.55
-    cy = config.GRID_HEIGHT * 0.55
+    cx = parameters.grid_width * 0.55
+    cy = parameters.grid_height * 0.55
     zone = _project_to_land(terrain, (cx, cy), land) or cell_center(
         terrain, land[len(land) // 2][0], land[len(land) // 2][1]
     )
@@ -2727,7 +2848,12 @@ def place_generated_tanks(
                     cand = cell_center(terrain, c, r)
                 if cand is None:
                     continue
-                if not position_in_bounds(cand, margin=parameters.map_margin):
+                if not position_in_bounds(
+                    cand,
+                    margin=parameters.map_margin,
+                    grid_width=parameters.grid_width,
+                    grid_height=parameters.grid_height,
+                ):
                     continue
                 if not position_respects_separation(
                     cand, occ, parameters.entity_min_separation
@@ -2748,7 +2874,7 @@ def place_generated_tanks(
                             "enemy_tank_count": enemy_n,
                             "faction": faction,
                         },
-                        "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                        "grid": _grid_tuple(parameters),
                         "active_constraints": {"placed": len(tanks)},
                         "suggestions": [
                             "reduce tank counts",
@@ -2772,7 +2898,7 @@ def place_generated_tanks(
 
     # Enemy approaches from far side of zone; friendlies from home side.
     enemy_anchor = (
-        min(config.GRID_WIDTH - parameters.map_margin, zone[0] + 20.0),
+        min(parameters.grid_width - parameters.map_margin, zone[0] + 20.0),
         zone[1],
     )
     enemy_anchor = _project_to_land(terrain, enemy_anchor, land) or zone
@@ -2892,7 +3018,7 @@ def place_generated_naval(
                     "friendly_carrier_count": carrier_n,
                     "enemy_corvette_count": corvette_n,
                 },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"water_cells": 0},
                 "suggestions": ["increase water_fraction", "enable naval terrain"],
             },
@@ -2921,7 +3047,7 @@ def place_generated_naval(
                     "kind": "naval",
                     "seed": parameters.seed,
                     "requested_counts": {"unit": prefix},
-                    "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                    "grid": _grid_tuple(parameters),
                     "active_constraints": {
                         "navigable_water": 0,
                         "footprint_radius": footprint_radius,
@@ -2939,7 +3065,12 @@ def place_generated_naval(
                 validate_position_for_domain(terrain, cand, "SURFACE")
             except Exception:
                 continue
-            if not position_in_bounds(cand, margin=parameters.map_margin):
+            if not position_in_bounds(
+                cand,
+                margin=parameters.map_margin,
+                grid_width=parameters.grid_width,
+                grid_height=parameters.grid_height,
+            ):
                 continue
             if not position_respects_separation(
                 cand, occ, parameters.entity_min_separation
@@ -2952,7 +3083,7 @@ def place_generated_naval(
                 "kind": "naval",
                 "seed": parameters.seed,
                 "requested_counts": {"unit": prefix},
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
+                "grid": _grid_tuple(parameters),
                 "active_constraints": {"occupied": len(occ)},
                 "suggestions": ["reduce naval counts", "increase water coverage"],
             },
@@ -3075,8 +3206,8 @@ def generate_scenario(parameters: GenerationParameters) -> GenerationResult:
 
     scenario = scenario_from_data(
         new_scenario_data(
-            grid_width=config.GRID_WIDTH,
-            grid_height=config.GRID_HEIGHT,
+            grid_width=parameters.grid_width,
+            grid_height=parameters.grid_height,
             jets=jets,
             targets=build_state.targets,
             sam_sites=build_state.sam_sites,
@@ -3101,28 +3232,38 @@ def generate_scenario(parameters: GenerationParameters) -> GenerationResult:
         group_centers=centers,
     )
 
-    # AUTO must be feasible by construction; surface capacity bugs early.
-    if parameters.friendly_mode == "AUTO_BALANCED" and not feasibility.feasible:
-        raise GenerationError(
-            AUTO_BALANCE_CAPACITY,
-            {
-                "kind": "friendly_roster",
-                "seed": parameters.seed,
-                "requested_counts": {
-                    "friendly_count_max": parameters.friendly_count_max,
-                },
-                "grid": (config.GRID_WIDTH, config.GRID_HEIGHT),
-                "active_constraints": {
-                    "error_codes": [
-                        i.code for i in feasibility.issues if i.severity == "ERROR"
+    # AUTO must cover damage/fuel by construction; discovery/LOS gaps are
+    # enemy-layout concerns (mission brief covers over-horizon transit).
+    if parameters.friendly_mode == "AUTO_BALANCED":
+        error_codes = {i.code for i in feasibility.issues if i.severity == "ERROR"}
+        blocking = error_codes & {
+            "NO_SUITABLE_WEAPON",
+            "INSUFFICIENT_DAMAGE",
+            "FUEL_REACH",
+            "EMPTY_LOADOUT",
+            "NO_ANTI_ARMOR_CAPABILITY",
+            "OBJECTIVE_UNACHIEVABLE",
+            "AUTO_BALANCE_CAPACITY",
+        }
+        if blocking:
+            raise GenerationError(
+                AUTO_BALANCE_CAPACITY,
+                {
+                    "kind": "friendly_roster",
+                    "seed": parameters.seed,
+                    "requested_counts": {
+                        "friendly_count_max": parameters.friendly_count_max,
+                    },
+                    "grid": _grid_tuple(parameters),
+                    "active_constraints": {
+                        "error_codes": sorted(blocking),
+                    },
+                    "suggestions": [
+                        "increase friendly_count_max",
+                        "reduce enemy HP or counts",
                     ],
                 },
-                "suggestions": [
-                    "increase friendly_count_max",
-                    "reduce enemy HP or counts",
-                ],
-            },
-        )
+            )
 
     # INFO for unrealized cooperation candidates (AUTO only).
     if parameters.friendly_mode == "AUTO_BALANCED":

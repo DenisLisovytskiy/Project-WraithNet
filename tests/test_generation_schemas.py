@@ -159,12 +159,19 @@ def test_rejects_negative_weapon_counts_in_roster():
 
 def test_rejects_impossible_map_margin_and_base_safety():
     with pytest.raises(ValidationError) as exc_info:
-        GenerationParameters(**_valid_params(map_margin=48.0))
+        GenerationParameters(
+            **_valid_params(grid_width=100.0, grid_height=100.0, map_margin=48.0)
+        )
     assert "map_margin" in str(exc_info.value)
 
     with pytest.raises(ValidationError) as exc_info:
         GenerationParameters(
-            **_valid_params(map_margin=5.0, base_safety_radius=95.0)
+            **_valid_params(
+                grid_width=100.0,
+                grid_height=100.0,
+                map_margin=5.0,
+                base_safety_radius=95.0,
+            )
         )
     assert "base_safety_radius" in str(exc_info.value)
 

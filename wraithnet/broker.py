@@ -15,11 +15,16 @@ from wraithnet.schemas import Message
 
 
 class MessageBroker:
-    def __init__(self) -> None:
+    def __init__(self, claim_ttl_ticks: int | None = None) -> None:
         self._mailboxes: dict[str, asyncio.Queue[Message]] = {}
         self.open_contracts: dict[str, dict] = {}
         # target_id -> {"contract_id": str, "manager_id": str, "opened_tick": int}
         self._jammed: set[str] = set()
+        self.claim_ttl_ticks = (
+            int(claim_ttl_ticks)
+            if claim_ttl_ticks is not None
+            else config.CONTRACT_CLAIM_TTL_TICKS
+        )
 
     def set_jammed(self, agent_id: str, jammed: bool) -> None:
         if jammed:
@@ -90,13 +95,13 @@ class MessageBroker:
         return target_id in self.open_contracts
 
     def expire_stale_contracts(self, current_tick: int) -> list[str]:
-        """Force-clear contracts open longer than config.CONTRACT_CLAIM_TTL_TICKS
+        """Force-clear contracts open longer than claim_ttl_ticks
         (protects against a Manager that stalls/crashes forever). Returns the
         list of target_ids that were expired, for logging/testing."""
         expired = [
             tid
             for tid, info in self.open_contracts.items()
-            if current_tick - info["opened_tick"] > config.CONTRACT_CLAIM_TTL_TICKS
+            if current_tick - info["opened_tick"] > self.claim_ttl_ticks
         ]
         for tid in expired:
             del self.open_contracts[tid]

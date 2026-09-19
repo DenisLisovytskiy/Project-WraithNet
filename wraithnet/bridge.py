@@ -20,8 +20,13 @@ class WraithNetBridge:
         sinks: list[TraceSink] | None = None,
         scenario: ScenarioConfig | None = None,
     ) -> None:
-        self.broker = MessageBroker()
         self.model = WraithNetModel(scenario=scenario)
+        self.broker = MessageBroker(
+            claim_ttl_ticks=config.contract_claim_ttl_for_grid(
+                self.model._scenario.grid_width,
+                self.model._scenario.grid_height,
+            )
+        )
         # combat_seed is loaded on the model from the scenario (Phase 37).
         assert self.model.combat_seed == int(
             getattr(self.model._scenario, "combat_seed", 0) or 0

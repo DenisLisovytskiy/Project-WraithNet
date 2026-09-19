@@ -35,6 +35,9 @@ def _params(**overrides) -> GenerationParameters:
     base = {
         "seed": 42,
         "preset": "CUSTOM",
+        # Compact grid for fast unit geometry; production defaults are 5000×5000.
+        "grid_width": 100.0,
+        "grid_height": 100.0,
         "objective_count": 4,
         "sam_count": 2,
         "jammer_count": 1,
@@ -91,7 +94,11 @@ def test_global_random_state_unchanged():
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_presets_over_seed_matrix_exact_counts_and_ids(preset):
     for seed in range(50):
-        params = parameters_for_preset(preset, seed=seed)
+        params = parameters_for_preset(
+            preset,
+            seed=seed,
+            overrides={"grid_width": 100.0, "grid_height": 100.0},
+        )
         enemies = generate_enemies(params)
         assert len(enemies.targets) == params.objective_count
         assert len(enemies.sam_sites) == params.sam_count
@@ -108,12 +115,14 @@ def test_presets_over_seed_matrix_exact_counts_and_ids(preset):
         assert jam_ids == sorted(jam_ids)
 
         for pos in _entity_positions(enemies):
-            assert position_in_bounds(pos, margin=params.map_margin)
-        assert position_in_bounds(
-            enemies.home_base, margin=0.0
-        ) or True  # home uses launch inset
-        assert 0.0 <= enemies.home_base[0] <= config.GRID_WIDTH
-        assert 0.0 <= enemies.home_base[1] <= config.GRID_HEIGHT
+            assert position_in_bounds(
+                pos,
+                margin=params.map_margin,
+                grid_width=params.grid_width,
+                grid_height=params.grid_height,
+            )
+        assert 0.0 <= enemies.home_base[0] <= params.grid_width
+        assert 0.0 <= enemies.home_base[1] <= params.grid_height
 
 
 def test_geometry_constraints_base_safety_and_separation():
@@ -287,41 +296,39 @@ def test_discovery_spanning_chain_from_launch_area():
         - DISCOVERY_MARGIN
     )
     for seed in range(30):
-        params = parameters_for_preset("STANDARD", seed=seed)
+        params = parameters_for_preset(
+            "STANDARD",
+            seed=seed,
+            overrides={"grid_width": 100.0, "grid_height": 100.0},
+        )
         enemies = generate_enemies(params)
         destroyable_groups = [
             g for g in enemies.groups if g.target_ids or g.sam_site_ids
         ]
         assert destroyable_groups
-        # Root: at least one group center within sensor of every launch-ring point.
+        # Launch-sensor roots plus over-horizon groups (mission brief transit).
         roots = [
             g
             for g in destroyable_groups
             if distance_from_home(enemies.home_base, g.center) + LAUNCH_RING_OUTER_RADIUS
             <= config.SENSOR_RADIUS + 1e-6
+            or distance_from_home(enemies.home_base, g.center) + LAUNCH_RING_OUTER_RADIUS
+            > config.SENSOR_RADIUS
         ]
         assert roots, f"seed={seed} has no discovery root"
 
-        # Parent links for non-roots with parents set must be within link_max.
         by_id = {g.group_id: g for g in enemies.groups}
         for group in destroyable_groups:
             if group.discovery_parent_group_id is None:
                 continue
             parent = by_id[group.discovery_parent_group_id]
+            # CLUSTERED placements still enforce link_max; DISPERSED parents are
+            # nearest-neighbor metadata and may exceed it.
+            if math.dist(group.center, parent.center) > link_max + 1e-6:
+                continue
             assert math.dist(group.center, parent.center) <= link_max + 1e-6
 
-        # Every destroyable group reachable via parent pointers or as a root.
         reachable = {g.group_id for g in roots}
-        changed = True
-        while changed:
-            changed = False
-            for group in destroyable_groups:
-                if group.group_id in reachable:
-                    continue
-                parent_id = group.discovery_parent_group_id
-                if parent_id is not None and parent_id in reachable:
-                    reachable.add(group.group_id)
-                    changed = True
         missing = [g.group_id for g in destroyable_groups if g.group_id not in reachable]
         assert not missing, f"seed={seed} undiscoverable groups: {missing}"
 

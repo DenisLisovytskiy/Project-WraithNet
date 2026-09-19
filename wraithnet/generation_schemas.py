@@ -99,6 +99,14 @@ def _default_terrain_parameters() -> TerrainGenerationParameters:
 class GenerationParameters(BaseModel):
     seed: int = Field(ge=0, le=2**64 - 1)
     preset: DifficultyPreset = "STANDARD"
+    # Battlespace size (world units). Defaults are 50× the PoC 100×100 map so
+    # generated jet missions have realistic transit distance to the AO.
+    grid_width: float = Field(
+        default=config.DEFAULT_GENERATION_GRID_WIDTH, gt=20.0, le=20000.0
+    )
+    grid_height: float = Field(
+        default=config.DEFAULT_GENERATION_GRID_HEIGHT, gt=20.0, le=20000.0
+    )
     objective_count: int = Field(default=4, ge=1, le=20)
     sam_count: int = Field(default=2, ge=0, le=12)
     jammer_count: int = Field(default=1, ge=0, le=8)
@@ -226,13 +234,13 @@ class GenerationParameters(BaseModel):
         if naval_needed:
             self.naval_enabled = True
 
-        usable_width = config.GRID_WIDTH - 2.0 * self.map_margin
-        usable_height = config.GRID_HEIGHT - 2.0 * self.map_margin
+        usable_width = self.grid_width - 2.0 * self.map_margin
+        usable_height = self.grid_height - 2.0 * self.map_margin
         if usable_width < _MIN_USABLE_MAP_SPAN or usable_height < _MIN_USABLE_MAP_SPAN:
             errors.append(
                 f"map_margin ({self.map_margin}) leaves less than "
                 f"{_MIN_USABLE_MAP_SPAN} usable span on the "
-                f"{config.GRID_WIDTH}x{config.GRID_HEIGHT} map."
+                f"{self.grid_width}x{self.grid_height} map."
             )
         # Base safety plus margin must leave room for at least one group center.
         if self.base_safety_radius >= min(usable_width, usable_height):

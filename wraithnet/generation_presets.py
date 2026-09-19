@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from wraithnet import config
 from wraithnet.generation_rng import (  # noqa: F401 — re-exported for callers
     ENEMY_SALT,
     FRIENDLY_SALT,
@@ -52,6 +53,8 @@ class DifficultyPresetRecord:
     friendly_count_max: int
     friendly_reserve_factor: float
     terrain: TerrainGenerationParameters
+    grid_width: float = config.DEFAULT_GENERATION_GRID_WIDTH
+    grid_height: float = config.DEFAULT_GENERATION_GRID_HEIGHT
     map_margin: float = 5.0
     base_safety_radius: float = 18.0
     group_min_separation: float = 16.0
@@ -273,6 +276,8 @@ def parameters_for_preset(
         "allowed_group_templates": list(record.allowed_group_templates),
         "objective_distance_min_fraction": record.objective_distance_min_fraction,
         "objective_distance_max_fraction": record.objective_distance_max_fraction,
+        "grid_width": record.grid_width,
+        "grid_height": record.grid_height,
         "map_margin": record.map_margin,
         "base_safety_radius": record.base_safety_radius,
         "group_min_separation": record.group_min_separation,

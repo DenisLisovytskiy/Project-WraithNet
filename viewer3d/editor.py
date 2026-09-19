@@ -503,6 +503,8 @@ def _rect_contains(rect, x: float, z: float, margin: float = SPACE_1) -> bool:
 #: spelled out (the old "Fr. tanks" / "Fn tanks" pair was unreadable) and the
 #: friendly/enemy split is marked consistently with an (FR)/(EN) suffix.
 _ADVANCED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("grid_width", "Map width"),
+    ("grid_height", "Map height"),
     ("objective_count", "Objectives"),
     ("sam_count", "SAM sites"),
     ("jammer_count", "Jammers"),
@@ -3175,7 +3177,8 @@ class ScenarioEditor:
     def _refresh_param_summary(self) -> None:
         p = self._generation_parameters
         self._param_summary_label["text"] = (
-            f"{p.preset} | objs={p.objective_count} sams={p.sam_count} "
+            f"{p.preset} | map={p.grid_width:g}x{p.grid_height:g} "
+            f"objs={p.objective_count} sams={p.sam_count} "
             f"jams={p.jammer_count} friendlies={p.friendly_count_min}-{p.friendly_count_max} "
             f"mode={p.friendly_mode}"
         )

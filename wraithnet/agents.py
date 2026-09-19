@@ -121,6 +121,7 @@ def compute_bid_proposals(
         hp_max=3,
         threat_contacts=contacts,
         context_hash=context_hash or "",
+        map_diagonal=float(observation.map_diagonal),
     )
 
 

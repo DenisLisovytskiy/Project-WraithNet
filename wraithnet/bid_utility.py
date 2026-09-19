@@ -294,9 +294,15 @@ def build_bid_proposals(
     threat_contacts: Sequence[ThreatContact],
     context_hash: str,
     committed_payload: int = 0,
+    map_diagonal: float | None = None,
 ) -> list[BidProposal]:
     _ = target_id
     _ = committed_payload
+    diagonal = (
+        float(map_diagonal)
+        if map_diagonal is not None and float(map_diagonal) > 0.0
+        else config.MAX_GRID_DISTANCE
+    )
     ask = max(1, int(hp_needed))
     ir_exp, radar_exp, gun_exp = exposure_from_threat_contacts(threat_contacts)
     flare_ready = flare_readiness(
@@ -344,7 +350,7 @@ def build_bid_proposals(
         payload_offered = min(int(count), ask)
         payload_score = min(1.0, int(count) / ask)
         distance = math.dist(position, target_position)
-        distance_score = distance / config.MAX_GRID_DISTANCE
+        distance_score = distance / diagonal
         if zero_threat:
             total = legacy_compatible_utility(
                 suitability=suitability,

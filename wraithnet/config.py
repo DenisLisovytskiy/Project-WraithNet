@@ -30,9 +30,18 @@ from typing import Literal
 
 # --- Grid ---
 
+# PoC / hand-authored default scenario size (scenarios/default.json). Generated
+# missions default to DEFAULT_GENERATION_GRID_* (50× larger) via GenerationParameters.
+
 GRID_WIDTH: float = 100.0
 
 GRID_HEIGHT: float = 100.0
+
+# Default battlespace for Quick Generate / GenerationParameters (jet transit scale).
+
+DEFAULT_GENERATION_GRID_WIDTH: float = 5000.0
+
+DEFAULT_GENERATION_GRID_HEIGHT: float = 5000.0
 
 GRID_TORUS: bool = False
 
@@ -669,21 +678,17 @@ TARGET_SIGNATURE_DEFAULTS: dict[TargetType, SensorSignature] = {
 
 # burn_per_tick=1.0 for every frame, matching SAM_DAMAGE_PER_TICK's "1 unit per
 
-# tick" simplicity. capacity is then just endurance in ticks; distance-range at
+# tick" simplicity. Capacities are sized for DEFAULT_GENERATION_GRID (5000) —
 
-# max_speed is endurance * max_speed. Chosen against GRID_WIDTH=100 so a
+# 50× the original PoC map — so a round-trip to a distant AO plus RTB margin fits:
 
-# round-trip across the map (2*GRID_WIDTH / max_speed ticks) plus loiter fits:
+#   INTERCEPTOR    2000 ticks × 7.0 = 14000 units (~1.4 width round-trips)
 
-#   INTERCEPTOR    40 ticks × 7.0 = 280 units (~1.4 width round-trips) — short-legged dash
+#   STRIKE_FIGHTER 6000 ticks × 5.0 = 30000 units (generated-map RTB headroom)
 
-# Fuel sized for mandatory end-of-mission RTB on the default/generated maps.
+#   HEAVY_BOMBER   8000 ticks × 3.0 = 24000 units
 
-#   INTERCEPTOR   40 ticks × 7.0 — short legs; long routes need strike frames
-
-#   STRIKE_FIGHTER 120 ticks × 5.0 = 600 units (PoC RTB headroom)
-
-#   HEAVY_BOMBER  160 ticks × 3.0 = 480 units
+# Small PoC maps (100×100) simply have excess fuel.
 
 JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
@@ -693,7 +698,7 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         turn_rate_deg_per_tick=45.0,
 
-        fuel_capacity=40.0,
+        fuel_capacity=2000.0,
 
         fuel_burn_per_tick=1.0,
 
@@ -717,7 +722,7 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         turn_rate_deg_per_tick=25.0,
 
-        fuel_capacity=120.0,
+        fuel_capacity=6000.0,
 
         fuel_burn_per_tick=1.0,
 
@@ -741,7 +746,7 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         turn_rate_deg_per_tick=12.0,
 
-        fuel_capacity=160.0,
+        fuel_capacity=8000.0,
 
         fuel_burn_per_tick=1.0,
 
@@ -821,6 +826,18 @@ MAX_TICK_WAIT_SECONDS: float = 3.0
 
 CONTRACT_CLAIM_TTL_TICKS: int = 50
 
+
+def max_grid_distance(grid_width: float, grid_height: float) -> float:
+    """Diagonal of a rectangular battlespace (bid distance normalization)."""
+    return math.sqrt(float(grid_width) ** 2 + float(grid_height) ** 2)
+
+
+def contract_claim_ttl_for_grid(grid_width: float, grid_height: float) -> int:
+    """TTL long enough for a round-trip transit at JET_SPEED on this map."""
+    transit = int(
+        math.ceil(2.0 * max(float(grid_width), float(grid_height)) / JET_SPEED)
+    )
+    return max(CONTRACT_CLAIM_TTL_TICKS, transit)
 
 
 # --- Messaging ---

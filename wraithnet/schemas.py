@@ -36,6 +36,8 @@ from wraithnet.config import (
 
     JET_FRAME_CATALOG,
 
+    MAX_GRID_DISTANCE,
+
     GuidanceType,
 
     JetFrameType,
@@ -208,6 +210,9 @@ class Observation(BaseModel):
     # Not sensor contacts — jets may MOVE toward these under fog of war until
     # a live TargetInfo appears in known_targets / world_view.
     briefed_seek_positions: list[tuple[float, float]] = Field(default_factory=list)
+
+    # Battlespace diagonal for CNP distance normalization (scenario-aware).
+    map_diagonal: float = Field(default=MAX_GRID_DISTANCE, gt=0.0)
 
 
 

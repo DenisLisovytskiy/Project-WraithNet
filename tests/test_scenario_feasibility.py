@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
@@ -216,11 +217,20 @@ def test_fuel_reach_boundary_interceptor_vs_far_target():
         frame_type="INTERCEPTOR",
     )
     assert jet_can_reach_round_trip(interceptor, home, (30.0, 30.0))
-    # Far corner exceeds INTERCEPTOR round-trip fuel under RTB margin.
-    far = (98.0, 98.0)
+    # Beyond INTERCEPTOR round-trip fuel under RTB margin (capacity sized for
+    # DEFAULT_GENERATION_GRID; PoC-corner distances are no longer out of reach).
+    capacity = config.JET_FRAME_CATALOG["INTERCEPTOR"].fuel_capacity
+    # Solve 2*(d/speed)*burn*margin > capacity  =>  d > capacity*speed/(2*burn*margin)
+    frame = config.JET_FRAME_CATALOG["INTERCEPTOR"]
+    beyond = (
+        capacity
+        * frame.max_speed
+        / (2.0 * frame.fuel_burn_per_tick * config.RTB_FUEL_SAFETY_MARGIN)
+    ) + 50.0
+    far = (home[0] + beyond / math.sqrt(2.0), home[1] + beyond / math.sqrt(2.0))
     assert not jet_can_reach_round_trip(interceptor, home, far)
     required = round_trip_fuel_required("INTERCEPTOR", home, far)
-    assert required > config.JET_FRAME_CATALOG["INTERCEPTOR"].fuel_capacity
+    assert required > capacity
 
     scenario = _scenario(
         jets=[
@@ -239,6 +249,8 @@ def test_fuel_reach_boundary_interceptor_vs_far_target():
                 "target_type": "HARDENED_BUNKER",
             }
         ],
+        grid_width=max(200.0, far[0] + 10.0),
+        grid_height=max(200.0, far[1] + 10.0),
     )
     report = analyze_feasibility(scenario)
     assert report.feasible is False
@@ -246,13 +258,12 @@ def test_fuel_reach_boundary_interceptor_vs_far_target():
 
 
 def test_discovery_chain_gap():
-    # Two destroyables farther apart than the discovery link max, with only the
-    # near one rooted from the launch ring.
+    # Over-horizon island beyond SENSOR_RADIUS: mission brief covers transit, so
+    # it is treated as a reachable root (no DISCOVERY_CHAIN_GAP ERROR).
     link = discovery_link_max_distance()
     assert link == pytest.approx(
         config.SENSOR_RADIUS - max_weapon_range() - DISCOVERY_MARGIN
     )
-    # Island must also sit beyond launch-ring sensor reach so it is not a root.
     island_x = max(25.0 + link + 5.0, config.SENSOR_RADIUS + LAUNCH_RING_OUTER_RADIUS + 10.0)
     scenario = _scenario(
         targets=[
@@ -277,10 +288,11 @@ def test_discovery_chain_gap():
                 "frame_type": "HEAVY_BOMBER",
             }
         ],
+        grid_width=max(100.0, island_x + 10.0),
+        grid_height=100.0,
     )
     report = analyze_feasibility(scenario)
-    assert report.feasible is False
-    assert any(i.code == DISCOVERY_CHAIN_GAP for i in report.issues)
+    assert not any(i.code == DISCOVERY_CHAIN_GAP for i in report.issues)
 
 
 def test_cooperative_objective_detection():
@@ -400,13 +412,13 @@ def test_group_ids_by_entity_affects_unreachable_reporting():
 
 
 def test_canonical_group_centers_override_mean_drift():
-    # Escort offset would pull a mean-center across a discovery gap; canonical
-    # centers keep the chain intact.
+    # Escort offset pulls a mean-center beyond link_max from Root. Over-horizon
+    # groups are mission-brief reachable, so mean drift no longer opens a
+    # DISCOVERY_CHAIN_GAP; canonical centers still keep local link geometry.
     link = discovery_link_max_distance()
     home = (2.0, 2.0)
     root = (10.0, 50.0)
     child = (10.0 + link - 1.0, 50.0)
-    # Keep Escort on-map while pushing G2 mean past link_max and sensor rooting.
     escort = (min(98.0, child[0] + link + 5.0), 50.0)
     mean_x = 0.5 * (child[0] + escort[0])
     assert mean_x - root[0] > link
@@ -445,7 +457,7 @@ def test_canonical_group_centers_override_mean_drift():
     )
     mapping = {"Root": "G1", "Child": "G2", "Escort": "G2"}
     without = analyze_feasibility(scenario, group_ids_by_entity=mapping)
-    assert any(i.code == DISCOVERY_CHAIN_GAP for i in without.issues)
+    assert not any(i.code == DISCOVERY_CHAIN_GAP for i in without.issues)
     with_centers = analyze_feasibility(
         scenario,
         group_ids_by_entity=mapping,

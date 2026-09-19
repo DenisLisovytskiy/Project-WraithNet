@@ -538,6 +538,9 @@ def _groups_reachable_from_launch(
         dist = math.dist(home, center)
         approach = max(0.0, dist - LAUNCH_RING_OUTER_RADIUS)
         if approach > config.SENSOR_RADIUS:
+            # Over-horizon AO: mission brief provides transit waypoints
+            # (Observation.briefed_seek_positions). Local discovery applies on arrival.
+            roots.append(gid)
             continue
         # Approximate the approach point on the launch ring toward the group.
         if dist <= 1e-9:
