@@ -126,6 +126,15 @@
       ],
       "hp_required": 1,
       "target_type": "HARDENED_BUNKER"
+    },
+    {
+      "target_id": "Target_2",
+      "position": [
+        26.076388359069824,
+        68.5352623462677
+      ],
+      "hp_required": 1,
+      "target_type": "HARDENED_BUNKER"
     }
   ],
   "sam_sites": [
@@ -1373,7 +1382,7 @@
           "building_height": null
         },
         {
-          "terrain_type": "FOREST",
+          "terrain_type": "PLAINS",
           "building_height": null
         },
         {
@@ -1451,11 +1460,11 @@
           "building_height": null
         },
         {
-          "terrain_type": "FOREST",
+          "terrain_type": "PLAINS",
           "building_height": null
         },
         {
-          "terrain_type": "FOREST",
+          "terrain_type": "PLAINS",
           "building_height": null
         },
         {
@@ -1525,7 +1534,7 @@
           "building_height": null
         },
         {
-          "terrain_type": "FOREST",
+          "terrain_type": "PLAINS",
           "building_height": null
         },
         {
@@ -1701,7 +1710,7 @@
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
@@ -1709,11 +1718,11 @@
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
@@ -1779,23 +1788,23 @@
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
-          "terrain_type": "PLAINS",
+          "terrain_type": "WATER",
           "building_height": null
         },
         {
@@ -1832,8 +1841,12 @@
         "Target_03",
         "Target_04",
         "Target_1",
+        "Target_2",
         "SAM_01",
-        "SAM_02"
+        "SAM_02",
+        "Tank_1",
+        "Tank_2",
+        "Corvette_1"
       ],
       "required": true,
       "faction": "FRIENDLY",
@@ -1863,8 +1876,42 @@
       ]
     }
   ],
-  "carriers": [],
-  "corvettes": [],
+  "carriers": [
+    {
+      "unit_id": "Carrier_1",
+      "faction": "FRIENDLY",
+      "position": [
+        58.75000059604645,
+        97.10668921470642
+      ],
+      "heading": 0.0,
+      "frame_type": "FLEET_CARRIER",
+      "route": [],
+      "hold_position": true
+    }
+  ],
+  "corvettes": [
+    {
+      "unit_id": "Corvette_1",
+      "faction": "ENEMY",
+      "position": [
+        95.9722250699997,
+        73.89993965625763
+      ],
+      "heading": 0.0,
+      "frame_type": "CORVETTE_STANDARD",
+      "route": [],
+      "hold_position": true,
+      "loadout": {
+        "SAM_RADAR": 8,
+        "CIWS": 40,
+        "DECK_GUN": 20
+      },
+      "sam_cooldown_ticks": 1,
+      "ciws_cooldown_ticks": 1,
+      "deck_gun_cooldown_ticks": 2
+    }
+  ],
   "aaa_sites": [
     {
       "target_id": "AAA_01",
@@ -1880,7 +1927,36 @@
       "target_type": "AAA_SITE"
     }
   ],
-  "tanks": [],
+  "tanks": [
+    {
+      "unit_id": "Tank_1",
+      "faction": "ENEMY",
+      "position": [
+        35.83333194255829,
+        64.61724042892456
+      ],
+      "heading": 0.0,
+      "frame_type": "MBT_STANDARD",
+      "hp": null,
+      "ammo": 24,
+      "order": "HOLD",
+      "waypoints": []
+    },
+    {
+      "unit_id": "Tank_2",
+      "faction": "ENEMY",
+      "position": [
+        32.22222328186035,
+        84.99096035957336
+      ],
+      "heading": 0.0,
+      "frame_type": "MBT_LIGHT",
+      "hp": null,
+      "ammo": 24,
+      "order": "HOLD",
+      "waypoints": []
+    }
+  ],
   "generation": {
     "generator_version": 3,
     "seed": 0,
