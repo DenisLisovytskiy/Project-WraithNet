@@ -7,9 +7,11 @@ the jet palette (applied later via ``NodePath.set_color``).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 
 from panda3d.core import (
+    ColorAttrib,
     Geom,
     GeomNode,
     GeomTriangles,
@@ -108,6 +110,265 @@ def palette_color_fn(base: Color, *, extra_dark: float = 0.0) -> ColorFn:
         return shade(base, upper=upper, rim=rim, x=x, y=y, dark=extra_dark)
 
     return _fn
+
+
+def paint_fn(base: Color, *, extra_dark: float = 0.0) -> ColorFn:
+    """Shaded material without the jet cyan rim — same language as terrain props."""
+
+    def _fn(x: float, y: float, z: float, upper: bool, rim: bool) -> Color:
+        del z, rim
+        return shade(base, upper=upper, rim=False, x=x, y=y, dark=extra_dark)
+
+    return _fn
+
+
+STEEL_HIGHLIGHT = (0.78, 0.82, 0.88)
+
+
+def steel_fn(base: Color, *, extra_dark: float = 0.0) -> ColorFn:
+    """Brushed-metal shade: brighter tops, cooler silver catch lights."""
+
+    def _fn(x: float, y: float, z: float, upper: bool, rim: bool) -> Color:
+        del z, rim
+        light = 1.10 if upper else 0.24
+        light *= 1.0 + 0.20 * max(-x, 0.0) + 0.10 * max(y, 0.0)
+        light = max(0.16, min(1.28, light - extra_dark))
+        r, g, b, a = base
+        rgb = (min(1.0, r * light), min(1.0, g * light), min(1.0, b * light))
+        if upper and light > 0.92:
+            t = min(0.55, (light - 0.92) * 1.8)
+            rgb = (
+                rgb[0] * (1.0 - t) + STEEL_HIGHLIGHT[0] * t,
+                rgb[1] * (1.0 - t) + STEEL_HIGHLIGHT[1] * t,
+                rgb[2] * (1.0 - t) + STEEL_HIGHLIGHT[2] * t,
+            )
+        return (rgb[0], rgb[1], rgb[2], a)
+
+    return _fn
+
+
+def flat_fn(base: Color) -> ColorFn:
+    def _fn(*_args) -> Color:
+        return base
+
+    return _fn
+
+
+def _lerp3(a: Vec3, b: Vec3, t: float) -> Vec3:
+    return (
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    )
+
+
+def _bilerp_quad(quad: Sequence[Vec3], u: float, v: float) -> Vec3:
+    a, b, c, d = quad
+    return _lerp3(_lerp3(a, b, u), _lerp3(d, c, u), v)
+
+
+def _quad_normal(quad: Sequence[Vec3]) -> Vec3:
+    ax, ay, az = quad[0]
+    bx, by, bz = quad[1]
+    dx, dy, dz = quad[3]
+    ux, uy, uz = bx - ax, by - ay, bz - az
+    vx, vy, vz = dx - ax, dy - ay, dz - az
+    nx = uy * vz - uz * vy
+    ny = uz * vx - ux * vz
+    nz = ux * vy - uy * vx
+    mag = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+    return (nx / mag, ny / mag, nz / mag)
+
+
+def mix_color(a: Color, b: Color, t: float) -> Color:
+    t = max(0.0, min(1.0, t))
+    return (
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    )
+
+
+def cell_hash01(i: int, j: int, salt: int) -> float:
+    h = (i * 73856093 ^ j * 19349663 ^ salt * 83492791) & 0xFFFFFFFF
+    h = (h * 1664525 + 1013904223) & 0xFFFFFFFF
+    return ((h >> 8) & 0xFFFF) / 65535.0
+
+
+def panel_lit(i: int, j: int, face: int, lit: Color, dark: Color, threshold: int = 145) -> Color:
+    return lit if cell_hash01(i, j, face) * 255.0 > threshold else dark
+
+
+def pick_shard(i: int, j: int, face: int, colors: Sequence[Color]) -> Color:
+    if not colors:
+        return (0.2, 0.2, 0.2, 1.0)
+    idx = int(cell_hash01(i, j, face + 3) * len(colors)) % len(colors)
+    return colors[idx]
+
+
+def add_quad_grid(
+    mesh: MeshBuilder,
+    quad: Sequence[Vec3],
+    cols: int,
+    rows: int,
+    color_at: Callable[[int, int], Color],
+    *,
+    fill: float = 0.58,
+    proud: float = 0.035,
+) -> None:
+    """Subdivide a quad into a panel grid (building windows / AESA cells)."""
+    if cols < 1 or rows < 1 or len(quad) != 4:
+        return
+    nx, ny, nz = _quad_normal(quad)
+    thickness = (nx * proud, ny * proud, nz * proud)
+    pad = (1.0 - fill) * 0.5
+    for j in range(rows):
+        v0 = (j + pad) / rows
+        v1 = (j + 1.0 - pad) / rows
+        for i in range(cols):
+            u0 = (i + pad) / cols
+            u1 = (i + 1.0 - pad) / cols
+            cell = [
+                _bilerp_quad(quad, u0, v0),
+                _bilerp_quad(quad, u1, v0),
+                _bilerp_quad(quad, u1, v1),
+                _bilerp_quad(quad, u0, v1),
+            ]
+            add_slab(mesh, cell, thickness, flat_fn(color_at(i, j)))
+
+
+def add_shattered_grid(
+    mesh: MeshBuilder,
+    quad: Sequence[Vec3],
+    cols: int,
+    rows: int,
+    colors: Sequence[Color],
+    *,
+    fill: float = 0.86,
+    proud: float = 0.028,
+    jitter: float = 0.42,
+    skip: float = 0.10,
+    seed: int = 0,
+) -> None:
+    """Jittered mosaic of tiles — cracked AESA / worn armor, not a window grid."""
+    if cols < 1 or rows < 1 or len(quad) != 4 or not colors:
+        return
+    nx, ny, nz = _quad_normal(quad)
+    uv: list[list[tuple[float, float]]] = []
+    for j in range(rows + 1):
+        row: list[tuple[float, float]] = []
+        for i in range(cols + 1):
+            du = jitter * 0.50 * (cell_hash01(i, j, seed) - 0.5) / cols
+            dv = jitter * 0.50 * (cell_hash01(i, j, seed + 19) - 0.5) / rows
+            u = 0.0 if i == 0 else (1.0 if i == cols else max(0.02, min(0.98, i / cols + du)))
+            v = 0.0 if j == 0 else (1.0 if j == rows else max(0.02, min(0.98, j / rows + dv)))
+            row.append((u, v))
+        uv.append(row)
+    for j in range(rows):
+        for i in range(cols):
+            if cell_hash01(i, j, seed + 71) < skip:
+                continue
+            corners = (uv[j][i], uv[j][i + 1], uv[j + 1][i + 1], uv[j + 1][i])
+            cu = sum(p[0] for p in corners) * 0.25
+            cv = sum(p[1] for p in corners) * 0.25
+            cell = [
+                _bilerp_quad(quad, cu + (u - cu) * fill, cv + (v - cv) * fill)
+                for u, v in corners
+            ]
+            p = proud * (0.55 + 0.90 * cell_hash01(i, j, seed + 7))
+            thickness = (nx * p, ny * p, nz * p)
+            add_slab(mesh, cell, thickness, flat_fn(pick_shard(i, j, seed, colors)))
+
+
+def add_box_shattered(
+    mesh: MeshBuilder,
+    xmin: float,
+    xmax: float,
+    ymin: float,
+    ymax: float,
+    zmin: float,
+    zmax: float,
+    colors: Sequence[Color],
+    *,
+    cols: int = 4,
+    rows: int = 2,
+    include_top: bool = False,
+    fill: float = 0.84,
+    proud: float = 0.024,
+    jitter: float = 0.40,
+    skip: float = 0.08,
+    seed: int = 0,
+) -> None:
+    """Shattered tiles on the four walls, optionally the roof."""
+    faces = (
+        [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymin, zmax), (xmin, ymin, zmax)],
+        [(xmax, ymax, zmin), (xmin, ymax, zmin), (xmin, ymax, zmax), (xmax, ymax, zmax)],
+        [(xmin, ymax, zmin), (xmin, ymin, zmin), (xmin, ymin, zmax), (xmin, ymax, zmax)],
+        [(xmax, ymin, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmax, ymin, zmax)],
+    )
+    for face, quad in enumerate(faces):
+        add_shattered_grid(
+            mesh,
+            quad,
+            cols,
+            rows,
+            colors,
+            fill=fill,
+            proud=proud,
+            jitter=jitter,
+            skip=skip,
+            seed=seed + face * 13,
+        )
+    if include_top:
+        add_shattered_grid(
+            mesh,
+            [(xmin, ymin, zmax), (xmax, ymin, zmax), (xmax, ymax, zmax), (xmin, ymax, zmax)],
+            max(2, cols),
+            max(2, rows + 1),
+            colors,
+            fill=fill,
+            proud=proud,
+            jitter=jitter,
+            skip=skip,
+            seed=seed + 80,
+        )
+
+
+def add_box_panels(
+    mesh: MeshBuilder,
+    xmin: float,
+    xmax: float,
+    ymin: float,
+    ymax: float,
+    zmin: float,
+    zmax: float,
+    lit: Color,
+    dark: Color,
+    *,
+    cols: int = 3,
+    rows: int = 2,
+    fill: float = 0.55,
+    proud: float = 0.03,
+    threshold: int = 145,
+) -> None:
+    """Lit/dark panel grid on the four vertical faces of an AABB."""
+    faces = (
+        [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymin, zmax), (xmin, ymin, zmax)],
+        [(xmax, ymax, zmin), (xmin, ymax, zmin), (xmin, ymax, zmax), (xmax, ymax, zmax)],
+        [(xmin, ymax, zmin), (xmin, ymin, zmin), (xmin, ymin, zmax), (xmin, ymax, zmax)],
+        [(xmax, ymin, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmax, ymin, zmax)],
+    )
+    for face, quad in enumerate(faces):
+        add_quad_grid(
+            mesh,
+            quad,
+            cols,
+            rows,
+            lambda i, j, f=face: panel_lit(i, j, f, lit, dark, threshold),
+            fill=fill,
+            proud=proud,
+        )
 
 
 def add_solid_planform(
@@ -285,13 +546,17 @@ def attach_mesh_group(
     *,
     scale: float = MESH_SCALE,
     outline: GeomNode | None = None,
+    vertex_colors: bool = False,
 ) -> NodePath:
     group = parent.attach_new_node(name)
     group.set_light_off()
     group.set_two_sided(True)
     group.set_transparency(TransparencyAttrib.MAlpha)
     group.set_scale(scale)
-    group.attach_new_node(geom)
+    fill = group.attach_new_node(geom)
+    if vertex_colors:
+        # Keep group.set_color for faction/destroyed API; fill uses baked materials.
+        fill.set_attrib(ColorAttrib.make_vertex())
     if outline is not None:
         edge = group.attach_new_node(outline)
         edge.set_color(*KEYLINE_COLOR)

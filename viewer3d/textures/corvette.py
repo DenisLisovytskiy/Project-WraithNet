@@ -13,12 +13,15 @@ from panda3d.core import NodePath
 from viewer3d.textures.geom import (
     Color,
     MeshBuilder,
+    add_box_shattered,
     add_loft,
+    add_shattered_grid,
     add_slab,
     attach_mesh_group,
     hull_ring,
-    palette_color_fn,
+    paint_fn,
     planform_outline,
+    steel_fn,
 )
 
 
@@ -74,6 +77,32 @@ STANDARD = CorvetteSpec(
 )
 
 
+IRON = (0.22, 0.18, 0.16, 1.0)
+IRON_DARK = (0.10, 0.09, 0.08, 1.0)
+RUST = (0.48, 0.20, 0.14, 1.0)
+COPPER = (0.72, 0.38, 0.18, 1.0)
+HULL_SHARDS = (
+    (0.24, 0.20, 0.18, 1.0),
+    (0.16, 0.14, 0.12, 1.0),
+    (0.32, 0.26, 0.22, 1.0),
+    (0.12, 0.10, 0.09, 1.0),
+    (0.40, 0.22, 0.16, 1.0),
+)
+DECK_SHARDS = (
+    (0.42, 0.18, 0.14, 1.0),
+    (0.28, 0.14, 0.12, 1.0),
+    (0.52, 0.24, 0.16, 1.0),
+    (0.16, 0.12, 0.10, 1.0),
+)
+BRIDGE_SHARDS = (
+    (0.26, 0.20, 0.18, 1.0),
+    (0.70, 0.42, 0.22, 0.90),
+    (0.10, 0.08, 0.08, 1.0),
+    COPPER,
+    (0.18, 0.14, 0.12, 1.0),
+)
+
+
 def _stations(spec: CorvetteSpec) -> list:
     b, d, k = spec.mid_beam, spec.deck_z, spec.keel_z
     return [
@@ -113,6 +142,22 @@ def _add_superstructure(mesh: MeshBuilder, spec: CorvetteSpec, color_fn) -> None
         ],
         (0.0, 0.0, spec.super_h),
         color_fn,
+    )
+    add_box_shattered(
+        mesh,
+        -hw * 0.95,
+        hw * 0.95,
+        min(y0, y1) + 0.02,
+        max(y0, y1) - 0.02,
+        z0 + 0.02,
+        z0 + spec.super_h * 0.92,
+        BRIDGE_SHARDS,
+        cols=3,
+        rows=2,
+        include_top=True,
+        jitter=0.30,
+        skip=0.08,
+        seed=12,
     )
     # Bridge face.
     add_slab(
@@ -222,24 +267,65 @@ def _add_ciws(mesh: MeshBuilder, spec: CorvetteSpec, y: float, color_fn) -> None
 
 def _attach(parent: NodePath, name: str, color: Color, spec: CorvetteSpec) -> NodePath:
     mesh = MeshBuilder()
-    color_fn = palette_color_fn(color)
-    dark_fn = palette_color_fn(color, extra_dark=0.40)
+    color_fn = steel_fn(IRON)
+    dark_fn = paint_fn(IRON_DARK, extra_dark=0.06)
+    rust = paint_fn(RUST)
     add_loft(mesh, _stations(spec), color_fn, cap=True)
-    _add_superstructure(mesh, spec, color_fn)
+    hw = spec.mid_beam * 0.48
+    add_box_shattered(
+        mesh,
+        -hw,
+        hw,
+        spec.stern * 0.80,
+        spec.bow * 0.70,
+        spec.keel_z * 0.12,
+        spec.deck_z - 0.005,
+        HULL_SHARDS,
+        cols=5 if spec.deck_gun else 3,
+        rows=2,
+        jitter=0.28,
+        skip=0.08,
+        seed=7,
+    )
+    z_deck = spec.deck_z + 0.012
+    add_shattered_grid(
+        mesh,
+        [
+            (-hw * 0.85, spec.stern * 0.75, z_deck),
+            (hw * 0.85, spec.stern * 0.75, z_deck),
+            (hw * 0.55, spec.bow * 0.62, z_deck),
+            (-hw * 0.55, spec.bow * 0.62, z_deck),
+        ],
+        4 if spec.deck_gun else 3,
+        8 if spec.deck_gun else 5,
+        DECK_SHARDS,
+        fill=0.88,
+        proud=0.008,
+        jitter=0.24,
+        skip=0.06,
+        seed=19,
+    )
+    _add_superstructure(mesh, spec, rust)
     _add_vls(mesh, spec, dark_fn)
     mast_y = -0.22
-    _add_mast(mesh, spec, 0.0, mast_y, 0.28 if not spec.twin_mast else 0.34, color_fn)
+    _add_mast(mesh, spec, 0.0, mast_y, 0.28 if not spec.twin_mast else 0.34, dark_fn)
     if spec.twin_mast:
-        _add_mast(mesh, spec, 0.0, mast_y - 0.28, 0.26, color_fn)
+        _add_mast(mesh, spec, 0.0, mast_y - 0.28, 0.26, dark_fn)
     if spec.deck_gun:
-        _add_gun(mesh, spec, color_fn, dark_fn)
+        _add_gun(mesh, spec, rust, dark_fn)
     else:
-        _add_ciws(mesh, spec, 0.62, color_fn)
+        _add_ciws(mesh, spec, 0.62, rust)
     if spec.ciws_aft:
-        _add_ciws(mesh, spec, spec.stern + 0.28, color_fn)
+        _add_ciws(mesh, spec, spec.stern + 0.28, rust)
     outline = planform_outline("sym-edge", _deck_planform(spec), lambda _x, _y: spec.deck_z)
     return attach_mesh_group(
-        parent, name, mesh.to_geom("sym-fill"), color, scale=spec.scale, outline=outline
+        parent,
+        name,
+        mesh.to_geom("sym-fill"),
+        color,
+        scale=spec.scale,
+        outline=outline,
+        vertex_colors=True,
     )
 
 

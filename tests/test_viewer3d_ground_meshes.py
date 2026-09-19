@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("panda3d")
 
-from panda3d.core import BillboardEffect, NodePath, loadPrcFileData
+from panda3d.core import BillboardEffect, GeomVertexReader, NodePath, loadPrcFileData
 
 loadPrcFileData("", "window-type none")
 loadPrcFileData("", "audio-library-name null")
@@ -18,8 +18,10 @@ from viewer3d.textures import (
     FRIENDLY,
     attach_aaa_light,
     attach_aaa_turreted,
+    attach_corvette_light,
     attach_corvette_standard,
     attach_escort_carrier,
+    attach_fleet_carrier,
     attach_ground_mesh,
     attach_hardened_bunker,
     attach_home_base,
@@ -44,6 +46,26 @@ def _extent(node: NodePath):
     assert box is not None
     lo, hi = box
     return hi.x - lo.x, hi.y - lo.y, hi.z - lo.z
+
+
+def _fill_vertex_colors(node: NodePath) -> set[tuple[float, float, float]]:
+    colors: set[tuple[float, float, float]] = set()
+    fill = node.find("**/sym-fill")
+    assert not fill.is_empty()
+    geom_node = fill.node()
+    for gi in range(geom_node.get_num_geoms()):
+        reader = GeomVertexReader(geom_node.get_geom(gi).get_vertex_data(), "color")
+        while not reader.is_at_end():
+            c = reader.get_data4()
+            colors.add((round(float(c[0]), 2), round(float(c[1]), 2), round(float(c[2]), 2)))
+    return colors
+
+
+def _fill_vertex_count(node: NodePath) -> int:
+    fill = node.find("**/sym-fill")
+    assert not fill.is_empty()
+    geom_node = fill.node()
+    return sum(geom_node.get_geom(i).get_vertex_data().get_num_rows() for i in range(geom_node.get_num_geoms()))
 
 
 def _header() -> TraceHeader:
@@ -170,6 +192,89 @@ def test_radar_is_a_long_truck_with_a_wide_panel():
     assert h > 3.5
     assert w > 2.2
     assert length > 2.0
+
+
+def test_bunker_radar_jammer_have_baked_panel_textures():
+    root = NodePath("tex")
+    bunker = attach_hardened_bunker(root, "b", ENEMY)
+    radar = attach_mobile_radar(root, "r", ENEMY)
+    jammer = attach_jammer(root, "j", ENEMY)
+    b_cols = _fill_vertex_colors(bunker)
+    r_cols = _fill_vertex_colors(radar)
+    j_cols = _fill_vertex_colors(jammer)
+    assert len(b_cols) >= 6
+    assert len(r_cols) >= 8
+    assert len(j_cols) >= 6
+    assert any(r > g + 0.08 and r > b for r, g, b in b_cols)
+    assert any(r > 0.55 and r > b + 0.20 for r, g, b in r_cols)
+    assert any(g > b and r < 0.70 for r, g, b in r_cols)
+    assert any((r + g + b) / 3.0 > 0.55 for r, g, b in r_cols)
+    assert any(b > r + 0.08 and b >= g for r, g, b in j_cols)
+    assert not any(r > 0.55 and b > 0.70 and g < r * 0.75 for r, g, b in j_cols)
+    assert _fill_vertex_count(bunker) >= 200
+    assert _fill_vertex_count(radar) >= 400
+    assert _fill_vertex_count(jammer) >= 200
+
+
+def test_carriers_tanks_aaa_have_shattered_textures():
+    root = NodePath("more")
+    escort = attach_escort_carrier(root, "cv", FRIENDLY)
+    fleet = attach_fleet_carrier(root, "cvn", FRIENDLY)
+    tank_f = attach_mbt_standard(root, "tf", FRIENDLY)
+    tank_e = attach_mbt_standard(root, "te", ENEMY)
+    pit = attach_aaa_light(root, "pit", ENEMY)
+    spaag = attach_aaa_turreted(root, "spaag", ENEMY)
+    for node, minimum in (
+        (escort, 8),
+        (fleet, 8),
+        (tank_f, 6),
+        (pit, 6),
+        (spaag, 6),
+    ):
+        cols = _fill_vertex_colors(node)
+        assert len(cols) >= minimum, node.get_name()
+        assert _fill_vertex_count(node) >= 200, node.get_name()
+    cv_cols = _fill_vertex_colors(escort)
+    assert all(g <= b + 0.04 for r, g, b in cv_cols)
+    assert any(r > 0.50 and b >= g for r, g, b in cv_cols)
+    aaa_cols = _fill_vertex_colors(spaag)
+    assert any(r > g + 0.08 and r > b for r, g, b in aaa_cols)
+    friend_g = max(g for _r, g, _b in _fill_vertex_colors(tank_f))
+    foe_r = max(r for r, _g, _b in _fill_vertex_colors(tank_e))
+    assert friend_g > 0.35
+    assert foe_r > 0.35
+
+
+def test_jammer_and_sam_have_shattered_textures():
+    root = NodePath("ew-sam")
+    jammer = attach_jammer(root, "j", ENEMY)
+    sam = attach_sam_site(root, "s", ENEMY)
+    j_cols = _fill_vertex_colors(jammer)
+    s_cols = _fill_vertex_colors(sam)
+    assert len(j_cols) >= 8
+    assert len(s_cols) >= 8
+    assert _fill_vertex_count(jammer) >= 400
+    assert _fill_vertex_count(sam) >= 400
+    assert any(b > r + 0.08 and b >= g for r, g, b in j_cols)
+    assert not any(r > 0.55 and b > 0.70 and g < r * 0.75 for r, g, b in j_cols)
+    assert any(r > g + 0.20 and r > b for r, g, b in s_cols)
+
+
+def test_home_base_and_corvettes_have_baked_textures():
+    root = NodePath("rest")
+    home = attach_home_base(root, "hb", FRIENDLY)
+    light = attach_corvette_light(root, "ffl", ENEMY)
+    standard = attach_corvette_standard(root, "ff", ENEMY)
+    h_cols = _fill_vertex_colors(home)
+    c_cols = _fill_vertex_colors(standard)
+    assert len(h_cols) >= 8
+    assert len(c_cols) >= 6
+    assert _fill_vertex_count(home) >= 200
+    assert _fill_vertex_count(light) >= 200
+    assert _fill_vertex_count(standard) >= 200
+    assert any(g > r + 0.12 for r, g, _b in h_cols)
+    assert any(abs(r - g) < 0.10 and r > 0.30 for r, g, _b in h_cols)
+    assert any(r > g + 0.12 and r > b for r, g, b in c_cols)
 
 
 def test_jammer_is_a_tall_hex_antenna_farm():

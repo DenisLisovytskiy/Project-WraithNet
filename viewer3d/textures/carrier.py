@@ -13,13 +13,16 @@ from panda3d.core import NodePath
 from viewer3d.textures.geom import (
     Color,
     MeshBuilder,
+    add_box_shattered,
     add_loft,
+    add_shattered_grid,
     add_slab,
     add_solid_planform,
     attach_mesh_group,
     hull_ring,
-    palette_color_fn,
+    paint_fn,
     planform_outline,
+    steel_fn,
 )
 
 
@@ -40,6 +43,40 @@ class CarrierSpec:
     angled: bool
     catapults: int
 
+# Authentic naval steel — Navy Haze Gray with weathered, non-skid flight deck.
+HULL = (0.55, 0.57, 0.59, 1.0)
+HULL_DARK = (0.35, 0.36, 0.38, 1.0)
+DECK = (0.24, 0.25, 0.26, 1.0)
+ISLAND = (0.58, 0.60, 0.62, 1.0)
+WINDOW_LIT = (0.85, 0.90, 0.85, 0.90)  # Warmer interior lighting
+WINDOW_DARK = (0.10, 0.12, 0.15, 1.0)
+
+# Deck shards represent variations in the non-skid coating, tire rubber/oil stains, 
+# and faded paint from flight deck markings (white/yellowish).
+DECK_SHARDS = (
+    (0.22, 0.23, 0.24, 1.0),  # Fresh non-skid
+    (0.28, 0.29, 0.30, 1.0),  # Weathered/sun-bleached non-skid
+    (0.12, 0.12, 0.13, 1.0),  # Rubber streaks / oil stains
+    (0.45, 0.44, 0.40, 1.0),  # Faded yellow/white deck lines
+)
+
+# Hull shards introduce panel variations, salt-spray fading, and slight rust.
+HULL_SHARDS = (
+    (0.52, 0.54, 0.56, 1.0),  # Base haze gray panel
+    (0.62, 0.64, 0.66, 1.0),  # Salt-faded / highlight panel
+    (0.45, 0.46, 0.48, 1.0),  # Shadowed / recessed panel
+    (0.50, 0.47, 0.44, 1.0),  # Subtle rust / grime streak
+    (0.58, 0.60, 0.62, 1.0),  # Standard panel
+)
+
+# Island panels match the hull but include radar/vent dark grays and windows.
+ISLAND_SHARDS = (
+    (0.55, 0.57, 0.59, 1.0),
+    (0.60, 0.62, 0.64, 1.0),
+    WINDOW_LIT,
+    WINDOW_DARK,
+    (0.30, 0.32, 0.35, 1.0),  # Vents / radar panels
+)
 
 # Straight pocket deck.
 ESCORT = CarrierSpec(
@@ -121,6 +158,22 @@ def _add_island(mesh: MeshBuilder, spec: CarrierSpec, color_fn, dark_fn) -> None
         ],
         (0.0, 0.0, spec.island_h),
         color_fn,
+    )
+    add_box_shattered(
+        mesh,
+        x - hw * 0.98,
+        x + hw * 0.98,
+        min(y0, y1) + 0.02,
+        max(y0, y1) - 0.02,
+        z + 0.02,
+        z + spec.island_h * 0.92,
+        ISLAND_SHARDS,
+        cols=3,
+        rows=3,
+        include_top=True,
+        jitter=0.22,
+        skip=0.06,
+        seed=8,
     )
     # Bridge / radar top.
     add_slab(
@@ -217,9 +270,9 @@ def _add_deck_gear(mesh: MeshBuilder, spec: CarrierSpec, dark_fn, color_fn) -> N
 
 def _attach(parent: NodePath, name: str, color: Color, spec: CarrierSpec) -> NodePath:
     mesh = MeshBuilder()
-    color_fn = palette_color_fn(color)
-    dark_fn = palette_color_fn(color, extra_dark=0.45)
-    deck_fn = palette_color_fn(color, extra_dark=0.22)
+    color_fn = steel_fn(HULL)
+    dark_fn = steel_fn(HULL_DARK, extra_dark=0.08)
+    deck_fn = paint_fn(DECK)
     _add_hull(mesh, spec, color_fn)
     add_solid_planform(
         mesh,
@@ -228,13 +281,57 @@ def _attach(parent: NodePath, name: str, color: Color, spec: CarrierSpec) -> Nod
         lambda x, y: _deck_z_lo(x, y, spec),
         deck_fn,
     )
+    xs = [p[0] for p in spec.deck]
+    ys = [p[1] for p in spec.deck]
+    z_deck = spec.deck_z + 0.014
+    pad_x = (max(xs) - min(xs)) * 0.08
+    pad_y = (max(ys) - min(ys)) * 0.06
+    add_shattered_grid(
+        mesh,
+        [
+            (min(xs) + pad_x, min(ys) + pad_y, z_deck),
+            (max(xs) - pad_x, min(ys) + pad_y, z_deck),
+            (max(xs) - pad_x, max(ys) - pad_y, z_deck),
+            (min(xs) + pad_x, max(ys) - pad_y, z_deck),
+        ],
+        8 if spec.angled else 5,
+        12 if spec.angled else 8,
+        DECK_SHARDS,
+        fill=0.92,
+        proud=0.008,
+        jitter=0.18,
+        skip=0.04,
+        seed=30,
+    )
+    hw = spec.hull_beam * 0.48
+    add_box_shattered(
+        mesh,
+        -hw,
+        hw,
+        spec.hull_stern * 0.82,
+        spec.hull_bow * 0.72,
+        spec.keel_z * 0.15,
+        spec.deck_z - 0.01,
+        HULL_SHARDS,
+        cols=6 if spec.angled else 4,
+        rows=2,
+        jitter=0.20,
+        skip=0.05,
+        seed=17,
+    )
     _add_island(mesh, spec, color_fn, dark_fn)
     _add_deck_gear(mesh, spec, dark_fn, color_fn)
     outline = planform_outline(
         "sym-edge", spec.deck, lambda x, y: _deck_z(x, y, spec)
     )
     return attach_mesh_group(
-        parent, name, mesh.to_geom("sym-fill"), color, scale=spec.scale, outline=outline
+        parent,
+        name,
+        mesh.to_geom("sym-fill"),
+        color,
+        scale=spec.scale,
+        outline=outline,
+        vertex_colors=True,
     )
 
 
