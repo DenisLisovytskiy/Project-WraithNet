@@ -194,6 +194,26 @@ def test_radar_is_a_long_truck_with_a_wide_panel():
     assert length > 2.0
 
 
+def test_mobile_radar_has_a_spinning_rotor_head():
+    from viewer3d.scene import SceneHandles, animate_radars
+
+    root = NodePath("radar")
+    radar = attach_mobile_radar(root, "r", ENEMY)
+    rotor = radar.find("**/radar-rotor")
+    assert not rotor.is_empty()
+    assert rotor.get_tag("radar-spin") == "1"
+    before = float(rotor.get_h())
+    handles = SceneHandles(root=root, fx_root=root.attach_new_node("fx"))
+    animate_radars(handles, 1.0)
+    assert float(rotor.get_h()) == pytest.approx(before + handles.radar_spin_deg_per_sec)
+    # Yaw only — the AESA face stays skyward (no pitch/roll).
+    assert float(rotor.get_p()) == pytest.approx(0.0)
+    assert float(rotor.get_r()) == pytest.approx(0.0)
+    rotor.set_tag("radar-spin", "0")
+    mid = float(rotor.get_h())
+    animate_radars(handles, 1.0)
+    assert float(rotor.get_h()) == pytest.approx(mid)
+
 def test_bunker_radar_jammer_have_baked_panel_textures():
     root = NodePath("tex")
     bunker = attach_hardened_bunker(root, "b", ENEMY)
@@ -243,6 +263,32 @@ def test_carriers_tanks_aaa_have_shattered_textures():
     foe_r = max(r for r, _g, _b in _fill_vertex_colors(tank_e))
     assert friend_g > 0.35
     assert foe_r > 0.35
+
+
+def test_jammer_rings_spin_independently():
+    from viewer3d.scene import SceneHandles, animate_jammers
+
+    root = NodePath("ew")
+    jammer = attach_jammer(root, "j", ENEMY)
+    rings = [jammer.find(f"**/jammer-ring-{i}") for i in range(3)]
+    assert all(not r.is_empty() for r in rings)
+    assert all(r.get_tag("jammer-spin") == "1" for r in rings)
+    rates = [float(r.get_python_tag("spin_deg_per_sec")) for r in rings]
+    assert len(set(rates)) == 3
+    assert any(rate > 0 for rate in rates) and any(rate < 0 for rate in rates)
+    before = [float(r.get_h()) for r in rings]
+    handles = SceneHandles(root=root, fx_root=root.attach_new_node("fx"))
+    animate_jammers(handles, 1.0)
+    after = [float(r.get_h()) for r in rings]
+    for i, rate in enumerate(rates):
+        assert after[i] == pytest.approx(before[i] + rate)
+    # Stopping one ring must not freeze the others.
+    rings[1].set_tag("jammer-spin", "0")
+    mid = [float(r.get_h()) for r in rings]
+    animate_jammers(handles, 1.0)
+    assert float(rings[1].get_h()) == pytest.approx(mid[1])
+    assert float(rings[0].get_h()) == pytest.approx(mid[0] + rates[0])
+    assert float(rings[2].get_h()) == pytest.approx(mid[2] + rates[2])
 
 
 def test_jammer_and_sam_have_shattered_textures():

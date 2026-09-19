@@ -1,8 +1,10 @@
-"""Truck-mounted mobile search radar: olive chassis and a shattered amber AESA."""
+"""Truck-mounted mobile search radar: chassis + a spinning AESA head."""
 
 from __future__ import annotations
 
-from panda3d.core import NodePath
+import math
+
+from panda3d.core import ColorAttrib, NodePath
 
 from viewer3d.textures.geom import (
     Color,
@@ -45,13 +47,14 @@ HULL_SHARDS = (
     (0.38, 0.40, 0.22, 1.0),
 )
 
+# Mast tip and AESA sit above this; everything higher rotates around +Z.
+_ROTOR_Z = 1.28
 
-def attach_mobile_radar(parent: NodePath, name: str, color: Color) -> NodePath:
-    mesh = MeshBuilder()
+
+def _build_chassis(mesh: MeshBuilder) -> None:
     hull = steel_fn(HULL)
     dark = paint_fn(HULL_DARK)
     cab = steel_fn(CAB)
-    frame = steel_fn(AESA_FRAME)
     add_loft(
         mesh,
         [
@@ -104,36 +107,72 @@ def attach_mobile_radar(parent: NodePath, name: str, color: Color) -> NodePath:
     add_box(mesh, -0.44, -0.28, -0.12, 0.12, 0.04, 0.14, dark)
     add_box(mesh, 0.28, 0.44, -0.12, 0.12, 0.04, 0.14, dark)
     add_box(mesh, -0.20, 0.20, -0.48, -0.08, 0.50, 0.78, dark)
-    add_box(mesh, -0.10, 0.10, -0.16, 0.10, 0.50, 1.42, dark)
-    add_box(mesh, -0.22, 0.22, -0.14, 0.16, 1.32, 1.58, hull)
+    # Fixed mast column — rotor spins on the tip.
+    add_box(mesh, -0.10, 0.10, -0.16, 0.10, 0.50, _ROTOR_Z, dark)
+
+
+def _build_rotor(mesh: MeshBuilder) -> None:
+    """AESA plate at ~45° elevation (face up-and-out); yaw keeps that tilt."""
+    hull = steel_fn(HULL)
+    dark = paint_fn(HULL_DARK)
+    frame = steel_fn(AESA_FRAME)
+    add_box(mesh, -0.20, 0.20, -0.20, 0.20, _ROTOR_Z, 1.48, hull)
+    add_box(mesh, -0.14, 0.14, -0.14, 0.14, 1.48, 1.58, dark)
+
+    # Vertical panel pitched 45° around +X so the face normal is forward+up.
+    elev = math.radians(45.0)
+    s, c = math.sin(elev), math.cos(elev)
+    ox, oy, oz = 0.0, 0.0, 1.70
+    half_w, half_h = 0.70, 0.78
+
+    def _pt(u: float, v: float) -> tuple[float, float, float]:
+        # Untilted: (u, 0, v). After Rx(+elev): top leans aft, face looks up-out.
+        return (ox + u, oy - v * s, oz + v * c)
+
     face = [
-        (0.00, -0.02, 0.92),
-        (0.72, 0.28, 1.64),
-        (0.00, 0.56, 2.32),
-        (-0.72, 0.28, 1.64),
+        _pt(-half_w, -half_h),
+        _pt(half_w, -half_h),
+        _pt(half_w, half_h),
+        _pt(-half_w, half_h),
     ]
-    add_slab(mesh, face, (0.0, 0.28, 0.0), frame)
+    # Extrude along the face normal (0, cos elev, sin elev).
+    thick = 0.14
+    add_slab(mesh, face, (0.0, c * thick, s * thick), frame)
     add_shattered_grid(
         mesh,
         face,
         7,
-        9,
+        7,
         AESA_SHARDS,
         fill=0.92,
-        proud=0.045,
-        jitter=0.40,
+        proud=0.04,
+        jitter=0.36,
         skip=0.06,
         seed=21,
     )
-    add_box(mesh, -0.18, 0.18, -0.08, 0.22, 1.48, 1.72, dark)
-    add_box(mesh, -0.06, 0.06, 0.10, 0.42, 1.20, 1.55, dark)
+    add_box(mesh, -0.10, 0.10, -0.10, 0.10, 1.55, 1.75, dark)
+
+
+def attach_mobile_radar(parent: NodePath, name: str, color: Color) -> NodePath:
+    chassis = MeshBuilder()
+    _build_chassis(chassis)
     outline = planform_outline("sym-edge", _DIAMOND, lambda _x, _y: 0.52)
-    return attach_mesh_group(
+    group = attach_mesh_group(
         parent,
         name,
-        mesh.to_geom("sym-fill"),
+        chassis.to_geom("sym-fill"),
         color,
         scale=1.92,
         outline=outline,
         vertex_colors=True,
     )
+
+    rotor_mesh = MeshBuilder()
+    _build_rotor(rotor_mesh)
+    rotor = group.attach_new_node("radar-rotor")
+    rotor.set_tag("radar-spin", "1")
+    fill = rotor.attach_new_node(rotor_mesh.to_geom("rotor-fill"))
+    fill.set_attrib(ColorAttrib.make_vertex())
+    fill.set_light_off()
+    fill.set_two_sided(True)
+    return group

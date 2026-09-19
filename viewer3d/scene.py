@@ -173,6 +173,8 @@ class SceneHandles:
     pending_jet_removal: set[str] = field(default_factory=set)
     terrain_root: NodePath | None = None
     water_anim_phase: float = 0.0
+    # Deg/sec spin for mobile-radar AESA heads (cosmetic, presentation clock).
+    radar_spin_deg_per_sec: float = 45.0
     # Phase 38: authoritative in-flight missile glyphs keyed by missile_id.
     missiles: dict[str, NodePath] = field(default_factory=dict)
 
@@ -1262,12 +1264,18 @@ def update_tick(
             ring = anchor.find("**/sam-ring-*")
             if not ring.is_empty():
                 ring.hide()
+            rotor = anchor.find("**/radar-rotor")
+            if not rotor.is_empty():
+                rotor.set_tag("radar-spin", "0")
         else:
             ttype = header.target_types[frame.target_id]
             anchor.clear_render_mode()
             anchor.clear_color()
             glyph = anchor.find("**/glyph-*")
             _paint_glyph(glyph, TARGET_COLORS.get(ttype, ENEMY))
+            rotor = anchor.find("**/radar-rotor")
+            if not rotor.is_empty():
+                rotor.set_tag("radar-spin", "1")
 
     _sync_aaa_sprites(handles, tick)
     _update_missile_glyphs(handles, tick)
@@ -1618,6 +1626,8 @@ def decay_highlights(handles: SceneHandles, dt: float) -> None:
         still.append(item)
     handles.highlight_fx = still
     animate_water(handles, dt)
+    animate_radars(handles, dt)
+    animate_jammers(handles, dt)
 
 
 def clear_highlight_fx(handles: SceneHandles) -> None:
@@ -1645,6 +1655,30 @@ def animate_water(handles: SceneHandles, dt: float) -> None:
     # Subtle alpha pulse; Z stays at surface zero so entities remain consistent.
     pulse = 0.78 + 0.08 * math.sin(handles.water_anim_phase)
     water.set_color_scale(1.0, 1.0, 1.0, pulse)
+
+
+def animate_radars(handles: SceneHandles, dt: float) -> None:
+    """Spin mobile-radar AESA heads around the mast axis (presentation clock)."""
+    if handles.root is None or handles.root.is_empty() or dt <= 0.0:
+        return
+    step = float(handles.radar_spin_deg_per_sec) * float(dt)
+    for rotor in handles.root.find_all_matches("**/radar-rotor"):
+        if rotor.is_empty() or rotor.get_tag("radar-spin") != "1":
+            continue
+        rotor.set_h(rotor.get_h() + step)
+
+
+def animate_jammers(handles: SceneHandles, dt: float) -> None:
+    """Spin each jammer dipole ring at its own rate (presentation clock)."""
+    if handles.root is None or handles.root.is_empty() or dt <= 0.0:
+        return
+    for ring in handles.root.find_all_matches("**/jammer-ring-*"):
+        if ring.is_empty() or ring.get_tag("jammer-spin") != "1":
+            continue
+        rate = ring.get_python_tag("spin_deg_per_sec")
+        if rate is None:
+            rate = 45.0
+        ring.set_h(ring.get_h() + float(rate) * float(dt))
 
 
 def apply_tick_highlights(
