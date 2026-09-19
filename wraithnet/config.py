@@ -134,6 +134,10 @@ class JetFrameSpec:
 
     max_speed: float
 
+    # Yaw-axis rate cap (°/tick). Keep the field name for compatibility;
+
+    # prefer yaw_rate_deg_per_tick when reading intent in new code.
+
     turn_rate_deg_per_tick: float
 
     fuel_capacity: float          # consumed per tick starting Phase 22
@@ -155,6 +159,18 @@ class JetFrameSpec:
     max_climb_per_tick: float = 5.0
 
     min_combat_altitude: float = 2.0
+
+    # Phase 50: per-axis attitude rates / limits (docs/22 §5.2).
+
+    # Defaults match STRIKE_FIGHTER so ad-hoc JetFrameSpec(...) stays valid.
+
+    pitch_rate_deg_per_tick: float = 12.0
+
+    roll_rate_deg_per_tick: float = 40.0
+
+    pitch_limit_deg: float = 30.0  # symmetric ± nose-up/down clamp
+
+    roll_limit_deg: float = 180.0  # max |roll|; 180 allows inverted flight
 
     # Phase 38: default IR/radar signature for this airframe.
 
@@ -179,6 +195,14 @@ class JetFrameSpec:
     notch_min_speed: float = 2.0
 
     notch_hold_ticks: int = 2
+
+    @property
+
+    def yaw_rate_deg_per_tick(self) -> float:
+
+        """Alias for turn_rate_deg_per_tick (yaw-axis cap)."""
+
+        return self.turn_rate_deg_per_tick
 
 
 
@@ -708,6 +732,14 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         evasion_bonus=2,
 
+        pitch_rate_deg_per_tick=20.0,
+
+        roll_rate_deg_per_tick=60.0,
+
+        pitch_limit_deg=35.0,
+
+        roll_limit_deg=180.0,
+
         signature=SensorSignature(
 
             heat=0.85, radar_cross_section=0.45, radar_emitter=False
@@ -732,6 +764,14 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
 
         evasion_bonus=1,
 
+        pitch_rate_deg_per_tick=12.0,
+
+        roll_rate_deg_per_tick=40.0,
+
+        pitch_limit_deg=30.0,
+
+        roll_limit_deg=180.0,
+
         signature=SensorSignature(
 
             heat=0.7, radar_cross_section=0.6, radar_emitter=False
@@ -755,6 +795,14 @@ JET_FRAME_CATALOG: dict[JetFrameType, JetFrameSpec] = {
         hp=7,
 
         evasion_bonus=0,
+
+        pitch_rate_deg_per_tick=6.0,
+
+        roll_rate_deg_per_tick=20.0,
+
+        pitch_limit_deg=20.0,
+
+        roll_limit_deg=180.0,
 
         signature=SensorSignature(
 

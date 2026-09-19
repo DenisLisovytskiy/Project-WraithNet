@@ -190,10 +190,15 @@ class JetAgent(mesa.Agent):
         self.hp: int = frame.hp
         self.fuel: float = frame.fuel_capacity
         self.is_rtb: bool = False
-        # Degrees: 0 = facing +y (world "up"), increasing clockwise when viewed
-        # from above (90 = facing +x). Independent of travel direction.
+        # Attitude conventions (Phase 50 / docs/22 §5.1):
+        #   yaw / heading: 0° = +y, increasing clockwise when viewed from above
+        #                  (90° = +x); stored in [0, 360).
+        #   pitch_deg:     0 = level, + = nose up; clamped by frame pitch_limit.
+        #   roll_deg:      0 = wings level, + = roll right; stored in [-180, 180).
         self.heading: float = initial_heading % 360.0
         self.desired_heading: float | None = None
+        self.pitch_deg: float = 0.0
+        self.roll_deg: float = 0.0
         # Phase 37: authoritative altitude. Cruise preserves Phase 34 LOS height.
         self.altitude: float = frame.cruise_altitude
         self.desired_altitude: float | None = frame.cruise_altitude
@@ -2637,6 +2642,8 @@ class WraithNetModel(mesa.Model):
             known_targets=known_targets,
             comms_jammed=self._jet_is_jammed(jet),
             current_heading=jet.heading,
+            current_pitch_deg=jet.pitch_deg,
+            current_roll_deg=jet.roll_deg,
             frame_type=jet.frame_type,
             fuel=max(0.0, jet.fuel),
             home_base=recovery_xy,
