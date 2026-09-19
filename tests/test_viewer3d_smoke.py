@@ -740,6 +740,21 @@ def test_keybindings_cycle_jets_and_switch_camera():
         assert app.camera_mode == "chase"
         app._on_orbit()
         assert app.camera_mode == "orbit"
+
+        before = app._orbit._pos
+        app._orbit._held = {"forward": True}
+        app._orbit.update(1.0)
+        assert app._orbit._pos != before
+        framed = app._orbit._pos
+        app._orbit.reset()  # capture expected framing from current defaults
+        expected = app._orbit._pos
+        app._orbit._pos = framed
+        app._orbit._apply()
+        app._on_chase()
+        assert app.camera_mode == "chase"
+        app._on_center_camera()
+        assert app.camera_mode == "orbit"
+        assert app._orbit._pos == pytest.approx(expected, abs=1e-3)
     finally:
         _destroy_app(app)
 

@@ -168,9 +168,13 @@ class WraithNetViewer3D(ShowBase):
         self.accept("tab", self._cycle_selected_jet)
         self.accept("n", self._cycle_selected_jet)
         self.accept("N", self._cycle_selected_jet)
+        self.accept("home", self._on_center_camera)
         self.accept("f3", self._toggle_presentation_debug)
         self.accept("F3", self._toggle_presentation_debug)
         self.accept("escape", self._on_escape)
+        if not editor_mode:
+            self.accept("wheel_up", self._on_orbit_wheel_in)
+            self.accept("wheel_down", self._on_orbit_wheel_out)
         self.exitFunc = self.on_window_close
 
         self.task_mgr.add(self._drain_queue_task, "drain-stream-queue")
@@ -430,6 +434,23 @@ class WraithNetViewer3D(ShowBase):
         if self.selected_jet_id is None:
             self._cycle_selected_jet()
         self.camera_mode = "chase"
+
+    def _on_center_camera(self) -> None:
+        """Restore the default map framing and return to free-look orbit."""
+        if self.view_mode not in ("live", "finished", "brief", "launch_failed"):
+            return
+        if self._orbit is not None:
+            self._orbit.reset()
+        if self.view_mode in ("live", "finished"):
+            self.camera_mode = "orbit"
+
+    def _on_orbit_wheel_in(self) -> None:
+        if self.camera_mode == "orbit" and self._orbit is not None:
+            self._orbit.nudge_along_look(1.0)
+
+    def _on_orbit_wheel_out(self) -> None:
+        if self.camera_mode == "orbit" and self._orbit is not None:
+            self._orbit.nudge_along_look(-1.0)
 
     def _cycle_selected_jet(self) -> None:
         """Tab/N cycles header.jet_ids -- no 3D mouse-picking (Phase 17 fallback)."""

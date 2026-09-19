@@ -33,7 +33,7 @@ import textwrap
 from collections import Counter
 
 from direct.gui import DirectGuiGlobals as DGG
-from direct.gui.DirectGui import DirectFrame
+from direct.gui.DirectGui import DirectButton, DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode, TransparencyAttrib
 
@@ -145,8 +145,12 @@ _MIN_PANEL_W = 0.44
 _ROW_INDENT = 0.034
 #: One source for both the rendered key table and `controls_text`.
 _KEY_BINDINGS = (
-    ("O", "orbit"),
-    ("C", "chase"),
+    ("DA", "move"),
+    ("WS", "altitude"),
+    ("LMB", "look"),
+    ("Wheel", "nudge"),
+    ("Home", "recenter"),
+    ("O/C", "orbit/chase"),
     ("Tab/N", "next jet"),
     ("F3", "motion dbg"),
     ("Esc", "quit"),
@@ -488,7 +492,35 @@ class Hud:
             scale=TYPE_HEADER,
             fg=ACCENT,
         )
-        z = _block_bottom(mode_z, 1, TYPE_HEADER) - SPACE_3
+        z = _block_bottom(mode_z, 1, TYPE_HEADER) - SPACE_2
+
+        # Frameless bracket label — same language as section headers, not a plate.
+        recenter_z = z - TYPE_BODY * 0.55
+        btn_kwargs = {
+            "parent": content,
+            "text": "[ RECENTER ]",
+            "pos": (0, 0, recenter_z),
+            "scale": clamp_scale(TYPE_BODY),
+            "command": self._on_center_clicked,
+            "text_fg": ACCENT,
+            "text_align": TextNode.ALeft,
+            "frameColor": (
+                (0, 0, 0, 0),
+                (0, 0, 0, 0),
+                (ACCENT[0], ACCENT[1], ACCENT[2], 0.12),
+                (0, 0, 0, 0),
+            ),
+            "relief": DGG.FLAT,
+            "borderWidth": (0, 0),
+            "pressEffect": 0,
+            "pad": (0.02, 0.10),
+        }
+        font = ui_font()
+        if font is not None:
+            btn_kwargs["text_font"] = font
+        self._center_btn = DirectButton(**btn_kwargs)
+        self._center_btn.set_transparency(TransparencyAttrib.MAlpha)
+        z = recenter_z - TYPE_BODY * 0.55 - SPACE_3
 
         keys = make_section(
             content, "[ CONTROLS ]", pos=(0, 0, z - TYPE_BODY * 0.82), width=content_w,
@@ -543,6 +575,11 @@ class Hud:
         height = used + 2 * _PANEL_INSET
         _resize_panel(self._controls_frame, bottom=_MARGIN, top=_MARGIN + height)
         content.set_z(_MARGIN + height - _PANEL_INSET)
+
+    def _on_center_clicked(self) -> None:
+        handler = getattr(self.base, "_on_center_camera", None)
+        if callable(handler):
+            handler()
 
     def _build_overlays(self, aspect) -> None:
         # End-of-run summary: a real card, not a bare centered text node.
