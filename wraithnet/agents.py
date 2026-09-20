@@ -10,6 +10,7 @@ Phase 7: world_view memory, DATALINK_CONTACT sharing, direct-sensing STRIKE rule
 Phase 21: catalog-driven bidding; rotate-to-bear before striking a narrow-arc weapon.
 Phase 22: bingo-fuel RTB role; fly home, ignore new contracts.
 Phase 39: basic flare/notch reactions to inbound IR/radar threats.
+Phase 53: upright-before-release attitude; cruise/RTB pitch bias.
 """
 
 from __future__ import annotations
@@ -30,7 +31,11 @@ from wraithnet.bid_utility import (
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
 from wraithnet.geometry import bearing_to, is_in_firing_arc
-from wraithnet.weapons_release import release_attitude_ok
+from wraithnet.weapons_release import (
+    needed_attitude_for_release,
+    release_attitude_ok,
+    weapon_has_attitude_envelope,
+)
 from wraithnet.schemas import ActionIntent, InboundThreat, Message, Observation, TargetInfo
 
 if TYPE_CHECKING:
@@ -888,6 +893,9 @@ class JetAgentRuntime:
         )
         return threats[0]
 
+    def _cruise_altitude(self, obs: Observation) -> float:
+        return float(config.JET_FRAME_CATALOG[obs.frame_type].cruise_altitude)
+
     def _with_defense(self, intent: ActionIntent, obs: Observation) -> ActionIntent:
         """Attach FLARE/NOTCH alongside the primary task intent when threatened.
 
@@ -895,6 +903,9 @@ class JetAgentRuntime:
         fighters/interceptors whose evasion already nullifies SAM_RADAR
         damage skip notching so PoC routes stay near-optimal; bombers and
         low-evasion frames still notch imminent radar threats.
+
+        Phase 53: when NOTCH is active, keep pitch level and do not command
+        an explicit roll — yaw + speed remain the Phase 39 notch authority.
         """
         threat = self._select_defensive_threat(obs)
         if threat is None:
@@ -915,6 +926,8 @@ class JetAgentRuntime:
                 data["maneuver_defense"] = "NOTCH"
                 data["defensive_threat_id"] = threat.missile_id
                 data["desired_heading"] = (threat.estimated_bearing + 90.0) % 360.0
+                data["desired_pitch_deg"] = 0.0
+                data["desired_roll_deg"] = None
         return ActionIntent(**data)
 
     def decide_intent(self) -> ActionIntent:
@@ -922,14 +935,19 @@ class JetAgentRuntime:
         Bridge calls this once per tick per agent to get its next ActionIntent."""
         obs = self.latest_observation
         assert obs is not None
+        cruise_alt = self._cruise_altitude(obs)
         if self.role == "RTB":
             bearing = bearing_to(obs.current_position, obs.home_base)
+            # Phase 53: level pitch; altitude eases via Phase 51 recovery override
+            # on short final (world forces pitch→0 / RECOVERY_ALTITUDE).
             intent = ActionIntent(
                 agent_id=self.agent_id,
                 tick=obs.tick,
                 action_type="MOVE",
                 target_position=obs.home_base,
                 desired_heading=bearing,
+                desired_pitch_deg=0.0,
+                desired_altitude=cruise_alt,
             )
             return self._with_defense(intent, obs)
         if self.committed_target_id is None:
@@ -949,10 +967,16 @@ class JetAgentRuntime:
                         action_type="MOVE",
                         target_position=nearest,
                         desired_heading=bearing,
+                        desired_pitch_deg=0.0,
+                        desired_altitude=cruise_alt,
                     )
                     return self._with_defense(intent, obs)
             intent = ActionIntent(
-                agent_id=self.agent_id, tick=obs.tick, action_type="IDLE"
+                agent_id=self.agent_id,
+                tick=obs.tick,
+                action_type="IDLE",
+                desired_pitch_deg=0.0,
+                desired_altitude=cruise_alt,
             )
             return self._with_defense(intent, obs)
         target = next(
@@ -979,6 +1003,14 @@ class JetAgentRuntime:
         directly_sensed = any(t.target_id == target.target_id for t in obs.known_targets)
         weapon = config.WEAPON_CATALOG[self.committed_weapon_type]
         bearing = bearing_to(obs.current_position, target.position)
+        gated = weapon_has_attitude_envelope(weapon)
+        delivery = (
+            needed_attitude_for_release(
+                weapon, obs.current_pitch_deg, obs.current_roll_deg
+            )
+            if gated
+            else None
+        )
         in_range = distance <= weapon.range
         if in_range and directly_sensed:
             in_arc = is_in_firing_arc(
@@ -994,14 +1026,17 @@ class JetAgentRuntime:
                     roll_deg=obs.current_roll_deg,
                 )
                 if not ok_att:
-                    # Phase 52 light touch: do not spam doomed STRIKE/LAUNCH;
-                    # Phase 53 teaches full upright-before-release tactics.
+                    # Phase 53: roll upright / pitch legally before STRIKE/LAUNCH.
+                    att = delivery or needed_attitude_for_release(
+                        weapon, obs.current_pitch_deg, obs.current_roll_deg
+                    )
                     intent = ActionIntent(
                         agent_id=self.agent_id,
                         tick=obs.tick,
                         action_type="IDLE",
                         desired_heading=bearing,
-                        desired_roll_deg=0.0,
+                        desired_pitch_deg=att.desired_pitch_deg,
+                        desired_roll_deg=att.desired_roll_deg,
                     )
                     return self._with_defense(intent, obs)
                 self.committed_payload -= 1
@@ -1009,25 +1044,34 @@ class JetAgentRuntime:
                 action = (
                     "LAUNCH" if weapon.guidance != "NONE" else "STRIKE"
                 )
-                intent = ActionIntent(
-                    agent_id=self.agent_id,
-                    tick=obs.tick,
-                    action_type=action,
-                    target_id=target.target_id,
-                    weapon_type=self.committed_weapon_type,
+                fire_kwargs: dict = {
+                    "agent_id": self.agent_id,
+                    "tick": obs.tick,
+                    "action_type": action,
+                    "target_id": target.target_id,
+                    "weapon_type": self.committed_weapon_type,
                     # Keep nose on target while the world advances airspeed.
-                    desired_heading=bearing,
-                )
+                    "desired_heading": bearing,
+                }
+                if delivery is not None:
+                    fire_kwargs["desired_pitch_deg"] = delivery.desired_pitch_deg
+                    fire_kwargs["desired_roll_deg"] = delivery.desired_roll_deg
+                intent = ActionIntent(**fire_kwargs)
                 return self._with_defense(intent, obs)
             # In range but not pointed at the target yet: turn toward it this
             # tick instead of striking. Still in position, just not yet able
             # to fire — does not consume payload, does not lose the contract.
-            intent = ActionIntent(
-                agent_id=self.agent_id,
-                tick=obs.tick,
-                action_type="IDLE",
-                desired_heading=bearing,
-            )
+            # Line up delivery attitude while rotating to bear (gated weapons).
+            bear_kwargs: dict = {
+                "agent_id": self.agent_id,
+                "tick": obs.tick,
+                "action_type": "IDLE",
+                "desired_heading": bearing,
+            }
+            if delivery is not None:
+                bear_kwargs["desired_pitch_deg"] = delivery.desired_pitch_deg
+                bear_kwargs["desired_roll_deg"] = delivery.desired_roll_deg
+            intent = ActionIntent(**bear_kwargs)
             return self._with_defense(intent, obs)
         if distance <= 1e-9:
             # Coincident with remembered coords but no live sense — hold the
@@ -1038,6 +1082,8 @@ class JetAgentRuntime:
                 action_type="MOVE",
                 target_position=target.position,
                 desired_heading=bearing,
+                desired_pitch_deg=0.0,
+                desired_altitude=cruise_alt,
             )
             return self._with_defense(intent, obs)
         # Close on a release gate just inside weapon range (not the target
@@ -1050,12 +1096,16 @@ class JetAgentRuntime:
             target.position[0] + ux * gate_standoff,
             target.position[1] + uy * gate_standoff,
         )
+        # En route: level pitch + cruise altitude (Phase 51 wings-level ease).
+        # Leave roll unset so bank-assist can help the turn toward the gate.
         intent = ActionIntent(
             agent_id=self.agent_id,
             tick=obs.tick,
             action_type="MOVE",
             target_position=gate,
             desired_heading=bearing,
+            desired_pitch_deg=0.0,
+            desired_altitude=cruise_alt,
         )
         return self._with_defense(intent, obs)
 
