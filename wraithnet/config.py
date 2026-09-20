@@ -256,6 +256,14 @@ class WeaponSpec:
 
     requires_radar_emitter: bool = False
 
+    # Phase 52: release attitude envelope (None = no gate on that axis).
+
+    max_release_abs_roll_deg: float | None = None
+
+    max_release_abs_pitch_deg: float | None = None
+
+    requires_upright: bool = False  # reject |roll| > 90° when True
+
 
 
 
@@ -310,6 +318,12 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
         },
 
         guidance="NONE",
+
+        requires_upright=True,
+
+        max_release_abs_roll_deg=45.0,
+
+        max_release_abs_pitch_deg=30.0,
 
     ),
 
@@ -406,6 +420,12 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
 
         guidance="NONE",
 
+        requires_upright=False,
+
+        max_release_abs_roll_deg=90.0,
+
+        max_release_abs_pitch_deg=45.0,
+
     ),
 
     # Legacy AIM9X ground role + imaging-IR A2G (incl. bunkers for AMRAAM migration).
@@ -457,6 +477,12 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
         min_rcs=0.0,
 
         requires_radar_emitter=False,
+
+        requires_upright=True,
+
+        max_release_abs_roll_deg=60.0,
+
+        max_release_abs_pitch_deg=40.0,
 
     ),
 
@@ -510,6 +536,12 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
 
         requires_radar_emitter=True,
 
+        requires_upright=True,
+
+        max_release_abs_roll_deg=60.0,
+
+        max_release_abs_pitch_deg=40.0,
+
     ),
 
     # Active-radar anti-ship missile (Phase 41). No suitability vs air/ground.
@@ -561,6 +593,12 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
         min_rcs=0.3,
 
         requires_radar_emitter=False,
+
+        requires_upright=True,
+
+        max_release_abs_roll_deg=60.0,
+
+        max_release_abs_pitch_deg=40.0,
 
     ),
 
@@ -949,6 +987,12 @@ RECOVERY_RELATIVE_SPEED_MAX: float = 2.0
 # Astern standoff for the approach alignment point (world units).
 
 RECOVERY_APPROACH_STANDOFF: float = 6.0
+
+# Phase 51: bank assist when desired_roll is None and the jet yaws this tick.
+
+# Assisted roll target ≈ BANK_ASSIST_GAIN * yaw_step_deg (clamped by roll_limit).
+
+BANK_ASSIST_GAIN: float = 1.0
 
 # SW corner of the 100x100 PoC map: away from the fight (Target_A 75,75 /
 
