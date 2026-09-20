@@ -117,9 +117,15 @@ def test_orbit_camera_zoom_dollies_along_view():
     base = _StubBase()
     orbit = OrbitCamera(base, center=(50.0, 50.0, 0.0), radius=90.0)
     start = orbit._pos
+    start_dist = _distance(start, orbit.center)
     orbit.zoom(1.0)
-    assert _distance(start, orbit._pos) == pytest.approx(orbit.wheel_step)
-    assert _distance(orbit._pos, orbit.center) < _distance(start, orbit.center)
+    assert _distance(orbit._pos, orbit.center) < start_dist
+    # Direction from center preserved (dolly, not look-nudge).
+    sx, sy, sz = start[0] - 50.0, start[1] - 50.0, start[2]
+    ex, ey, ez = orbit._pos[0] - 50.0, orbit._pos[1] - 50.0, orbit._pos[2]
+    assert (ex / sx, ey / sy, ez / sz) == pytest.approx(
+        (_distance(orbit._pos, orbit.center) / start_dist,) * 3, abs=1e-4
+    )
 
 
 def test_scene_camera_radius_places_overview_beside_scene():
@@ -170,12 +176,20 @@ def test_orbit_camera_moves_on_ground_plane():
     # Move stays level — looking down must not dive into the map.
     assert after_forward[2] == pytest.approx(start[2], abs=1e-6)
 
+    orbit._held = {"right": True}
+    orbit.update(1.0)
+    after_right = orbit._pos
+    assert after_right[2] == pytest.approx(after_forward[2], abs=1e-6)
+    assert _distance(after_forward, after_right) == pytest.approx(
+        OrbitCamera._MOVE_SPEED, abs=1e-3
+    )
+
     orbit._held = {"up": True}
     orbit.update(1.0)
     after_up = orbit._pos
-    assert after_up[0] == pytest.approx(after_forward[0], abs=1e-6)
-    assert after_up[1] == pytest.approx(after_forward[1], abs=1e-6)
-    assert after_up[2] == pytest.approx(after_forward[2] + OrbitCamera._MOVE_SPEED, abs=1e-3)
+    assert after_up[0] == pytest.approx(after_right[0], abs=1e-6)
+    assert after_up[1] == pytest.approx(after_right[1], abs=1e-6)
+    assert after_up[2] == pytest.approx(after_right[2] + OrbitCamera._MOVE_SPEED, abs=1e-3)
 
 def test_orbit_camera_reset_restores_original_framing():
     base = _StubBase()

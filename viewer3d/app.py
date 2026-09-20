@@ -186,8 +186,6 @@ class WraithNetViewer3D(ShowBase):
             self._terrain_painting = False
             self.accept("mouse1", self._on_editor_mouse1_down)
             self.accept("mouse1-up", self._on_editor_mouse1_up)
-            self.accept("wheel_up", self._on_editor_zoom_in)
-            self.accept("wheel_down", self._on_editor_zoom_out)
             self.accept("arrow_up", lambda: self._editor_pan_steps(0.0, 1.0))
             self.accept("arrow_down", lambda: self._editor_pan_steps(0.0, -1.0))
             self.accept("arrow_left", lambda: self._editor_pan_steps(-1.0, 0.0))
@@ -203,14 +201,16 @@ class WraithNetViewer3D(ShowBase):
         self.accept("home", self._on_center_camera)
         for event in ("+", "=", "add"):
             self.accept(event, self._on_camera_zoom_in)
-        for event in ("-", "subtract"):
+        for event in ("-", "_", "subtract"):
             self.accept(event, self._on_camera_zoom_out)
         self.accept("f3", self._toggle_presentation_debug)
         self.accept("F3", self._toggle_presentation_debug)
         self.accept("escape", self._on_escape)
-        if not editor_mode:
-            self.accept("wheel_up", self._on_orbit_wheel_in)
-            self.accept("wheel_down", self._on_orbit_wheel_out)
+        # Always bind wheel to the shared zoom router (editor + live).
+        for event in ("wheel_up", "wheelup"):
+            self.accept(event, self._on_camera_zoom_in)
+        for event in ("wheel_down", "wheeldown"):
+            self.accept(event, self._on_camera_zoom_out)
         self.exitFunc = self.on_window_close
 
         self.task_mgr.add(self._drain_queue_task, "drain-stream-queue")
