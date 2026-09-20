@@ -30,6 +30,7 @@ from wraithnet.bid_utility import (
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
 from wraithnet.geometry import bearing_to, is_in_firing_arc
+from wraithnet.weapons_release import release_attitude_ok
 from wraithnet.schemas import ActionIntent, InboundThreat, Message, Observation, TargetInfo
 
 if TYPE_CHECKING:
@@ -987,6 +988,22 @@ class JetAgentRuntime:
                 weapon.firing_arc_deg,
             )
             if in_arc:
+                ok_att, _reason = release_attitude_ok(
+                    weapon,
+                    pitch_deg=obs.current_pitch_deg,
+                    roll_deg=obs.current_roll_deg,
+                )
+                if not ok_att:
+                    # Phase 52 light touch: do not spam doomed STRIKE/LAUNCH;
+                    # Phase 53 teaches full upright-before-release tactics.
+                    intent = ActionIntent(
+                        agent_id=self.agent_id,
+                        tick=obs.tick,
+                        action_type="IDLE",
+                        desired_heading=bearing,
+                        desired_roll_deg=0.0,
+                    )
+                    return self._with_defense(intent, obs)
                 self.committed_payload -= 1
                 # Phase 38: guided weapons emit LAUNCH; direct-fire stays STRIKE.
                 action = (

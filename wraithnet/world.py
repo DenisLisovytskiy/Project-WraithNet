@@ -21,6 +21,10 @@ Phase 39: flares (IR) and notching (radar) in the countermeasures stage.
 Phase 40: friendly carriers as dynamic airbases; naval movement; recovery SM.
 Phase 41: enemy corvettes, AGM84, shared gun resolver, layered defense/CIWS.
 Phase 42: land AAA gun sites via shared gun resolver (no missiles).
+Phase 50: pitch_deg / roll_deg state; catalog rate limits.
+Phase 51: rate-limited attitude; pitch-coupled altitude (option A);
+          recovery altitude override; bank assist; release pose.
+Phase 52: weapon release attitude envelopes on STRIKE/LAUNCH.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ import mesa
 from mesa.datacollection import DataCollector
 
 from wraithnet import config
+from wraithnet.weapons_release import release_attitude_ok
 from wraithnet.aaa import (
     AAA_FRAME_CATALOG,
     AaaSiteState,
@@ -55,7 +60,9 @@ from wraithnet.countermeasures import (
 from wraithnet.geometry import (
     angular_distance,
     bearing_to,
+    clamp_pitch_deg,
     is_in_firing_arc,
+    normalize_roll_deg,
     shortest_signed_angle,
 )
 from wraithnet.guns import (
@@ -199,6 +206,9 @@ class JetAgent(mesa.Agent):
         self.desired_heading: float | None = None
         self.pitch_deg: float = 0.0
         self.roll_deg: float = 0.0
+        # Phase 51: None = hold current axis (same semantics as desired_heading).
+        self.desired_pitch_deg: float | None = None
+        self.desired_roll_deg: float | None = None
         # Phase 37: authoritative altitude. Cruise preserves Phase 34 LOS height.
         self.altitude: float = frame.cruise_altitude
         self.desired_altitude: float | None = frame.cruise_altitude
@@ -245,6 +255,8 @@ class JetAgent(mesa.Agent):
         self.notch_hold_progress: int = 0
         self.velocity_xy: tuple[float, float] = (0.0, 0.0)
         self._pos_at_move_start: tuple[float, float] | None = None
+        # Phase 51: frozen pose at movement commit for weapon release (Phase 52).
+        self._release_pose: tuple[float, float, float, float, float, float] | None = None
         # Phase 40: carrier recovery state machine.
         self.active_base_id: str = self.base_assignment.primary_base_id
         self.recovery_phase: RecoveryPhase | None = None
@@ -654,7 +666,12 @@ class WraithNetModel(mesa.Model):
     def stage_pre_move_obs(
         self, intents: dict[str, ActionIntent] | None = None
     ) -> None:
-        """Stage 1: begin tick; apply heading / desired altitude from intents."""
+        """Stage 1: begin tick; apply attitude (yaw/pitch/roll) from intents.
+
+        Order (unchanged relative to Phase 37 heading timing): intents are
+        written onto the jet, then rate-limited attitude is applied here
+        before ``stage_apply_movement`` translates. Unset desired axes hold.
+        """
         # Duplicate mid-tick call: pre_move already ran and the tick is incomplete.
         if (
             _STAGE_PRE_MOVE_OBS in self._tick_stages_done
@@ -699,7 +716,13 @@ class WraithNetModel(mesa.Model):
                     jet.notch_hold_progress = 0
             if intent.desired_altitude is not None:
                 jet.desired_altitude = intent.desired_altitude
-            self._apply_heading_rotation(jet)
+            # Recovery forces pitch toward level; combat takes pitch/roll intents.
+            if self._uses_recovery_altitude_override(jet):
+                jet.desired_pitch_deg = 0.0
+            else:
+                jet.desired_pitch_deg = intent.desired_pitch_deg
+            jet.desired_roll_deg = intent.desired_roll_deg
+            self._apply_attitude(jet)
 
     def stage_apply_movement(
         self, intents: dict[str, ActionIntent] | None = None
@@ -727,6 +750,14 @@ class WraithNetModel(mesa.Model):
 
         for jet in self.jets.values():
             jet._pos_at_move_start = (float(jet.pos[0]), float(jet.pos[1]))
+            jet._release_pose = (
+                float(jet.pos[0]),
+                float(jet.pos[1]),
+                float(jet.altitude),
+                float(jet.heading),
+                float(jet.pitch_deg),
+                float(jet.roll_deg),
+            )
             jet.velocity_xy = (0.0, 0.0)
             # Fail over destroyed carrier bases before steering home.
             self._ensure_active_base(jet)
@@ -761,13 +792,14 @@ class WraithNetModel(mesa.Model):
                 destination = self._recovery_destination(jet)
                 if jet.recovery_phase == "APPROACH":
                     jet.desired_altitude = config.RECOVERY_ALTITUDE
+                    jet.desired_pitch_deg = 0.0
                     base_id = jet.active_base_id
                     if self._is_carrier_base(base_id):
                         jet.desired_heading = self.carriers[base_id].heading
-                        self._apply_heading_rotation(jet)
+                    self._apply_attitude(jet)
             if destination is not None:
                 self._apply_move(jet, destination)
-                self._apply_altitude(jet)
+                self._apply_vertical_motion(jet)
                 moved.add(agent_id)
 
         # Carrier-based RTB jets with no intent this tick still home to the
@@ -784,14 +816,14 @@ class WraithNetModel(mesa.Model):
             jet.desired_heading = bearing_to(
                 (float(jet.pos[0]), float(jet.pos[1])), destination
             )
-            self._apply_heading_rotation(jet)
+            jet.desired_pitch_deg = 0.0
             if jet.recovery_phase == "APPROACH":
                 jet.desired_altitude = config.RECOVERY_ALTITUDE
                 base_id = jet.active_base_id
                 jet.desired_heading = self.carriers[base_id].heading
-                self._apply_heading_rotation(jet)
+            self._apply_attitude(jet)
             self._apply_move(jet, destination)
-            self._apply_altitude(jet)
+            self._apply_vertical_motion(jet)
 
         # Record velocity from this tick's displacement (IDLE → zero).
         for jet in self.jets.values():
@@ -1418,6 +1450,11 @@ class WraithNetModel(mesa.Model):
         else:
             return LaunchAcknowledgement(
                 accepted=False, missile_id=None, reason="unknown_target"
+            )
+        attitude_reason = self._jet_release_attitude_reason(jet, weapon_type)
+        if attitude_reason is not None:
+            return LaunchAcknowledgement(
+                accepted=False, missile_id=None, reason=attitude_reason
             )
         release_xy = self._weapon_release_xy(jet)
         has_los = self.has_combat_los(
@@ -2339,41 +2376,101 @@ class WraithNetModel(mesa.Model):
         else:
             jet.heading = (jet.heading + turn_rate * (1.0 if delta > 0 else -1.0)) % 360.0
 
-    def _forward_flight_destination(self, jet: JetAgent) -> tuple[float, float]:
-        """One tick of airspeed along the jet's current heading (0=+y, 90=+x)."""
+    def _apply_pitch_rotation(self, jet: JetAgent) -> None:
+        """Rate-limit pitch toward desired_pitch_deg; None holds current."""
+        if jet.desired_pitch_deg is None:
+            return
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        target = clamp_pitch_deg(jet.desired_pitch_deg, frame.pitch_limit_deg)
+        delta = target - jet.pitch_deg
+        rate = frame.pitch_rate_deg_per_tick
+        if abs(delta) <= rate:
+            jet.pitch_deg = target
+        else:
+            jet.pitch_deg = jet.pitch_deg + rate * (1.0 if delta > 0 else -1.0)
+
+    def _apply_roll_toward(self, jet: JetAgent, target_roll_deg: float) -> None:
+        """Rate-limit roll toward ``target_roll_deg`` within frame roll_limit."""
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        limit = abs(frame.roll_limit_deg)
+        target = normalize_roll_deg(target_roll_deg)
+        target = max(-limit, min(limit, target))
+        delta = shortest_signed_angle(jet.roll_deg, target)
+        rate = frame.roll_rate_deg_per_tick
+        if abs(delta) <= rate:
+            jet.roll_deg = target
+        else:
+            jet.roll_deg = normalize_roll_deg(
+                jet.roll_deg + rate * (1.0 if delta > 0 else -1.0)
+            )
+
+    def _apply_attitude(self, jet: JetAgent) -> None:
+        """Apply yaw, then roll (explicit or bank-assist), then pitch.
+
+        Bank assist (docs/22 §5.4): when ``desired_roll_deg is None`` and the
+        jet actually yaws this tick, roll toward ``BANK_ASSIST_GAIN * yaw_step``
+        clamped by ``roll_limit_deg``. Explicit ``desired_roll_deg`` overrides.
+        """
+        yaw_step = 0.0
+        if jet.desired_heading is not None:
+            before = jet.heading
+            self._apply_heading_rotation(jet)
+            yaw_step = shortest_signed_angle(before, jet.heading)
+
+        if jet.desired_roll_deg is not None:
+            self._apply_roll_toward(jet, jet.desired_roll_deg)
+        elif abs(yaw_step) > 1e-9:
+            assisted = config.BANK_ASSIST_GAIN * yaw_step
+            self._apply_roll_toward(jet, assisted)
+
+        self._apply_pitch_rotation(jet)
+
+    def _uses_recovery_altitude_override(self, jet: JetAgent) -> bool:
+        """RTB / carrier recovery eases altitude directly and levels pitch."""
+        return bool(jet.is_rtb and not jet.recovery_abort)
+
+    def _ground_speed(self, jet: JetAgent) -> float:
+        """Option A: ground-track speed ≈ max_speed * cos(pitch)."""
         max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
+        return max_speed * math.cos(math.radians(jet.pitch_deg))
+
+    def _forward_flight_destination(self, jet: JetAgent) -> tuple[float, float]:
+        """One tick of ground-track airspeed along heading (0=+y, 90=+x)."""
+        speed = self._ground_speed(jet)
         h = math.radians(jet.heading)
         return (
-            float(jet.pos[0]) + max_speed * math.sin(h),
-            float(jet.pos[1]) + max_speed * math.cos(h),
+            float(jet.pos[0]) + speed * math.sin(h),
+            float(jet.pos[1]) + speed * math.cos(h),
         )
 
     def _apply_move(self, jet: JetAgent, destination: tuple[float, float]) -> None:
         """Translate a jet like an aircraft: cruise along heading, not crab-slide.
 
-        Far from ``destination``, advance one tick of airspeed along the nose
-        (heading already rotated in ``stage_pre_move_obs``). Arrive/capture only
-        when the waypoint is within one tick *and* the nose is pointed at it —
-        otherwise a nearby gate behind/abeam the jet would slide it sideways.
+        Far from ``destination``, advance one tick of ground-track speed along
+        the nose (heading already rotated in ``stage_pre_move_obs``). Ground
+        speed uses option A: ``max_speed * cos(pitch)`` so climb trades XY
+        progress. Arrive/capture only when the waypoint is within one tick
+        *and* the nose is pointed at it — otherwise a nearby gate behind/abeam
+        the jet would slide it sideways.
 
         After clamping to the map edge, re-align heading to the actual
         displacement so the nose cannot keep pointing off the wall while the
         body scrapes along it.
         """
-        max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
+        speed = self._ground_speed(jet)
         pos = (float(jet.pos[0]), float(jet.pos[1]))
         distance = math.dist(pos, destination)
         bearing = bearing_to(pos, destination)
         # Require near nose-on before capture — a wide gate still looked like
         # sideways slides whenever a release point fell inside max_speed.
         aligned = angular_distance(jet.heading, bearing) <= 15.0
-        if distance <= max_speed and aligned:
+        if distance <= speed and aligned:
             new_pos = destination
         else:
             h = math.radians(jet.heading)
             new_pos = (
-                pos[0] + max_speed * math.sin(h),
-                pos[1] + max_speed * math.cos(h),
+                pos[0] + speed * math.sin(h),
+                pos[1] + speed * math.cos(h),
             )
         # Mesa ContinuousSpace rejects positions on/outside the far edge when
         # non-toroidal; clamp so RTB/notch/naval intents near the border cannot
@@ -2392,8 +2489,22 @@ class WraithNetModel(mesa.Model):
         self.space.move_agent(jet, new_pos)
         jet.distance_traveled += moved
 
+    def _altitude_floor(self, jet: JetAgent) -> float:
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        if jet.is_rtb and not jet.recovery_abort:
+            base_id = jet.active_base_id
+            if self._is_carrier_base(base_id):
+                # Carrier recovery may descend to RECOVERY_ALTITUDE / deck.
+                return 0.0
+            near_base = (
+                math.dist(jet.pos, self._primary_base_xy(jet))
+                <= config.RTB_LANDING_RADIUS
+            )
+            return 0.0 if near_base else frame.min_combat_altitude
+        return frame.min_combat_altitude
+
     def _apply_altitude(self, jet: JetAgent) -> None:
-        """Climb/descend toward desired_altitude, clamped by frame limits."""
+        """Ease altitude toward desired_altitude (recovery / wings-level compat)."""
         if jet.desired_altitude is None:
             return
         frame = config.JET_FRAME_CATALOG[jet.frame_type]
@@ -2402,34 +2513,74 @@ class WraithNetModel(mesa.Model):
         if abs(delta) > max_step:
             delta = math.copysign(max_step, delta)
         new_alt = jet.altitude + delta
-        if jet.is_rtb and not jet.recovery_abort:
-            base_id = jet.active_base_id
-            if self._is_carrier_base(base_id):
-                # Carrier recovery may descend to RECOVERY_ALTITUDE / deck.
-                floor = 0.0
-            else:
-                near_base = (
-                    math.dist(jet.pos, self._primary_base_xy(jet))
-                    <= config.RTB_LANDING_RADIUS
-                )
-                floor = 0.0 if near_base else frame.min_combat_altitude
-        else:
-            floor = frame.min_combat_altitude
-        jet.altitude = max(floor, new_alt)
+        jet.altitude = max(self._altitude_floor(jet), new_alt)
 
-    def _weapon_release_xy(self, jet: JetAgent) -> tuple[float, float]:
-        """XY where munitions leave the jet this tick.
+    def _apply_pitch_coupled_altitude(self, jet: JetAgent) -> None:
+        """Combat vertical motion: dz ≈ max_speed * sin(pitch), climb-clamped.
+
+        Precedence (docs/22 §5.3): when this path runs, ``desired_altitude`` is
+        ignored — pitch is the combat authority.
+        """
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        raw_dz = frame.max_speed * math.sin(math.radians(jet.pitch_deg))
+        max_step = frame.max_climb_per_tick
+        dz = max(-max_step, min(max_step, raw_dz))
+        jet.altitude = max(self._altitude_floor(jet), jet.altitude + dz)
+
+    def _apply_vertical_motion(self, jet: JetAgent) -> None:
+        """Choose altitude authority for this tick.
+
+        * Recovery (RTB): ease ``desired_altitude``; pitch is driven to 0
+          elsewhere on the recovery path.
+        * Combat with commanded or held non-zero pitch: pitch-coupled dz.
+        * Wings-level (pitch≈0, no pitch intent): legacy ``desired_altitude``
+          ease so existing PoC / altitude tests stay compatible.
+        """
+        if self._uses_recovery_altitude_override(jet):
+            self._apply_altitude(jet)
+            return
+        if jet.desired_pitch_deg is not None or abs(jet.pitch_deg) > 1e-9:
+            self._apply_pitch_coupled_altitude(jet)
+            return
+        self._apply_altitude(jet)
+
+    def _jet_release_attitude_reason(
+        self, jet: JetAgent, weapon_type: str
+    ) -> str | None:
+        """Phase 52: attitude gate using pre-move release pose. None = allowed."""
+        weapon = config.WEAPON_CATALOG.get(weapon_type)  # type: ignore[arg-type]
+        if weapon is None:
+            return "unknown_weapon"
+        pose = self._weapon_release_pose(jet)
+        ok, reason = release_attitude_ok(
+            weapon, pitch_deg=pose[4], roll_deg=pose[5]
+        )
+        return reason if not ok else None
+
+    def _weapon_release_pose(
+        self, jet: JetAgent
+    ) -> tuple[float, float, float, float, float, float]:
+        """Pre-move commit pose: (x, y, altitude, heading, pitch, roll).
 
         Attack-run coast happens in ``stage_apply_movement`` after the jet has
-        already committed to STRIKE/LAUNCH from its pre-move pose. Range, arc,
-        and LOS must use that release pose — not the post-coast position.
+        already committed to STRIKE/LAUNCH. Range/arc/LOS (and Phase 52
+        attitude gates) must use this frozen pose — not the post-coast state.
         """
-        if jet._pos_at_move_start is not None:
-            return (
-                float(jet._pos_at_move_start[0]),
-                float(jet._pos_at_move_start[1]),
-            )
-        return (float(jet.pos[0]), float(jet.pos[1]))
+        if jet._release_pose is not None:
+            return jet._release_pose
+        return (
+            float(jet.pos[0]),
+            float(jet.pos[1]),
+            float(jet.altitude),
+            float(jet.heading),
+            float(jet.pitch_deg),
+            float(jet.roll_deg),
+        )
+
+    def _weapon_release_xy(self, jet: JetAgent) -> tuple[float, float]:
+        """XY where munitions leave the jet this tick (thin pose wrapper)."""
+        pose = self._weapon_release_pose(jet)
+        return (pose[0], pose[1])
 
     def _target_in_firing_arc(
         self, jet: JetAgent, target: TargetState, weapon: config.WeaponSpec
@@ -2530,6 +2681,9 @@ class WraithNetModel(mesa.Model):
             tgt_height,
         ):
             return  # city column blocks — no ammo consumed
+        attitude_reason = self._jet_release_attitude_reason(jet, weapon_type)
+        if attitude_reason is not None:
+            return  # illegal release attitude — no ammo, no damage
         # Stale STRIKE on an already-destroyed target still consumes payload while
         # in range; hp_remaining stays clamped at 0 (documented Phase 1 semantics).
         jet.payload[weapon_type] -= 1
