@@ -160,6 +160,32 @@ def test_desired_bank_deg_first_tick_and_clamp():
     assert abs(huge) <= MAX_BANK_DEG
 
 
+def test_authoritative_roll_skips_cosmetic_bank():
+    from viewer3d.flight_dynamics import authoritative_roll_deg, sim_to_panda_hpr
+
+    # Authoritative roll wins over a large altitude-rate fiction.
+    roll = authoritative_roll_deg(
+        frame_roll_deg=12.0,
+        previous_altitude_target=2.0,
+        current_altitude_target=20.0,
+        dt_seconds=0.1,
+        use_cosmetic_bank=False,
+    )
+    assert roll == pytest.approx(12.0)
+    cosmetic = authoritative_roll_deg(
+        frame_roll_deg=None,
+        previous_altitude_target=2.0,
+        current_altitude_target=8.0,
+        dt_seconds=1.0,
+        use_cosmetic_bank=True,
+    )
+    assert cosmetic > 0.0
+    h, p, r = sim_to_panda_hpr(90.0, 15.0, 30.0)
+    assert h == pytest.approx(-90.0)
+    assert p == pytest.approx(15.0)
+    assert r == pytest.approx(-30.0)
+
+
 def test_ease_toward_moves_bounded_amount_and_does_not_overshoot():
     moved = ease_toward(0.0, 10.0, 2.0, 0.5)
     assert moved == pytest.approx(1.0)

@@ -245,6 +245,23 @@ def test_tick_heading_and_fuel_match_live_jet(tmp_path):
     assert frame.fuel == pytest.approx(41.0)
 
 
+def test_tick_pitch_roll_match_live_jet(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    recorder = TraceRecorder(path)
+    bridge = WraithNetBridge(sinks=[recorder])
+    try:
+        jet = bridge.model.jets["Jet_1"]
+        jet.pitch_deg = -12.5
+        jet.roll_deg = 45.0
+        recorder.record_tick(bridge)
+    finally:
+        recorder.close()
+    _, ticks = _read_trace(path)
+    frame = next(j for j in ticks[-1].jets if j.agent_id == "Jet_1")
+    assert frame.pitch_deg == pytest.approx(-12.5)
+    assert frame.roll_deg == pytest.approx(45.0)
+
+
 def test_jet_outcomes_are_per_tick_not_cumulative(tmp_path):
     home = (20.0, 20.0)
     scenario = scenario_from_data(new_scenario_data(

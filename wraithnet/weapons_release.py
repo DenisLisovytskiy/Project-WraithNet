@@ -1,9 +1,23 @@
-"""Weapon release attitude envelope checks (Phase 52 / docs/22 §6)."""
+"""Weapon release attitude envelope checks (Phase 52 / docs/22 §6).
+
+Phase 53: ``needed_attitude_for_release`` — pure delivery-attitude command
+used by ``decide_intent`` when lining up a legal bomb/ASM pass.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from wraithnet.config import WeaponSpec
 from wraithnet.geometry import normalize_roll_deg
+
+
+@dataclass(frozen=True)
+class AttitudeCommand:
+    """Desired pitch/roll for a legal weapon release (degrees)."""
+
+    desired_pitch_deg: float
+    desired_roll_deg: float
 
 
 def release_attitude_ok(
@@ -31,3 +45,40 @@ def release_attitude_ok(
         if abs(pitch_deg) > weapon.max_release_abs_pitch_deg:
             return False, "outside_release_attitude_pitch"
     return True, None
+
+
+def weapon_has_attitude_envelope(weapon: WeaponSpec) -> bool:
+    """True when the weapon gates release on roll and/or pitch."""
+    return bool(
+        weapon.requires_upright
+        or weapon.max_release_abs_roll_deg is not None
+        or weapon.max_release_abs_pitch_deg is not None
+    )
+
+
+def needed_attitude_for_release(
+    weapon: WeaponSpec,
+    current_pitch_deg: float,
+    current_roll_deg: float,
+) -> AttitudeCommand:
+    """Command attitude that moves the jet into a legal release envelope.
+
+    Policy (Phase 53 / docs/22 §7):
+    * Roll toward wings-level (0°).
+    * Pitch toward a mild delivery attitude inside the weapon's pitch cap;
+      level ``0`` is always acceptable when the weapon has no pitch gate, and
+      is clamped into ``±max_release_abs_pitch_deg`` when it does.
+
+    ``current_*`` are accepted so callers/tests can reason about the delta
+    without requiring the full agent loop; the command itself is envelope-
+    driven (not a proportional controller).
+    """
+    _ = (current_pitch_deg, current_roll_deg)  # envelope target, not P-controller
+    delivery_pitch = 0.0
+    if weapon.max_release_abs_pitch_deg is not None:
+        cap = abs(float(weapon.max_release_abs_pitch_deg))
+        delivery_pitch = max(-cap, min(cap, delivery_pitch))
+    return AttitudeCommand(
+        desired_pitch_deg=delivery_pitch,
+        desired_roll_deg=0.0,
+    )

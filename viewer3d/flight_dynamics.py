@@ -1,7 +1,16 @@
 """Pure functions computing a jet's flight altitude baseline and bank angle
-from TraceHeader/TraceTick data. Phase 37: when JetFrame.altitude is set,
-it is the authoritative desired Z; takeoff/dive cosmetics apply only as a
-legacy fallback for traces that omit altitude. Bank easing remains cosmetic.
+from TraceHeader/TraceTick data.
+
+Phase 37: when JetFrame.altitude is set, it is the authoritative desired Z;
+takeoff/dive cosmetics apply only as a legacy fallback for traces that omit
+altitude.
+
+Phase 54: when JetFrame carries pitch/roll (always present with defaults on
+new traces; legacy JSONL defaults to 0), presentation eases toward those
+authoritative values. Altitude-rate ``desired_bank_deg`` fiction is skipped
+whenever authoritative roll is used — kept here only for residual / legacy
+callers that explicitly opt in.
+
 Nothing in wraithnet/ imports this module.
 """
 
@@ -20,6 +29,7 @@ POST_STRIKE_CLIMB_BOOST_TICKS = 3
 POST_STRIKE_CLIMB_BOOST_ALTITUDE = 4.0
 MAX_CLIMB_RATE_PER_SECOND = 6.0
 MAX_BANK_RATE_PER_SECOND = 90.0
+MAX_PITCH_RATE_PER_SECOND = 60.0
 MAX_BANK_DEG = 35.0
 
 _MAX_ALTITUDE = CRUISE_ALTITUDE + POST_STRIKE_CLIMB_BOOST_ALTITUDE
@@ -100,7 +110,12 @@ def desired_bank_deg(
     current_altitude_target: float,
     dt_seconds: float,
 ) -> float:
-    """Bank from the rate of change of the desired altitude target."""
+    """Legacy cosmetic bank from altitude-target rate of change.
+
+    Phase 54: prefer authoritative ``JetFrame.roll_deg`` via
+    ``authoritative_roll_deg`` / scene wiring; call this only when no
+    attitude is available on the frame.
+    """
     if previous_altitude_target is None or dt_seconds <= 0.0:
         return 0.0
     rate = (current_altitude_target - previous_altitude_target) / dt_seconds
@@ -109,6 +124,46 @@ def desired_bank_deg(
     # Climbing -> positive bank; diving -> negative bank.
     bank = rate * (MAX_BANK_DEG / MAX_CLIMB_RATE_PER_SECOND)
     return max(-MAX_BANK_DEG, min(MAX_BANK_DEG, bank))
+
+
+def authoritative_roll_deg(
+    *,
+    frame_roll_deg: float | None,
+    previous_altitude_target: float | None,
+    current_altitude_target: float,
+    dt_seconds: float,
+    use_cosmetic_bank: bool = False,
+) -> float:
+    """Roll target for presentation easing.
+
+    When ``frame_roll_deg`` is not None (Phase 54 frames always supply a float,
+    including legacy default 0), that value wins. Cosmetic altitude-rate bank
+    is used only if ``use_cosmetic_bank`` is True and attitude is absent.
+    """
+    if frame_roll_deg is not None and not use_cosmetic_bank:
+        return float(frame_roll_deg)
+    if use_cosmetic_bank or frame_roll_deg is None:
+        return desired_bank_deg(
+            previous_altitude_target, current_altitude_target, dt_seconds
+        )
+    return float(frame_roll_deg)
+
+
+def sim_to_panda_hpr(
+    heading_deg: float, pitch_deg: float, roll_deg: float
+) -> tuple[float, float, float]:
+    """Map sim attitude to Panda3D ``(H, P, R)``.
+
+    Sim conventions (``wraithnet.geometry`` / docs/22 §5.1):
+      heading — 0° = +y, increasing clockwise
+      pitch   — 0 = level, + = nose up
+      roll    — 0 = wings level, + = roll right, ``[-180, 180)``
+
+    Panda: H is the opposite sense of sim heading (existing Phase 20 viewer
+    contract); P matches nose-up; R is negated so +sim roll banks the glyph
+    the same visual way as the prior cosmetic-bank path.
+    """
+    return (-float(heading_deg), float(pitch_deg), -float(roll_deg))
 
 
 def ease_toward(

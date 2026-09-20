@@ -18,6 +18,8 @@ class TraceHeader(BaseModel):
     # Phase 36: bump when terrain is written; legacy traces omit terrain.
     # Phase 37: optional objectives / fixed bases; altitude lives on JetFrame.
     # Phase 38: missile frames + launch/impact events (v3).
+    # Phase 54: JetFrame.pitch_deg / roll_deg are additive with defaults — keep
+    # trace_version=3 so legacy JSONL loads without a wire break.
     trace_version: int = 3
     grid_width: float
     grid_height: float
@@ -65,6 +67,10 @@ class JetFrame(BaseModel):
     fuel: float = 0.0
     # Phase 37: authoritative altitude when present; None → legacy viewer cosmetics.
     altitude: Optional[float] = None
+    # Phase 54: authoritative attitude (sim conventions). Defaults keep legacy
+    # traces loadable as wings-level / pitch-0 without a version bump.
+    pitch_deg: float = 0.0
+    roll_deg: float = 0.0
     # Phase 39: countermeasure / defensive HUD state.
     flares_remaining: Optional[int] = None
     flare_capacity: Optional[int] = None
