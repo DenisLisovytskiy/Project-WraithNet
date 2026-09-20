@@ -13,7 +13,16 @@ python -m venv .venv
 # macOS/Linux
 source .venv/bin/activate
 
-pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt -r requirements-3d.txt
+```
+
+Always run WraithNet with the activated virtual environment. On Debian and
+Ubuntu, installing into the system interpreter is intentionally blocked by
+PEP 668; do not use `sudo pip` or `--break-system-packages`. If the environment
+already exists but is not activated, launch directly with:
+
+```bash
+.venv/bin/python -m launcher
 ```
 
 ## Tests
@@ -57,7 +66,7 @@ While watching a Launch:
 - **Space** — pause / resume (presentation is paced at ~3 ticks/sec; the sim may finish buffering earlier)
 - **← / →** — step one tick back / forward
 - **R** — restart from tick 0
-- **+ / −** — speed up / slow down
+- **Mouse wheel / + / −** — zoom in / out
 - **O / C** — orbit / chase camera
 - **Esc** — return to editor
 

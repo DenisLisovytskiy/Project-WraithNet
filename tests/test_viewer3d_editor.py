@@ -13,7 +13,7 @@ from pathlib import Path
 
 pytest.importorskip("panda3d")
 
-from panda3d.core import NodePath, loadPrcFileData
+from panda3d.core import Camera, NodePath, OrthographicLens, PerspectiveLens, loadPrcFileData
 
 loadPrcFileData("", "window-type none")
 loadPrcFileData("", "audio-library-name null")
@@ -316,6 +316,11 @@ def test_preview_valid_draft_enters_brief():
     app = _editor_app()
     try:
         assert app.view_mode == "editor"
+        # window-type none has no real camera, so install one explicitly to
+        # exercise the editor-orthographic -> preview-perspective handoff.
+        app.cam = NodePath(Camera("preview-lens-test"))
+        app.cam.node().set_lens(OrthographicLens())
+        app._perspective_lens = PerspectiveLens()
         editor = app._editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 25.0))
@@ -329,6 +334,16 @@ def test_preview_valid_draft_enters_brief():
         assert "Jet_1" in app._header.jet_ids
         assert "Target_1" in app._header.target_ids
         assert not app._handles.root.find("**/target-Target_1").is_empty()
+        assert isinstance(app.cam.node().get_lens(), PerspectiveLens)
+
+        radius = app._brief.radius
+        app.messenger.send("wheel_up")
+        assert app._brief.radius < radius
+        app.messenger.send("-")
+        assert app._brief.radius == pytest.approx(radius)
+
+        app.exit_preview()
+        assert isinstance(app.cam.node().get_lens(), OrthographicLens)
     finally:
         _destroy_app(app)
 

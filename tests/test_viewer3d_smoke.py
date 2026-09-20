@@ -7,6 +7,7 @@ requirements-dev.txt). window-type none must be set before ShowBase.
 from __future__ import annotations
 
 import asyncio
+import math
 import threading
 import time
 
@@ -738,8 +739,21 @@ def test_keybindings_cycle_jets_and_switch_camera():
 
         app._on_chase()
         assert app.camera_mode == "chase"
+        chase_distance = app._chase.follow_distance
+        app.messenger.send("+")
+        assert app._chase.follow_distance < chase_distance
+        app.messenger.send("-")
+        assert app._chase.follow_distance == pytest.approx(chase_distance)
         app._on_orbit()
         assert app.camera_mode == "orbit"
+
+        orbit_distance = math.dist(app._orbit._pos, app._orbit.center)
+        app.messenger.send("wheel_up")
+        assert math.dist(app._orbit._pos, app._orbit.center) < orbit_distance
+        app.messenger.send("wheel_down")
+        assert math.dist(app._orbit._pos, app._orbit.center) == pytest.approx(
+            orbit_distance
+        )
 
         before = app._orbit._pos
         app._orbit._held = {"forward": True}
@@ -833,11 +847,15 @@ def test_editor_zoom_keybindings_change_ortho_zoom():
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
         start = app._editor.camera.zoom
-        app._on_editor_zoom_in()
+        app.messenger.send("wheel_up")
         assert app._editor.camera.zoom > start
         zoomed = app._editor.camera.zoom
-        app._on_editor_zoom_out()
+        app.messenger.send("wheel_down")
         assert app._editor.camera.zoom < zoomed
+        app.messenger.send("+")
+        assert app._editor.camera.zoom > start
+        app.messenger.send("-")
+        assert app._editor.camera.zoom == pytest.approx(start)
         app._editor_pan(4.0, -2.0)
         assert app._editor.camera.center_x == pytest.approx(54.0)
         assert app._editor.camera.center_y == pytest.approx(48.0)
