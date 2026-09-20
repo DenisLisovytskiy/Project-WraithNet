@@ -148,7 +148,6 @@ _KEY_BINDINGS = (
     ("WASD", "pan"),
     ("Scroll, +/-", "zoom"),
     ("LMB", "look"),
-    ("Space/Ctrl", "up/down"),
     ("Home", "recenter"),
     ("O/C", "orbit/chase"),
     ("Tab/N", "next jet"),

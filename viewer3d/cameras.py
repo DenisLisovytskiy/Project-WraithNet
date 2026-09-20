@@ -6,7 +6,8 @@ Jet selection for chase mode uses Tab/N cycling over `header.jet_ids`
 rather than 3D collision picking (Phase 17's explicitly sanctioned
 fallback -- picking is fiddly under `window-type none` and not required).
 
-Orbit mode is a free-look camera (WASD pan, +/- and wheel zoom, LMB look)
+Orbit mode is a free-look camera (WASD view-plane pan, +/- and wheel zoom,
+LMB look)
 that starts framed on the map and can `reset()` to that framing.
 """
 
@@ -80,39 +81,36 @@ def _zoom_distance(current: float, original: float, steps: float) -> float:
 def _look_axes(heading_deg: float, pitch_deg: float):
     """Unit forward / right / up for a Panda3D camera (HPR, no roll).
 
-    Heading 0 looks along +Y; positive heading toward +X. Used for mouse-wheel
-    nudges along the true look vector.
+    Heading 0 looks along +Y ("north"); **positive heading turns left**, toward
+    -X -- Panda3D's convention, which is the opposite of the intuitive one.
+    Getting this backwards mirrors every camera-relative axis about the Y axis,
+    so `test_look_axes_match_panda3d` pins these against Panda3D's own quat.
     """
     h = math.radians(heading_deg)
     p = math.radians(pitch_deg)
     ch, sh = math.cos(h), math.sin(h)
     cp, sp = math.cos(p), math.sin(p)
-    forward = (sh * cp, ch * cp, sp)
-    right = (ch, -sh, 0.0)
-    up = (-sh * sp, -ch * sp, cp)
+    forward = (-sh * cp, ch * cp, sp)
+    right = (ch, sh, 0.0)
+    up = (sh * sp, -ch * sp, cp)
     return forward, right, up
-
-
-def _ground_move_axes(heading_deg: float):
-    """Horizontal forward/right from yaw only — movement slides over the map.
-
-    Ignores pitch so looking down at the battlefield still moves along the
-    ground plane instead of diving into it. Q/E use world +Z separately.
-    """
-    h = math.radians(heading_deg)
-    ch, sh = math.cos(h), math.sin(h)
-    forward = (sh, ch, 0.0)
-    right = (ch, -sh, 0.0)
-    return forward, right
 
 
 class OrbitCamera:
     """Free-look tactical camera. Starts framed on the map center; LMB looks,
-    WASD pans on the ground plane, +/- and wheel zoom toward the framed center.
-    `reset()` restores the original framing.
+    WASD pans the view plane, Space/Ctrl lift and drop, +/- and wheel zoom
+    toward the framed center. `reset()` restores the original framing.
+
+    WASD slides along the camera's own up/right axes, so whatever you are
+    looking at moves straight down/up/right/left on screen no matter how the
+    camera is tilted, and rotating the camera carries the pan axes with it --
+    mid-glide too, because velocity is stored in camera-local axes and
+    re-projected every frame.
     """
 
-    _DEFAULT_AZIMUTH_DEG = 40.0
+    # Look due north (down +Y) so screen-up *is* north: W pans north, D east.
+    # A corner-on angle looks nicer but silently rotates WASD off the compass.
+    _DEFAULT_AZIMUTH_DEG = 0.0
     _DEFAULT_ELEVATION_DEG = SCENE_CAMERA_ELEVATION_DEG
     _MOVE_SPEED = 55.0
     _FAST_MULTIPLIER = 2.5
@@ -120,6 +118,11 @@ class OrbitCamera:
     _PITCH_MIN = -89.0
     _PITCH_MAX = 89.0
     _WHEEL_STEP = 8.0
+    # Seconds for held/released movement to reach ~63% of its target speed.
+    # 0.1s is enough to kill the on/off snap without feeling like ice.
+    _SMOOTH_TAU = 0.1
+    _ALT_SPEED_MIN = 0.25
+    _ALT_SPEED_MAX = 4.0
 
     def __init__(self, base, center=(50.0, 50.0, 0.0), radius=90.0, scale=1.0) -> None:
         self.base = base
@@ -136,6 +139,9 @@ class OrbitCamera:
         self._heading_deg = 0.0
         self._pitch_deg = 0.0
         self._last_mouse: Point2 | None = None
+        # (right, view-up, world-up) units/s, in camera-local axes.
+        self._vel = (0.0, 0.0, 0.0)
+        self._speed_ref_alt = 1.0
         # Test-injected held keys; when None, live input is polled each frame.
         self._held: dict[str, bool] | None = None
         self.reset()
@@ -158,6 +164,9 @@ class OrbitCamera:
         self._heading_deg = float(hpr[0])
         self._pitch_deg = float(hpr[1])
         self._last_mouse = None
+        self._vel = (0.0, 0.0, 0.0)
+        # Pan speed is quoted for the default framing height (factor 1.0).
+        self._speed_ref_alt = max(1.0, abs(self._pos[2] - self.center[2]))
         self._apply()
 
     def nudge_along_look(self, steps: float) -> None:
@@ -231,28 +240,61 @@ class OrbitCamera:
             return False
         return False
 
+    def _altitude_speed_factor(self) -> float:
+        """Pan faster when high over the map, slower when down among the jets.
+
+        A fixed units/s pan crawls when zoomed out over a big battlespace and
+        overshoots when close in; tying it to height above the framed center
+        keeps the on-screen speed roughly constant at any zoom.
+        """
+        alt = abs(self._pos[2] - self.center[2])
+        return max(
+            self._ALT_SPEED_MIN,
+            min(self._ALT_SPEED_MAX, alt / self._speed_ref_alt),
+        )
+
     def _apply_movement(self, dt: float) -> None:
         if dt <= 0.0:
             return
-        forward_axis = (1.0 if self._key_down("forward") else 0.0) - (
+        view_up_axis = (1.0 if self._key_down("forward") else 0.0) - (
             1.0 if self._key_down("back") else 0.0
         )
-        strafe_axis = (1.0 if self._key_down("right") else 0.0) - (
+        right_axis = (1.0 if self._key_down("right") else 0.0) - (
             1.0 if self._key_down("left") else 0.0
         )
-        up_axis = (1.0 if self._key_down("up") else 0.0) - (
+        world_up_axis = (1.0 if self._key_down("up") else 0.0) - (
             1.0 if self._key_down("down") else 0.0
         )
-        if forward_axis == 0.0 and strafe_axis == 0.0 and up_axis == 0.0:
+        speed = self.move_speed * self._altitude_speed_factor()
+        if self._key_down("fast"):
+            speed *= self._FAST_MULTIPLIER
+        target = (right_axis * speed, view_up_axis * speed, world_up_axis * speed)
+        # Ease toward the held direction instead of snapping on/off: taps glide
+        # in, releases coast out. exp(-dt/tau) makes the curve identical at 30
+        # or 240 fps rather than "smoother when the frame rate is worse".
+        alpha = 1.0 - math.exp(-dt / self._SMOOTH_TAU)
+        vel = tuple(v + (t - v) * alpha for v, t in zip(self._vel, target))
+        if max(abs(v) for v in vel) < speed * 1e-3:
+            vel = (0.0, 0.0, 0.0)
+        # Exact integral of that easing curve over the frame, not vel * dt:
+        # summing the end-of-frame speed drifts a few percent at 30 fps
+        # against 240, which is a visibly different glide length.
+        step = tuple(
+            t * dt - (v1 - v0) * self._SMOOTH_TAU
+            for t, v0, v1 in zip(target, self._vel, vel)
+        )
+        self._vel = vel
+        if not any(step):
             return
-        forward, right = _ground_move_axes(self._heading_deg)
-        speed = self.move_speed * (self._FAST_MULTIPLIER if self._key_down("fast") else 1.0)
-        scale = speed * dt
+        # Re-projected from the *current* orientation every frame, so turning
+        # mid-glide bends the motion with the view instead of drifting on the
+        # axes it started from.
+        _, right, up = _look_axes(self._heading_deg, self._pitch_deg)
         x, y, z = self._pos
         self._pos = (
-            x + (forward[0] * forward_axis + right[0] * strafe_axis) * scale,
-            y + (forward[1] * forward_axis + right[1] * strafe_axis) * scale,
-            z + up_axis * scale,
+            x + right[0] * step[0] + up[0] * step[1],
+            y + right[1] * step[0] + up[1] * step[1],
+            z + right[2] * step[0] + up[2] * step[1] + step[2],
         )
 
     def _apply(self) -> None:
