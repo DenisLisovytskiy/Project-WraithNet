@@ -16,6 +16,10 @@ Phase 22: Observation.frame_type / fuel / home_base.
 
 Phase 39: inbound threats, flares, notch defense fields on Observation/ActionIntent.
 
+Phase 50: Observation.current_pitch_deg / current_roll_deg;
+
+ActionIntent.desired_pitch_deg / desired_roll_deg (optional hold-current).
+
 """
 
 
@@ -146,6 +150,12 @@ class Observation(BaseModel):
 
     current_heading: float = Field(default=0.0, ge=0.0, lt=360.0)
 
+    # Phase 50: wings-level defaults; see JetAgent attitude conventions.
+
+    current_pitch_deg: float = Field(default=0.0)
+
+    current_roll_deg: float = Field(default=0.0)
+
     frame_type: JetFrameType = "STRIKE_FIGHTER"
 
     fuel: float = Field(
@@ -251,6 +261,12 @@ class ActionIntent(BaseModel):
     # Phase 37: optional altitude intent; climb/descent clamped per frame.
 
     desired_altitude: Optional[float] = Field(default=None, ge=0.0)
+
+    # Phase 50: optional attitude intents; None = hold current (Phase 51 applies).
+
+    desired_pitch_deg: Optional[float] = None
+
+    desired_roll_deg: Optional[float] = None
 
     # Phase 39 — MobilityIntent / FastDefenseIntent fields (alongside primary).
 

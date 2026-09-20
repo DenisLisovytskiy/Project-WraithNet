@@ -207,8 +207,12 @@ def test_generator_version_matches_the_rng_module():
 
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_seed_matrix_terrain_feasible(preset):
-    # Phase 35 acceptance: 100 seeds/preset — keep CI time bounded with 25 here
-    # plus a dedicated longer matrix below for STANDARD.
+    # Phase 35 acceptance: every seed generates, and every scenario is
+    # terrain-feasible. The skip-on-PLACEMENT_EXHAUSTED escape this carried
+    # was accommodating a bug, not a real constraint: on the default map the
+    # CLUSTERED band asked for centres both nearer to and no nearer than
+    # group_min_separation, which no seed could satisfy except by accident.
+    # With that fixed, dense NIGHTMARE packs place on every seed.
     n = 25 if preset != "NIGHTMARE" else 15
     for seed in range(n):
         result = generate_scenario(parameters_for_preset(preset, seed=seed))
