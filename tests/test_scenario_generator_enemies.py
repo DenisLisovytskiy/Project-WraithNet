@@ -21,6 +21,7 @@ from wraithnet.scenario_generator import (
     GenerationError,
     discovery_link_max_distance,
     distance_from_home,
+    effective_base_keepout,
     enemies_to_scenario,
     generate_enemies,
     make_test_jet,
@@ -128,9 +129,10 @@ def test_presets_over_seed_matrix_exact_counts_and_ids(preset):
 def test_geometry_constraints_base_safety_and_separation():
     params = _params(seed=11, group_style="DISPERSED", objective_count=4, sam_count=0, jammer_count=0)
     enemies = generate_enemies(params)
+    keepout = effective_base_keepout(params)
     centers = [g.center for g in enemies.groups if g.target_ids]
     for center in centers:
-        assert distance_from_home(enemies.home_base, center) >= params.base_safety_radius
+        assert distance_from_home(enemies.home_base, center) >= keepout
     min_sep = 1.5 * params.group_min_separation
     for i, a in enumerate(centers):
         for b in centers[i + 1 :]:

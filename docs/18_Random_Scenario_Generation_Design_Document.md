@@ -228,7 +228,17 @@ High-level sequence:
 ### 7.1 Constraints
 
 * All positions are in bounds with `map_margin`.
-* No enemy group center lies within `base_safety_radius` of home base.
+* **Friendly-base keep-out (sanctuary):** home base is placed first. Effective keep-out is
+  `max(base_safety_radius, base_safety_fraction × map_diagonal)`. **Every** enemy entity
+  (objectives, SAMs, jammers, AAA, enemy tanks, enemy corvettes) must stay outside that
+  radius — not only group centers. On the default 5000×5000 generation grid the fraction
+  term (~6% of diagonal ≈ 424) dominates the old absolute floor of 18, which was tuned for
+  100×100 maps and left a useless bubble on large maps.
+* **AO angular fan:** DISPERSED / root centers soft-prefer
+  `anchor_min_angular_separation_deg` bearing separation from home so objectives fan across
+  the battlespace instead of collapsing into one wedge (CLUSTERED children still clump for
+  discovery).
+* No enemy group center lies within the effective keep-out of home base.
 * `DISPERSED` group centers have pairwise separation of at least `1.5 × group_min_separation`.
 * `CLUSTERED` centers belong to 1–3 macro-cluster anchors and lie between `0.5 ×` and `1.0 × group_min_separation` from their anchor while still respecting the ordinary pairwise minimum.
 * `MIXED` deterministically assigns roughly half of centers to each rule.
@@ -237,6 +247,7 @@ High-level sequence:
 * Every SAM ring edge remains at least resolved `launch_threat_clearance` beyond the launch ring; presets reduce this explicit margin as difficulty rises.
 * For two threat rings, overlap ratio is `max(0, 1 - center_distance / (radius_a + radius_b))`. `threat_overlap` is the target mean overlap ratio for threat pairs within the same group, accepted within a documented tolerance. Inter-group pairs need not match it. This changes placement only; runtime radii remain unchanged.
 * No entity is placed directly on home base.
+* Feasibility emits `ENEMY_NEAR_BASE` (WARNING) if a manual editor edit leaves an enemy inside the keep-out.
 
 ### 7.2 Discoverability under current fog of war
 

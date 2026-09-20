@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -43,7 +43,7 @@ from wraithnet.generation_schemas import (
     GroupStyle,
     GroupTemplateName,
 )
-from wraithnet.geometry import bearing_to
+from wraithnet.geometry import angular_distance, bearing_to
 from wraithnet.scenario_feasibility import (
     analyze_feasibility,
     discovery_link_clear,
@@ -171,6 +171,65 @@ def distance_from_home(
     home_base: tuple[float, float], position: tuple[float, float]
 ) -> float:
     return math.dist(home_base, position)
+
+
+def map_diagonal(parameters: GenerationParameters) -> float:
+    return math.hypot(parameters.grid_width, parameters.grid_height)
+
+
+def effective_base_keepout(parameters: GenerationParameters) -> float:
+    """Friendly-base sanctuary radius for *all* enemy placements.
+
+    Takes the larger of the absolute ``base_safety_radius`` floor and
+    ``base_safety_fraction * map_diagonal`` so 5000×5000 maps keep a real
+    empty bubble (absolute 18 alone is only ~0.4% of map width).
+    """
+    return max(
+        float(parameters.base_safety_radius),
+        float(parameters.base_safety_fraction) * map_diagonal(parameters),
+    )
+
+
+def respects_enemy_base_keepout(
+    position: tuple[float, float],
+    home_base: tuple[float, float],
+    parameters: GenerationParameters,
+    *,
+    extra_bases: Sequence[tuple[float, float]] = (),
+) -> bool:
+    """True when ``position`` is outside the keep-out of every friendly base."""
+    keepout = effective_base_keepout(parameters)
+    if distance_from_home(home_base, position) < keepout:
+        return False
+    for base in extra_bases:
+        if distance_from_home(base, position) < keepout:
+            return False
+    return True
+
+
+def _bearing_from_home(
+    home_base: tuple[float, float], position: tuple[float, float]
+) -> float:
+    return bearing_to(home_base, position)
+
+
+def _respects_anchor_angular_separation(
+    position: tuple[float, float],
+    *,
+    home_base: tuple[float, float],
+    existing: Sequence[tuple[float, float]],
+    min_separation_deg: float,
+) -> bool:
+    """Require a bearing gap from home vs already-placed centers (soft AO fan)."""
+    if min_separation_deg <= 0.0 or not existing:
+        return True
+    bearing = _bearing_from_home(home_base, position)
+    for other in existing:
+        if angular_distance(bearing, _bearing_from_home(home_base, other)) < (
+            min_separation_deg - 1e-9
+        ):
+            return False
+    return True
 
 
 def position_in_bounds(
@@ -554,7 +613,7 @@ def _center_candidate_ok(
         return False
     if not _is_ground_land(terrain, position):
         return False
-    if distance_from_home(home_base, position) < parameters.base_safety_radius:
+    if not respects_enemy_base_keepout(position, home_base, parameters):
         return False
     if not _distance_fraction_ok(home_base, position, parameters):
         return False
@@ -666,8 +725,9 @@ def _place_group_centers(
     # applies once jets reach the AO.
     max_dist = max_normalized_distance(home_base, parameters=parameters)
     root_max = parameters.objective_distance_max_fraction * max_dist
+    keepout = effective_base_keepout(parameters)
     root_min = max(
-        parameters.base_safety_radius,
+        keepout,
         parameters.objective_distance_min_fraction * max_dist,
     )
     if root_min > root_max:
@@ -682,10 +742,12 @@ def _place_group_centers(
                     "root_min": root_min,
                     "root_max": root_max,
                     "base_safety_radius": parameters.base_safety_radius,
+                    "base_safety_fraction": parameters.base_safety_fraction,
+                    "effective_base_keepout": keepout,
                 },
                 "suggestions": [
                     "widen objective_distance fractions",
-                    "reduce base_safety_radius",
+                    "reduce base_safety_radius / base_safety_fraction",
                 ],
             },
         )
@@ -694,11 +756,22 @@ def _place_group_centers(
     positions: list[tuple[float, float]] = []
 
     def try_place_root() -> bool:
-        for _ in range(parameters.max_placement_attempts):
+        min_angle = float(parameters.anchor_min_angular_separation_deg)
+        for attempt in range(parameters.max_placement_attempts):
             _note_attempt()
             cand = _sample_in_annulus(home_base, root_min, root_max, rng)
             cand = _land_position_from_sample(terrain, cand, land, rng)
             if cand is None:
+                continue
+            # Soft angular fan: enforce for the first half of attempts only.
+            if attempt < parameters.max_placement_attempts // 2 and not (
+                _respects_anchor_angular_separation(
+                    cand,
+                    home_base=home_base,
+                    existing=positions,
+                    min_separation_deg=min_angle,
+                )
+            ):
                 continue
             pairwise = _pairwise_min_for_style(styles[0], parameters.group_min_separation)
             if _center_candidate_ok(
@@ -797,7 +870,7 @@ def _place_group_centers(
         placed = False
         pairwise = _pairwise_min_for_style(style, parameters.group_min_separation)
 
-        for _ in range(parameters.max_placement_attempts):
+        for attempt in range(parameters.max_placement_attempts):
             _note_attempt()
 
             if style == "CLUSTERED":
@@ -817,6 +890,16 @@ def _place_group_centers(
             cand = _land_position_from_sample(terrain, cand, land, rng)
             if cand is None:
                 continue
+            if style != "CLUSTERED" and attempt < parameters.max_placement_attempts // 2:
+                if not _respects_anchor_angular_separation(
+                    cand,
+                    home_base=home_base,
+                    existing=positions,
+                    min_separation_deg=float(
+                        parameters.anchor_min_angular_separation_deg
+                    ),
+                ):
+                    continue
             if not _center_candidate_ok(
                 cand,
                 home_base=home_base,
@@ -1133,6 +1216,7 @@ def _place_member_near_center(
     enforce_sam_clearance: bool = False,
 ) -> tuple[float, float]:
     sam_clearance = sam_min_distance_from_home(parameters)
+    keepout = effective_base_keepout(parameters)
     for _ in range(parameters.max_placement_attempts):
         _note_attempt()
         if desired_distance is None:
@@ -1162,6 +1246,8 @@ def _place_member_near_center(
         ):
             continue
         if math.dist(cand, home_base) < 1e-6:
+            continue
+        if not respects_enemy_base_keepout(cand, home_base, parameters):
             continue
         if not position_respects_separation(
             cand, existing, parameters.entity_min_separation
@@ -1199,6 +1285,8 @@ def _place_member_near_center(
             grid_height=parameters.grid_height,
         ):
             continue
+        if not respects_enemy_base_keepout(cand, home_base, parameters):
+            continue
         if not position_respects_separation(
             cand, existing, parameters.entity_min_separation
         ):
@@ -1234,6 +1322,8 @@ def _place_member_near_center(
             grid_height=parameters.grid_height,
         ):
             continue
+        if not respects_enemy_base_keepout(cand, home_base, parameters):
+            continue
         if not position_respects_separation(
             cand, existing, parameters.entity_min_separation * 0.75
         ):
@@ -1255,12 +1345,14 @@ def _place_member_near_center(
                 "center": center,
                 "entity_min_separation": parameters.entity_min_separation,
                 "sam_clearance": sam_clearance if enforce_sam_clearance else None,
+                "effective_base_keepout": keepout,
                 "land_cells": len(land),
             },
             "suggestions": [
                 "reduce entity_min_separation",
                 "reduce water_fraction / city coverage near groups",
                 "reduce threat_overlap pressure",
+                "reduce base_safety_fraction if keep-out starves offsets",
             ],
         },
     )
@@ -1822,7 +1914,7 @@ def _place_leftover_center(
             grid_height=parameters.grid_height,
         ):
             continue
-        if distance_from_home(home_base, cand) < parameters.base_safety_radius:
+        if distance_from_home(home_base, cand) < effective_base_keepout(parameters):
             continue
         if enforce_sam_clearance and distance_from_home(home_base, cand) < sam_clearance:
             continue
@@ -1861,7 +1953,7 @@ def _place_leftover_center(
                 grid_height=parameters.grid_height,
             ):
                 continue
-            if distance_from_home(home_base, cand) < parameters.base_safety_radius:
+            if distance_from_home(home_base, cand) < effective_base_keepout(parameters):
                 continue
             if enforce_sam_clearance and distance_from_home(home_base, cand) < sam_clearance:
                 continue
@@ -2949,6 +3041,10 @@ def place_generated_tanks(
                     cand, occ, parameters.entity_min_separation
                 ):
                     continue
+                if faction == "ENEMY" and not respects_enemy_base_keepout(
+                    cand, home_base, parameters
+                ):
+                    continue
                 if not tanks_mutually_reachable(terrain, cand, zone):
                     continue
                 placed = cand
@@ -3081,6 +3177,7 @@ def place_generated_naval(
     *,
     terrain: TerrainGrid,
     occupied: list[tuple[float, float]],
+    home_base: tuple[float, float] | None = None,
 ) -> tuple[list, list]:
     """Place optional carriers/corvettes on water (ENEMY_NAVAL_SALT)."""
     from wraithnet.naval import (
@@ -3118,6 +3215,7 @@ def place_generated_naval(
     occ = list(occupied)
     carriers: list[CarrierSpec] = []
     corvettes: list[CorvetteSpec] = []
+    base_xy = home_base
 
     def _navigable_cells(footprint_radius: float) -> list[tuple[int, int]]:
         mask = build_navigable_water_mask(terrain, footprint_radius)
@@ -3128,7 +3226,9 @@ def place_generated_naval(
             if mask[r][c]
         ]
 
-    def _place_water(prefix: str, footprint_radius: float) -> tuple[float, float]:
+    def _place_water(
+        prefix: str, footprint_radius: float, *, enemy: bool = False
+    ) -> tuple[float, float]:
         pool = _navigable_cells(footprint_radius)
         if not pool:
             raise GenerationError(
@@ -3166,6 +3266,12 @@ def place_generated_naval(
                 cand, occ, parameters.entity_min_separation
             ):
                 continue
+            if (
+                enemy
+                and base_xy is not None
+                and not respects_enemy_base_keepout(cand, base_xy, parameters)
+            ):
+                continue
             return cand
         raise GenerationError(
             PLACEMENT_EXHAUSTED,
@@ -3182,7 +3288,7 @@ def place_generated_naval(
     carrier_frame = "ESCORT_CARRIER"
     for i in range(carrier_n):
         fp = NAVAL_FRAME_CATALOG[carrier_frame].footprint_radius
-        pos = _place_water("carrier", fp)
+        pos = _place_water("carrier", fp, enemy=False)
         occ.append(pos)
         carriers.append(
             CarrierSpec(
@@ -3199,7 +3305,7 @@ def place_generated_naval(
         loadout = {"SAM_RADAR": 4, "CIWS": 20, "DECK_GUN": 10}
     for i in range(corvette_n):
         fp = NAVAL_FRAME_CATALOG[frame].footprint_radius
-        pos = _place_water("corvette", fp)
+        pos = _place_water("corvette", fp, enemy=True)
         occ.append(pos)
         corvettes.append(
             CorvetteSpec(
@@ -3248,6 +3354,7 @@ def generate_scenario(parameters: GenerationParameters) -> GenerationResult:
         parameters,
         terrain=enemies.terrain,
         occupied=occupied,
+        home_base=enemies.home_base,
     )
     build_state.tanks = list(tanks)
     build_state.corvettes = list(corvettes)

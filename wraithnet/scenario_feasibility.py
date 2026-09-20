@@ -39,6 +39,7 @@ FUEL_REACH = "FUEL_REACH"
 DISCOVERY_CHAIN_GAP = "DISCOVERY_CHAIN_GAP"
 EMPTY_LOADOUT = "EMPTY_LOADOUT"
 LAUNCH_AREA_THREATENED = "LAUNCH_AREA_THREATENED"
+ENEMY_NEAR_BASE = "ENEMY_NEAR_BASE"
 NO_LAND_SPAWN_COMPONENT = "NO_LAND_SPAWN_COMPONENT"
 ENTITY_ON_IMPASSABLE_TERRAIN = "ENTITY_ON_IMPASSABLE_TERRAIN"
 LOS_DISCOVERY_CHAIN_GAP = "LOS_DISCOVERY_CHAIN_GAP"
@@ -1180,6 +1181,51 @@ def analyze_feasibility(
                         "launch ring at tick 0."
                     ),
                     related_ids=[sam.target_id],
+                )
+            )
+
+    # Friendly-base sanctuary: any enemy inside the effective keep-out
+    # (generation parameter or absolute floor). WARNING so editor edits remain
+    # loadable; generator should not emit this for fresh scenarios.
+    keepout = 18.0
+    gen = getattr(scenario, "generation", None)
+    if gen is not None and getattr(gen, "resolved_parameters", None) is not None:
+        params = gen.resolved_parameters
+        keepout = max(
+            float(params.base_safety_radius),
+            float(params.base_safety_fraction)
+            * math.hypot(scenario.grid_width, scenario.grid_height),
+        )
+    enemy_positions: list[tuple[str, tuple[float, float]]] = [
+        *((f"Target '{t.target_id}'", t.position) for t in scenario.targets),
+        *((f"SAM '{s.target_id}'", s.position) for s in scenario.sam_sites),
+        *((f"Jammer '{j.jammer_id}'", j.position) for j in scenario.jammers),
+        *(
+            (f"AAA '{a.target_id}'", a.position)
+            for a in getattr(scenario, "aaa_sites", []) or []
+        ),
+        *(
+            (f"Tank '{t.unit_id}'", t.position)
+            for t in getattr(scenario, "tanks", []) or []
+            if getattr(t, "faction", "ENEMY") == "ENEMY"
+        ),
+        *(
+            (f"Corvette '{c.unit_id}'", c.position)
+            for c in getattr(scenario, "corvettes", []) or []
+        ),
+    ]
+    for label, pos in enemy_positions:
+        if math.dist(scenario.home_base, pos) < keepout - 1e-9:
+            entity_id = label.split("'")[1] if "'" in label else label
+            issues.append(
+                FeasibilityIssue(
+                    severity="WARNING",
+                    code=ENEMY_NEAR_BASE,
+                    message=(
+                        f"{label} is inside the friendly-base keep-out "
+                        f"({keepout:.1f} world units)."
+                    ),
+                    related_ids=[entity_id],
                 )
             )
 
