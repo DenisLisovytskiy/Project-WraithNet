@@ -81,12 +81,17 @@ async def test_total_missiles_fired_covers_all_targets(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_total_distance_traveled_is_sane(fast_cnp):
-    """Loose sanity bound; Phase 10 will tighten once all V2 features land."""
+    """Loose runaway-loop guard for the fixed PoC (strike + mandatory RTB).
+
+    Heading-cruise return of all three jets lands near ~1100 on current
+    defaults; keep a wide ceiling so path lengthening stays visible without
+    pinning a geometric optimum.
+    """
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
     summary = summarize(bridge.model)
 
-    assert summary["total_distance_traveled"] < 600.0
+    assert 400.0 <= summary["total_distance_traveled"] < 2000.0
 
 
 @pytest.mark.asyncio

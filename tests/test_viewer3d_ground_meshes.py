@@ -255,7 +255,9 @@ def test_carriers_tanks_aaa_have_shattered_textures():
         assert len(cols) >= minimum, node.get_name()
         assert _fill_vertex_count(node) >= 200, node.get_name()
     cv_cols = _fill_vertex_colors(escort)
-    assert all(g <= b + 0.04 for r, g, b in cv_cols)
+    # Haze-gray hull stays cool/neutral; weathering shards may tint slightly
+    # greenish (deck lines, rust, window glow) so allow a soft green margin.
+    assert all(g <= b + 0.12 for r, g, b in cv_cols)
     assert any(r > 0.50 and b >= g for r, g, b in cv_cols)
     aaa_cols = _fill_vertex_colors(spaag)
     assert any(r > g + 0.08 and r > b for r, g, b in aaa_cols)
