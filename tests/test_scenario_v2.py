@@ -135,16 +135,16 @@ async def test_no_agent_left_in_a_zombie_state(fast_cnp):
 async def test_total_distance_traveled_is_reasonable(fast_cnp):
     """Empirically bounded from real runs (Phase 10 Context).
 
-    Observed under the fixed v3 scenario with mandatory RTB: total distance
-    is strike transit plus return-to-base (~500+). Bound catches loops (>900)
-    without failing the longer RTB path.
+    Observed under the fixed v3 scenario with mandatory RTB and nose-along-
+    track cruise: total distance is strike transit plus return (~1100). Band
+    catches runaway loops without failing the longer RTB path.
     """
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
 
     observed = summary["total_distance_traveled"]
-    assert 400.0 <= observed <= 900.0, (
+    assert 700.0 <= observed <= 1800.0, (
         f"Total distance traveled ({observed:.2f}) is outside the expected "
         "RTB-inclusive band; inspect contributors_by_target."
     )

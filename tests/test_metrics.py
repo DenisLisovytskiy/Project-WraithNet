@@ -5,10 +5,27 @@ from pathlib import Path
 import pytest
 
 from wraithnet import config
+from wraithnet.geometry import bearing_to
 from wraithnet.metrics import summarize
 from wraithnet.scenario_schema import JetSpec, SamSiteSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.schemas import ActionIntent
 from wraithnet.world import WraithNetModel
+
+
+def _move_toward(
+    agent_id: str,
+    tick: int,
+    origin: tuple[float, float],
+    destination: tuple[float, float],
+) -> ActionIntent:
+    """Heading-cruise MOVE: nose must face the waypoint (no crab-slide)."""
+    return ActionIntent(
+        agent_id=agent_id,
+        tick=tick,
+        action_type="MOVE",
+        target_position=destination,
+        desired_heading=bearing_to(origin, destination),
+    )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -98,13 +115,9 @@ def test_summarize_keeps_distance_of_a_jet_that_landed():
             home_base=home,
         )
     )
-    intent = ActionIntent(
-        agent_id="Lander",
-        tick=0,
-        action_type="MOVE",
-        target_position=home,
-    )
-    model.step({"Lander": intent})
+    # Face the pad so one tick of cruise lands on the waypoint (Phase 51).
+    model.jets["Lander"].heading = bearing_to(start, home)
+    model.step({"Lander": _move_toward("Lander", 0, start, home)})
     before = summarize(model)
     assert "Lander" in model.jets
     dist = before["per_jet_distance_traveled"]["Lander"]
@@ -128,37 +141,32 @@ def test_summarize_keeps_distance_of_a_jet_that_landed():
 
 def test_summarize_accounts_for_one_landed_and_one_destroyed_in_the_same_run():
     home = (10.0, 10.0)
+    lander_start = (15.0, 10.0)
+    doomed_start = (15.0, 20.0)
+    doomed_dest = (80.0, 20.0)
     model = WraithNetModel(
         scenario=_far_bunker_scenario(
             [
                 JetSpec(
                     agent_id="Lander",
-                    position=(15.0, 10.0),
+                    position=lander_start,
                     payload={"JDAM": 1, "AIM9X": 0},
                 ),
                 JetSpec(
                     agent_id="Doomed",
-                    position=(15.0, 20.0),
+                    position=doomed_start,
                     payload={"JDAM": 3, "AIM9X": 0},
                 ),
             ],
             home_base=home,
         )
     )
+    model.jets["Lander"].heading = bearing_to(lander_start, home)
+    model.jets["Doomed"].heading = bearing_to(doomed_start, doomed_dest)
     model.step(
         {
-            "Lander": ActionIntent(
-                agent_id="Lander",
-                tick=0,
-                action_type="MOVE",
-                target_position=home,
-            ),
-            "Doomed": ActionIntent(
-                agent_id="Doomed",
-                tick=0,
-                action_type="MOVE",
-                target_position=(80.0, 20.0),
-            ),
+            "Lander": _move_toward("Lander", 0, lander_start, home),
+            "Doomed": _move_toward("Doomed", 0, doomed_start, doomed_dest),
         }
     )
     before = summarize(model)
@@ -201,31 +209,32 @@ def test_three_way_split_holds_every_tick_with_neither_removal():
 
 def test_three_way_split_holds_every_tick_of_an_rtb_run():
     home = (20.0, 20.0)
+    start = (30.0, 20.0)
     model = WraithNetModel(
         scenario=_far_bunker_scenario(
             [
                 JetSpec(
                     agent_id="Homebody",
-                    position=(30.0, 20.0),
+                    position=start,
                     payload={"JDAM": 1, "AIM9X": 0},
                 )
             ],
             home_base=home,
         )
     )
+    model.jets["Homebody"].heading = bearing_to(start, home)
     model.jets["Homebody"].is_rtb = True
     _assert_three_way_split(model)
     ticks = 0
     while model.jets:
         ticks += 1
         assert ticks < 20, "RTB jet never landed"
+        jet = model.jets["Homebody"]
+        origin = (float(jet.pos[0]), float(jet.pos[1]))
         model.step(
             {
-                "Homebody": ActionIntent(
-                    agent_id="Homebody",
-                    tick=model.tick,
-                    action_type="MOVE",
-                    target_position=home,
+                "Homebody": _move_toward(
+                    "Homebody", model.tick, origin, home
                 )
             }
         )
@@ -288,28 +297,21 @@ def test_legacy_survived_metric_key_is_gone():
 def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
     """model_vars.csv must not drop a landed/destroyed jet's distance."""
     home = (20.0, 20.0)
+    start = (25.0, 20.0)
     model = WraithNetModel(
         scenario=_far_bunker_scenario(
             [
                 JetSpec(
                     agent_id="Lander",
-                    position=(25.0, 20.0),
+                    position=start,
                     payload={"JDAM": 1, "AIM9X": 0},
                 )
             ],
             home_base=home,
         )
     )
-    model.step(
-        {
-            "Lander": ActionIntent(
-                agent_id="Lander",
-                tick=0,
-                action_type="MOVE",
-                target_position=home,
-            )
-        }
-    )
+    model.jets["Lander"].heading = bearing_to(start, home)
+    model.step({"Lander": _move_toward("Lander", 0, start, home)})
     assert "Lander" in model.jets
     model.jets["Lander"].distance_traveled = 12.0
     model.datacollector.collect(model)

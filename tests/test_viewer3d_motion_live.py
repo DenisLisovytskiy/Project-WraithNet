@@ -166,8 +166,13 @@ def test_drain_task_still_returns_cont():
 
 
 def test_live_flood_does_not_multi_present_every_tick():
-    """Phase 48: a 50-tick ingest burst must not call present 50 times."""
-    from viewer3d.motion import CATCHUP_BACKLOG_TICKS
+    """Paced watch: a 50-tick ingest burst must not present all 50 in one frame.
+
+    Live apps raise catchup backlog to WATCH_MAX_BACKLOG_TICKS so mid-mission
+    snap-to-latest is disabled; absorption is time spacing + delayed advance,
+    not Phase-48's old snap-at-30 threshold.
+    """
+    from viewer3d.app import WATCH_MAX_BACKLOG_TICKS
 
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
@@ -183,10 +188,12 @@ def test_live_flood_does_not_multi_present_every_tick():
         for i in range(50):
             app._client.events.put(TickEvent(tick=_tick(i, float(i), 0.0)))
         app.task_mgr.step()
-        app._flush_presentation()
-        assert app._tick_buffer.backlog_len <= CATCHUP_BACKLOG_TICKS
+        assert app._tick_buffer.backlog_len == 50
+        assert app._tick_buffer.backlog_len <= WATCH_MAX_BACKLOG_TICKS
+        # One live presentation frame must not teleport through the flood.
+        app._advance_presentation(dt=1.0 / 60.0)
         assert len(presents) < 50
-        assert len(presents) <= CATCHUP_BACKLOG_TICKS
+        assert len(presents) <= 3
     finally:
         _destroy_app(app)
 

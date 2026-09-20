@@ -1,10 +1,16 @@
-"""Heading and firing-arc helpers shared by World and agent runtimes.
+"""Heading, attitude, and firing-arc helpers shared by World and agent runtimes.
 
-Phase 20 heading convention (used everywhere below): 0° = facing +y
+Phase 20 heading (yaw) convention (used everywhere below): 0° = facing +y
 (world "up"), increasing clockwise when viewed from above (90° = facing +x).
 Phase 21's strike-arc gate and decide_intent's "rotate to bear" branch must
 use this same formula — a mismatch would let a jet believe it's in-arc
 and never land a hit, or vice versa.
+
+Phase 50 attitude conventions (docs/22 §5.1):
+  pitch_deg — 0 = level, + = nose up (symmetric clamp via clamp_pitch_deg).
+  roll_deg  — 0 = wings level, + = roll right; stored in [-180, 180)
+              via the same wrap as shortest_signed_angle so pitch/roll
+              deltas can reuse that helper when both sides are normalized.
 """
 
 from __future__ import annotations
@@ -34,6 +40,17 @@ def shortest_signed_angle(from_deg: float, to_deg: float) -> float:
 def angular_distance(a: float, b: float) -> float:
     """Absolute shortest angular distance between two headings, in [0, 180]."""
     return abs(shortest_signed_angle(a, b))
+
+
+def normalize_roll_deg(roll_deg: float) -> float:
+    """Normalize roll into [-180, 180) (+ = roll right, 0 = wings level)."""
+    return (roll_deg + 180.0) % 360.0 - 180.0
+
+
+def clamp_pitch_deg(pitch_deg: float, limit_deg: float) -> float:
+    """Clamp pitch to the symmetric ±``limit_deg`` envelope (0 = level, + = nose up)."""
+    limit = abs(limit_deg)
+    return max(-limit, min(limit, pitch_deg))
 
 
 def is_in_firing_arc(
