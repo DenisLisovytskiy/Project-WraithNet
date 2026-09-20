@@ -6,6 +6,8 @@ so this file never opens a window.
 
 from __future__ import annotations
 
+import builtins
+
 import pytest
 
 from launcher.cli import LauncherArgs, default_replay_trace_path, parse_launcher_argv
@@ -83,6 +85,25 @@ def test_run_gui_forwards_edit_path(monkeypatch):
     monkeypatch.setattr(gui_app, "main", lambda argv=None: recorded.append(argv))
     run(LauncherArgs(role="gui", edit_path="path.json"))
     assert recorded == [["--edit", "path.json"]]
+
+
+def test_run_gui_missing_panda3d_shows_virtualenv_help(monkeypatch):
+    real_import = builtins.__import__
+
+    def _import_without_panda3d(name, *args, **kwargs):
+        if name == "viewer3d.app":
+            raise ModuleNotFoundError("No module named 'panda3d'", name="panda3d")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _import_without_panda3d)
+    with pytest.raises(SystemExit) as exc_info:
+        run(LauncherArgs(role="gui"))
+
+    message = str(exc_info.value)
+    assert "Panda3D" in message
+    assert "source .venv/bin/activate" in message
+    assert "requirements-3d.txt" in message
+    assert ".venv/bin/python -m launcher" in message
 
 
 def test_run_replay_without_path_forwards_default_trace(monkeypatch):

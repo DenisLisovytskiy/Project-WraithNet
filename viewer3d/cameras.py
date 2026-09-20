@@ -51,6 +51,32 @@ def _orbit_pose(center, radius: float, azimuth_deg: float, elevation_deg: float)
     return (x, y, z)
 
 
+# Keep overview cameras beside the battlefield, at a recognisably
+# third-person angle, rather than almost directly above it.  At 1.5 map
+# diagonals the complete ground plane fits inside Panda3D's default
+# perspective lens on a widescreen window with a useful amount of margin.
+SCENE_CAMERA_RADIUS_DIAGONALS = 1.5
+SCENE_CAMERA_ELEVATION_DEG = 25.0
+_ZOOM_FACTOR = 0.85
+
+
+def scene_camera_radius(
+    grid_width: float,
+    grid_height: float,
+    *,
+    minimum: float = 90.0,
+) -> float:
+    """Return a perspective overview distance that frames the whole scene."""
+    diagonal = math.hypot(float(grid_width), float(grid_height))
+    return max(float(minimum), diagonal * SCENE_CAMERA_RADIUS_DIAGONALS)
+
+
+def _zoom_distance(current: float, original: float, steps: float) -> float:
+    """Scale a camera distance with practical near/far limits."""
+    value = float(current) * (_ZOOM_FACTOR ** float(steps))
+    return max(float(original) * 0.2, min(float(original) * 4.0, value))
+
+
 def _look_axes(heading_deg: float, pitch_deg: float):
     """Unit forward / right / up for a Panda3D camera (HPR, no roll).
 
@@ -87,7 +113,7 @@ class OrbitCamera:
     """
 
     _DEFAULT_AZIMUTH_DEG = 40.0
-    _DEFAULT_ELEVATION_DEG = 38.0
+    _DEFAULT_ELEVATION_DEG = SCENE_CAMERA_ELEVATION_DEG
     _MOVE_SPEED = 55.0
     _FAST_MULTIPLIER = 2.5
     _LOOK_GAIN = 90.0
@@ -145,6 +171,10 @@ class OrbitCamera:
             z + forward[2] * dist,
         )
         self._apply()
+
+    def zoom(self, steps: float) -> None:
+        """Dolly along the current view direction; positive steps zoom in."""
+        self.nudge_along_look(steps)
 
     def update(self, dt: float) -> None:
         self._read_mouse_look()
@@ -239,6 +269,17 @@ class ChaseCamera:
         self.scale = max(1.0, float(scale))
         self.follow_distance = float(follow_distance) * self.scale
         self.follow_height = float(follow_height) * self.scale
+        self._default_follow_distance = self.follow_distance
+        self._default_follow_height = self.follow_height
+
+    def zoom(self, steps: float) -> None:
+        """Change chase distance while keeping the same trailing angle."""
+        self.follow_distance = _zoom_distance(
+            self.follow_distance, self._default_follow_distance, steps
+        )
+        self.follow_height = _zoom_distance(
+            self.follow_height, self._default_follow_height, steps
+        )
 
     def update(self, dt: float, jet_position, jet_heading) -> None:
         cam = _camera_node(self.base)
@@ -268,9 +309,14 @@ class MissionBriefCamera:
         self.base = base
         self.center = tuple(center)
         self.radius = float(radius)
+        self._default_radius = self.radius
         self.angular_speed_deg_s = float(angular_speed_deg_s)
         self._angle_deg = 15.0
-        self._elevation_deg = 32.0
+        self._elevation_deg = SCENE_CAMERA_ELEVATION_DEG
+
+    def zoom(self, steps: float) -> None:
+        """Change the cinematic orbit radius; positive steps zoom in."""
+        self.radius = _zoom_distance(self.radius, self._default_radius, steps)
 
     def update(self, dt: float) -> None:
         self._angle_deg = (self._angle_deg + self.angular_speed_deg_s * dt) % 360.0

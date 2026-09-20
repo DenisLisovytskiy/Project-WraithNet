@@ -10,6 +10,21 @@ from __future__ import annotations
 from launcher.cli import LauncherArgs, default_replay_trace_path
 
 
+_PANDA3D_INSTALL_HELP = """Panda3D is required for the WraithNet 3D launcher.
+
+Use the project's virtual environment instead of Debian's system Python:
+
+  python -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-3d.txt
+  python -m launcher
+
+If .venv already exists, you can run the launcher directly with:
+
+  .venv/bin/python -m launcher
+"""
+
+
 def run(args: LauncherArgs) -> None:
     if args.role == "headless":
         from wraithnet.main import main as sim_main
@@ -20,7 +35,12 @@ def run(args: LauncherArgs) -> None:
 
         replay_main(_replay_argv(args))
     else:
-        from viewer3d.app import main as gui_main
+        try:
+            from viewer3d.app import main as gui_main
+        except ModuleNotFoundError as exc:
+            if exc.name == "panda3d" or (exc.name or "").startswith("panda3d."):
+                raise SystemExit(_PANDA3D_INSTALL_HELP) from None
+            raise
 
         gui_main(_gui_argv(args))
 

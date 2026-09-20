@@ -148,7 +148,7 @@ _KEY_BINDINGS = (
     ("DA", "move"),
     ("WS", "altitude"),
     ("LMB", "look"),
-    ("Wheel", "nudge"),
+    ("Whl +/-", "zoom"),
     ("Home", "recenter"),
     ("O/C", "orbit/chase"),
     ("Tab/N", "next jet"),

@@ -24,7 +24,12 @@ loadPrcFileData("", "fullscreen #f")
 from direct.showbase.ShowBase import ShowBase
 
 from viewer3d.argv import USAGE, parse_viewer3d_argv
-from viewer3d.cameras import ChaseCamera, MissionBriefCamera, OrbitCamera
+from viewer3d.cameras import (
+    ChaseCamera,
+    MissionBriefCamera,
+    OrbitCamera,
+    scene_camera_radius,
+)
 from viewer3d import effects
 from viewer3d.highlights import compute_highlights
 from viewer3d.hud import Hud
@@ -117,6 +122,10 @@ class WraithNetViewer3D(ShowBase):
         playback_rate: float = DEFAULT_PLAYBACK_RATE,
     ) -> None:
         super().__init__()
+        # The editor temporarily installs an OrthographicLens on this camera.
+        # Keep the original window-managed perspective lens so Preview/Launch
+        # can restore it before applying the third-person camera controllers.
+        self._perspective_lens = getattr(self, "camLens", None)
         self.disable_mouse()
         if self.win is not None:
             self.set_background_color(0.02, 0.03, 0.06, 1.0)
@@ -192,6 +201,10 @@ class WraithNetViewer3D(ShowBase):
         self.accept("n", self._cycle_selected_jet)
         self.accept("N", self._cycle_selected_jet)
         self.accept("home", self._on_center_camera)
+        for event in ("+", "=", "add"):
+            self.accept(event, self._on_camera_zoom_in)
+        for event in ("-", "subtract"):
+            self.accept(event, self._on_camera_zoom_out)
         self.accept("f3", self._toggle_presentation_debug)
         self.accept("F3", self._toggle_presentation_debug)
         self.accept("escape", self._on_escape)
@@ -290,12 +303,10 @@ class WraithNetViewer3D(ShowBase):
         self._on_editor_mouse1_down()
 
     def _on_editor_zoom_in(self) -> None:
-        if self._editor is not None and self.view_mode == "editor":
-            self._editor.camera.zoom_by(1.15)
+        self._zoom_camera(1.0)
 
     def _on_editor_zoom_out(self) -> None:
-        if self._editor is not None and self.view_mode == "editor":
-            self._editor.camera.zoom_by(1 / 1.15)
+        self._zoom_camera(-1.0)
 
     def _editor_pan(self, dx: float, dy: float) -> None:
         """Pan the editor camera by ``(dx, dy)`` world units."""
@@ -452,17 +463,30 @@ class WraithNetViewer3D(ShowBase):
         header = self._header
         if header is None:
             return
+        self._restore_perspective_lens()
         cx, cy = header.grid_width / 2.0, header.grid_height / 2.0
         diag = math.hypot(header.grid_width, header.grid_height)
         scale = header_map_scale(header)
+        overview_radius = scene_camera_radius(header.grid_width, header.grid_height)
         self._orbit = OrbitCamera(
-            self, center=(cx, cy, 0.0), radius=max(90.0, diag * 0.75), scale=scale
+            self, center=(cx, cy, 0.0), radius=overview_radius, scale=scale
         )
         self._chase = ChaseCamera(self, scale=scale)
         self._brief = MissionBriefCamera(
-            self, center=(cx, cy, 0.0), radius=max(70.0, diag * 0.55)
+            self, center=(cx, cy, 0.0), radius=overview_radius
         )
         self._apply_lens_depth_range(diag)
+
+    def _restore_perspective_lens(self) -> None:
+        """Undo the editor's orthographic lens before a 3D scene is shown."""
+        camera_np = getattr(self, "cam", None)
+        lens = getattr(self, "_perspective_lens", None)
+        if camera_np is None or lens is None:
+            return
+        try:
+            camera_np.node().set_lens(lens)
+        except (AttributeError, TypeError):
+            return
 
     def _apply_lens_depth_range(self, diag: float) -> None:
         """Fit near/far to the battlespace.
@@ -501,12 +525,34 @@ class WraithNetViewer3D(ShowBase):
             self.camera_mode = "orbit"
 
     def _on_orbit_wheel_in(self) -> None:
-        if self.camera_mode == "orbit" and self._orbit is not None:
-            self._orbit.nudge_along_look(1.0)
+        self._zoom_camera(1.0)
 
     def _on_orbit_wheel_out(self) -> None:
-        if self.camera_mode == "orbit" and self._orbit is not None:
-            self._orbit.nudge_along_look(-1.0)
+        self._zoom_camera(-1.0)
+
+    def _on_camera_zoom_in(self) -> None:
+        self._zoom_camera(1.0)
+
+    def _on_camera_zoom_out(self) -> None:
+        self._zoom_camera(-1.0)
+
+    def _zoom_camera(self, steps: float) -> None:
+        """Route wheel and +/- zoom to the camera active in the current mode."""
+        if self.view_mode == "editor":
+            if self._editor is not None:
+                factor = 1.15 ** float(steps)
+                self._editor.camera.zoom_by(factor)
+            return
+        if self.view_mode in ("brief", "launch_failed") or self.camera_mode == "brief":
+            if self._brief is not None:
+                self._brief.zoom(steps)
+            return
+        if self.camera_mode == "chase":
+            if self._chase is not None:
+                self._chase.zoom(steps)
+            return
+        if self._orbit is not None:
+            self._orbit.zoom(steps)
 
     def _cycle_selected_jet(self) -> None:
         """Tab/N cycles header.jet_ids -- no 3D mouse-picking (Phase 17 fallback)."""
