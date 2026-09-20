@@ -6,8 +6,8 @@ Jet selection for chase mode uses Tab/N cycling over `header.jet_ids`
 rather than 3D collision picking (Phase 17's explicitly sanctioned
 fallback -- picking is fiddly under `window-type none` and not required).
 
-Orbit mode is a free-look camera (WASD/QE along view axes, LMB look) that
-starts framed on the map and can `reset()` to that framing.
+Orbit mode is a free-look camera (WASD pan, +/- and wheel zoom, LMB look)
+that starts framed on the map and can `reset()` to that framing.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def _ground_move_axes(heading_deg: float):
 
 class OrbitCamera:
     """Free-look tactical camera. Starts framed on the map center; LMB looks,
-    D/A slide along facing, WS change altitude, wheel nudges along look.
+    WASD pans on the ground plane, +/- and wheel zoom toward the framed center.
     `reset()` restores the original framing.
     """
 
@@ -161,20 +161,23 @@ class OrbitCamera:
         self._apply()
 
     def nudge_along_look(self, steps: float) -> None:
-        """Mouse-wheel / bump along the look axis (`steps` in wheel clicks)."""
-        forward, _right, _up = _look_axes(self._heading_deg, self._pitch_deg)
-        dist = float(steps) * self.wheel_step
-        x, y, z = self._pos
-        self._pos = (
-            x + forward[0] * dist,
-            y + forward[1] * dist,
-            z + forward[2] * dist,
-        )
-        self._apply()
+        """Deprecated alias — prefer :meth:`zoom` (true dolly toward center)."""
+        self.zoom(steps)
 
     def zoom(self, steps: float) -> None:
-        """Dolly along the current view direction; positive steps zoom in."""
-        self.nudge_along_look(steps)
+        """Dolly toward/away from the framed map center; positive steps zoom in.
+
+        A look-axis nudge was nearly invisible on large maps and felt broken.
+        Scaling distance to ``center`` matches chase/brief zoom behavior.
+        """
+        cx, cy, cz = self.center
+        x, y, z = self._pos
+        dx, dy, dz = x - cx, y - cy, z - cz
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+        new_dist = _zoom_distance(dist, self._default_radius, steps)
+        scale = new_dist / dist
+        self._pos = (cx + dx * scale, cy + dy * scale, cz + dz * scale)
+        self._apply()
 
     def update(self, dt: float) -> None:
         self._read_mouse_look()
@@ -213,11 +216,12 @@ class OrbitCamera:
             return False
         try:
             buttons = {
-                # D/A = along facing (swapped), WS = altitude. No QE.
-                "forward": (KeyboardButton.ascii_key("d"), KeyboardButton.right()),
-                "back": (KeyboardButton.ascii_key("a"), KeyboardButton.left()),
-                "up": (KeyboardButton.ascii_key("w"), KeyboardButton.up(), KeyboardButton.space()),
-                "down": (KeyboardButton.ascii_key("s"), KeyboardButton.down(), KeyboardButton.control()),
+                "forward": (KeyboardButton.ascii_key("w"), KeyboardButton.up()),
+                "back": (KeyboardButton.ascii_key("s"), KeyboardButton.down()),
+                "left": (KeyboardButton.ascii_key("a"), KeyboardButton.left()),
+                "right": (KeyboardButton.ascii_key("d"), KeyboardButton.right()),
+                "up": (KeyboardButton.space(),),
+                "down": (KeyboardButton.control(),),
                 "fast": (KeyboardButton.shift(),),
             }
             for button in buttons.get(name, ()):
@@ -233,18 +237,21 @@ class OrbitCamera:
         forward_axis = (1.0 if self._key_down("forward") else 0.0) - (
             1.0 if self._key_down("back") else 0.0
         )
+        strafe_axis = (1.0 if self._key_down("right") else 0.0) - (
+            1.0 if self._key_down("left") else 0.0
+        )
         up_axis = (1.0 if self._key_down("up") else 0.0) - (
             1.0 if self._key_down("down") else 0.0
         )
-        if forward_axis == 0.0 and up_axis == 0.0:
+        if forward_axis == 0.0 and strafe_axis == 0.0 and up_axis == 0.0:
             return
-        forward, _right = _ground_move_axes(self._heading_deg)
+        forward, right = _ground_move_axes(self._heading_deg)
         speed = self.move_speed * (self._FAST_MULTIPLIER if self._key_down("fast") else 1.0)
         scale = speed * dt
         x, y, z = self._pos
         self._pos = (
-            x + forward[0] * forward_axis * scale,
-            y + forward[1] * forward_axis * scale,
+            x + (forward[0] * forward_axis + right[0] * strafe_axis) * scale,
+            y + (forward[1] * forward_axis + right[1] * strafe_axis) * scale,
             z + up_axis * scale,
         )
 

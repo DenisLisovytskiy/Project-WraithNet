@@ -145,10 +145,10 @@ _MIN_PANEL_W = 0.44
 _ROW_INDENT = 0.034
 #: One source for both the rendered key table and `controls_text`.
 _KEY_BINDINGS = (
-    ("DA", "move"),
-    ("WS", "altitude"),
+    ("WASD", "pan"),
+    ("Scroll, +/-", "zoom"),
     ("LMB", "look"),
-    ("Whl +/-", "zoom"),
+    ("Space/Ctrl", "up/down"),
     ("Home", "recenter"),
     ("O/C", "orbit/chase"),
     ("Tab/N", "next jet"),
