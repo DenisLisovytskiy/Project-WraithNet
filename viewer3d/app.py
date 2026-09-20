@@ -947,9 +947,23 @@ class WraithNetViewer3D(ShowBase):
                 flags.append("EXTRAP")
             flag_s = ",".join(flags) if flags else "ok"
             mode = "REPLAY" if self._offline_replay else "LIVE"
+            att = ""
+            sel = self.selected_jet_id
+            if sel and sel in self._sampled_poses:
+                sp = self._sampled_poses[sel]
+                att = (
+                    f"  {sel} h={sp.heading_deg:.0f} "
+                    f"p={sp.pitch_deg:.0f} r={sp.roll_deg:.0f}"
+                )
+            elif sel and self._handles is not None:
+                h = self._handles.jet_heading_deg.get(sel)
+                p = self._handles.jet_pitch_deg.get(sel, 0.0)
+                r = self._handles.jet_roll_deg.get(sel, 0.0)
+                if h is not None:
+                    att = f"  {sel} h={h:.0f} p={p:.0f} r={r:.0f}"
             debug = (
                 f"[ MOTION ]  {mode}  backlog={self._tick_buffer.backlog_len}  "
-                f"{flag_s}  rate={self._playback_rate:.2f}x"
+                f"{flag_s}  rate={self._playback_rate:.2f}x{att}"
             )
         display_mode = self.view_mode
         if self._offline_replay and self.view_mode == "live":

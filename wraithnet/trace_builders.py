@@ -43,6 +43,11 @@ def catalog_header_fields() -> dict:
                 "fuel_capacity": spec.fuel_capacity,
                 "max_speed": spec.max_speed,
                 "hp": float(spec.hp),
+                # Phase 54: attitude rate / limit overlay for viewers.
+                "pitch_rate_deg_per_tick": spec.pitch_rate_deg_per_tick,
+                "roll_rate_deg_per_tick": spec.roll_rate_deg_per_tick,
+                "pitch_limit_deg": spec.pitch_limit_deg,
+                "roll_limit_deg": spec.roll_limit_deg,
             }
             for name, spec in config.JET_FRAME_CATALOG.items()
         },
@@ -70,7 +75,7 @@ def build_trace_header(bridge: WraithNetBridge) -> TraceHeader:
         home_base=model._home_base,
         jet_frame_types={aid: j.frame_type for aid, j in model.jets.items()},
         terrain=model.terrain,
-        # Phase 38/39: keep v3; countermeasure fields are additive on ticks.
+        # Phase 38/39/54: keep v3; attitude fields are additive with defaults.
         trace_version=3,
         mission_objectives=list(getattr(model, "mission_objectives", None) or []),
         fixed_airbases=dict(getattr(model, "base_positions", None) or {}),
@@ -106,6 +111,8 @@ def build_trace_tick(
                 heading=float(jet.heading),
                 fuel=max(0.0, float(jet.fuel)),
                 altitude=float(getattr(jet, "altitude", config.JET_COMBAT_ALTITUDE)),
+                pitch_deg=float(getattr(jet, "pitch_deg", 0.0)),
+                roll_deg=float(getattr(jet, "roll_deg", 0.0)),
                 flares_remaining=int(getattr(jet, "flares_remaining", 0)),
                 flare_capacity=int(getattr(jet, "flare_capacity", 0)),
                 defensive_state=getattr(jet, "defensive_state", "NONE"),

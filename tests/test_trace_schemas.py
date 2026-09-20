@@ -182,3 +182,20 @@ def test_jet_frame_carries_optional_altitude():
     assert with_alt.altitude == pytest.approx(20.0)
     restored = JetFrame.model_validate_json(with_alt.model_dump_json())
     assert restored.altitude == pytest.approx(20.0)
+
+
+def test_jet_frame_pitch_roll_default_and_round_trip():
+    bare = _sample_jet()
+    assert bare.pitch_deg == pytest.approx(0.0)
+    assert bare.roll_deg == pytest.approx(0.0)
+    # Legacy JSON without pitch/roll still loads.
+    payload = bare.model_dump()
+    payload.pop("pitch_deg", None)
+    payload.pop("roll_deg", None)
+    restored = JetFrame.model_validate(payload)
+    assert restored.pitch_deg == pytest.approx(0.0)
+    assert restored.roll_deg == pytest.approx(0.0)
+    with_att = _sample_jet(pitch_deg=8.0, roll_deg=-25.0)
+    round_trip = JetFrame.model_validate_json(with_att.model_dump_json())
+    assert round_trip.pitch_deg == pytest.approx(8.0)
+    assert round_trip.roll_deg == pytest.approx(-25.0)

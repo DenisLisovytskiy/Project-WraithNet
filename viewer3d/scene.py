@@ -1,6 +1,8 @@
 """Builds and updates the 3D scene graph from TraceHeader/TraceTick data.
 Coordinate mapping: sim (x, y) -> Panda3D (x, y). Phase 37: jet Z prefers
-authoritative Trace JetFrame.altitude; bank easing remains cosmetic.
+authoritative Trace JetFrame.altitude. Phase 54: glyph HPR follows
+authoritative yaw/pitch/roll via ``sim_to_panda_hpr``; altitude-rate cosmetic
+bank is no longer applied when attitude fields are present on the frame.
 
 Ground entities, jets, and ships use non-billboarded procedural meshes.
 Faction is paint: teal-green friendlies vs rust-red hostiles. Heading is
@@ -49,9 +51,11 @@ from viewer3d.flight_dynamics import (
     GROUND_ALTITUDE,
     MAX_BANK_RATE_PER_SECOND,
     MAX_CLIMB_RATE_PER_SECOND,
+    MAX_PITCH_RATE_PER_SECOND,
+    authoritative_roll_deg,
     desired_altitude,
-    desired_bank_deg,
     ease_toward,
+    sim_to_panda_hpr,
 )
 from viewer3d.highlights import TickHighlights
 from viewer3d.motion import SampledPose
@@ -157,10 +161,14 @@ class SceneHandles:
     jammers: dict[str, NodePath] = field(default_factory=dict)
     last_jet_xy: dict[str, tuple[float, float]] = field(default_factory=dict)
     jet_heading_deg: dict[str, float] = field(default_factory=dict)
+    jet_pitch_deg: dict[str, float] = field(default_factory=dict)
+    jet_roll_deg: dict[str, float] = field(default_factory=dict)
     rendered_altitude: dict[str, float] = field(default_factory=dict)
     rendered_bank_deg: dict[str, float] = field(default_factory=dict)
+    rendered_pitch_deg: dict[str, float] = field(default_factory=dict)
     desired_altitude: dict[str, float] = field(default_factory=dict)
     desired_bank_deg: dict[str, float] = field(default_factory=dict)
+    desired_pitch_deg: dict[str, float] = field(default_factory=dict)
     previous_desired_altitude: dict[str, float] = field(default_factory=dict)
     first_seen_tick: dict[str, int] = field(default_factory=dict)
     last_struck_tick: dict[str, int] = field(default_factory=dict)
@@ -972,10 +980,14 @@ def _pop_jet_state(handles: SceneHandles, aid: str) -> None:
     handles.jet_glyphs.pop(aid, None)
     handles.last_jet_xy.pop(aid, None)
     handles.jet_heading_deg.pop(aid, None)
+    handles.jet_pitch_deg.pop(aid, None)
+    handles.jet_roll_deg.pop(aid, None)
     handles.rendered_altitude.pop(aid, None)
     handles.rendered_bank_deg.pop(aid, None)
+    handles.rendered_pitch_deg.pop(aid, None)
     handles.desired_altitude.pop(aid, None)
     handles.desired_bank_deg.pop(aid, None)
+    handles.desired_pitch_deg.pop(aid, None)
     handles.previous_desired_altitude.pop(aid, None)
     handles.first_seen_tick.pop(aid, None)
     handles.last_struck_tick.pop(aid, None)
@@ -1094,6 +1106,10 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         handles.jet_glyphs[aid] = glyph
         handles.rendered_altitude[aid] = GROUND_ALTITUDE
         handles.rendered_bank_deg[aid] = 0.0
+        handles.rendered_pitch_deg[aid] = 0.0
+        handles.desired_pitch_deg[aid] = 0.0
+        handles.jet_pitch_deg[aid] = 0.0
+        handles.jet_roll_deg[aid] = 0.0
 
     return handles
 
@@ -1123,40 +1139,50 @@ def sync_static_unit_glyphs(
 
 
 def apply_jet_flight_easing(handles: SceneHandles, dt: float) -> None:
-    """Ease rendered altitude/bank toward the latest per-tick targets every frame.
+    """Ease rendered altitude/attitude toward the latest per-tick targets.
 
-    XY/heading are owned by ``apply_sampled_jet_poses`` on the live path; this
-    only updates Z and bank so easing does not fight ground-track sampling.
+    XY/heading/pitch/roll samples are owned by ``apply_sampled_jet_poses`` on
+    the live path; this updates Z and eases pitch/roll toward authoritative
+    desires so discrete ``update_tick`` paths stay smooth without fighting
+    sampled poses when both run.
     """
     for aid, anchor in list(handles.jets.items()):
         if anchor.is_empty() or anchor.is_hidden():
             continue
         target_z = handles.desired_altitude.get(aid, CRUISE_ALTITUDE)
         target_bank = handles.desired_bank_deg.get(aid, 0.0)
+        target_pitch = handles.desired_pitch_deg.get(aid, 0.0)
         current_z = handles.rendered_altitude.get(aid, GROUND_ALTITUDE)
         current_bank = handles.rendered_bank_deg.get(aid, 0.0)
+        current_pitch = handles.rendered_pitch_deg.get(aid, 0.0)
         new_z = ease_toward(current_z, target_z, MAX_CLIMB_RATE_PER_SECOND, dt)
         new_bank = ease_toward(current_bank, target_bank, MAX_BANK_RATE_PER_SECOND, dt)
+        new_pitch = ease_toward(
+            current_pitch, target_pitch, MAX_PITCH_RATE_PER_SECOND, dt
+        )
         handles.rendered_altitude[aid] = new_z
         handles.rendered_bank_deg[aid] = new_bank
+        handles.rendered_pitch_deg[aid] = new_pitch
         pos = anchor.get_pos()
         anchor.set_pos(pos.x, pos.y, new_z)
         _update_altitude_cue(handles, aid, new_z)
         heading = handles.jet_heading_deg.get(aid, 0.0)
+        handles.jet_pitch_deg[aid] = new_pitch
+        handles.jet_roll_deg[aid] = new_bank
         glyph = handles.jet_glyphs.get(aid)
         if glyph is not None and not glyph.is_empty():
-            # Sim heading is clockwise from +y (0=+y, 90=+x). Panda3D H is
-            # the opposite sense (H=90 sends local +Y to world -X), so negate.
-            glyph.set_hpr(-heading, 0.0, -new_bank)
+            h, p, r = sim_to_panda_hpr(heading, new_pitch, new_bank)
+            glyph.set_hpr(h, p, r)
 
 
 def apply_sampled_jet_poses(
     handles: SceneHandles, poses: Mapping[str, SampledPose]
 ) -> None:
-    """Drive jet XY/heading from presentation-time samples (Phase 47).
+    """Drive jet XY/heading/pitch/roll from presentation-time samples (Phase 47/54).
 
     Safe when a pose id has no handle (late spawn) or a handle has no pose
     (despawn / pending wreck). Does not touch targets/SAMs/jammers.
+    Altitude Z remains eased from tick desires (see ``motion`` module rule).
     """
     for aid, pose in poses.items():
         if aid in handles.pending_jet_removal:
@@ -1172,12 +1198,18 @@ def apply_sampled_jet_poses(
         _update_altitude_cue(handles, aid, z)
         anchor.show()
         handles.jet_heading_deg[aid] = pose.heading_deg
+        handles.jet_pitch_deg[aid] = pose.pitch_deg
+        handles.jet_roll_deg[aid] = pose.roll_deg
+        # Keep eased targets aligned so flight easing does not pull away.
+        handles.desired_pitch_deg[aid] = pose.pitch_deg
+        handles.desired_bank_deg[aid] = pose.roll_deg
+        handles.rendered_pitch_deg[aid] = pose.pitch_deg
+        handles.rendered_bank_deg[aid] = pose.roll_deg
         handles.last_jet_xy[aid] = (pose.x, pose.y)
         glyph = handles.jet_glyphs.get(aid)
         if glyph is not None and not glyph.is_empty():
-            bank = handles.rendered_bank_deg.get(aid, 0.0)
-            # pose.heading_deg is sim convention (CW from +y); Panda H is CCW.
-            glyph.set_hpr(-pose.heading_deg, 0.0, -bank)
+            h, p, r = sim_to_panda_hpr(pose.heading_deg, pose.pitch_deg, pose.roll_deg)
+            glyph.set_hpr(h, p, r)
 
 
 def update_tick(
@@ -1235,6 +1267,8 @@ def update_tick(
             _update_altitude_cue(handles, aid, z_now)
             anchor.show()
             handles.jet_heading_deg[aid] = float(frame.heading)
+            handles.jet_pitch_deg[aid] = float(getattr(frame, "pitch_deg", 0.0) or 0.0)
+            handles.jet_roll_deg[aid] = float(getattr(frame, "roll_deg", 0.0) or 0.0)
             handles.last_jet_xy[aid] = (x, y)
         if aid not in handles.first_seen_tick:
             handles.first_seen_tick[aid] = tick.tick
@@ -1249,7 +1283,18 @@ def update_tick(
         )
         prev_z = handles.previous_desired_altitude.get(aid)
         handles.desired_altitude[aid] = target_z
-        handles.desired_bank_deg[aid] = desired_bank_deg(prev_z, target_z, tick_dt)
+        # Phase 54: ease toward authoritative roll/pitch; do not fight with
+        # altitude-rate cosmetic bank when attitude fields are on the frame.
+        frame_roll = float(getattr(frame, "roll_deg", 0.0) or 0.0)
+        frame_pitch = float(getattr(frame, "pitch_deg", 0.0) or 0.0)
+        handles.desired_bank_deg[aid] = authoritative_roll_deg(
+            frame_roll_deg=frame_roll,
+            previous_altitude_target=prev_z,
+            current_altitude_target=target_z,
+            dt_seconds=tick_dt,
+            use_cosmetic_bank=False,
+        )
+        handles.desired_pitch_deg[aid] = frame_pitch
         handles.previous_desired_altitude[aid] = target_z
 
     for frame in tick.targets:

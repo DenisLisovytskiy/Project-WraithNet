@@ -103,6 +103,53 @@ def test_heading_wrap_350_to_10_passes_through_zero():
     assert pose.heading_deg == pytest.approx(0.0)
 
 
+def test_pitch_roll_midpoint_and_legacy_defaults():
+    from viewer3d.motion import lerp_pitch_deg, lerp_roll_deg
+
+    assert lerp_pitch_deg(-10.0, 10.0, 0.5) == pytest.approx(0.0)
+    # Roll wrap across ±180: 170 → -170 should pass through ±180, not 0.
+    mid_roll = lerp_roll_deg(170.0, -170.0, 0.5)
+    assert abs(mid_roll) == pytest.approx(180.0)
+
+    buf = TickBuffer(interp_delay_s=0.0)
+    buf.push(
+        _tick(0, [_jet("Jet_1", 0.0, 0.0, pitch_deg=-20.0, roll_deg=-40.0)]),
+        t_accept=0.0,
+    )
+    buf.push(
+        _tick(1, [_jet("Jet_1", 0.0, 0.0, pitch_deg=20.0, roll_deg=40.0)]),
+        t_accept=1.0,
+    )
+    buf.set_presentation_time(0.5)
+    pose = buf.sample_jet_poses()["Jet_1"]
+    assert pose.pitch_deg == pytest.approx(0.0)
+    assert pose.roll_deg == pytest.approx(0.0)
+
+    # Legacy ticks omitting pitch/roll fields default to 0 via JetFrame.
+    legacy = JetFrame(
+        agent_id="Jet_1",
+        position=(1.0, 2.0),
+        hp=5,
+        payload={"JDAM": 1},
+        destroyed=False,
+        jammed=False,
+        role="IDLE",
+        heading=0.0,
+    )
+    assert legacy.pitch_deg == pytest.approx(0.0)
+    assert legacy.roll_deg == pytest.approx(0.0)
+    buf2 = TickBuffer(interp_delay_s=0.0)
+    buf2.push(_tick(0, [legacy]), t_accept=0.0)
+    buf2.push(
+        _tick(1, [_jet("Jet_1", 1.0, 2.0, pitch_deg=10.0, roll_deg=30.0)]),
+        t_accept=1.0,
+    )
+    buf2.set_presentation_time(0.5)
+    mid = buf2.sample_jet_poses()["Jet_1"]
+    assert mid.pitch_deg == pytest.approx(5.0)
+    assert mid.roll_deg == pytest.approx(15.0)
+
+
 def test_alpha_zero_and_one_return_exact_endpoint_poses():
     buf = TickBuffer(interp_delay_s=0.0)
     buf.push(_tick(0, [_jet("Jet_1", 1.0, 2.0, heading=40.0)]), t_accept=0.0)

@@ -205,6 +205,57 @@ def test_jet_orientation_follows_heading_not_travel_direction():
     assert glyph.get_h() == pytest.approx(-90.0)
 
 
+def test_jet_orientation_follows_authoritative_pitch_roll():
+    """Phase 54: glyph P/R track sim pitch/roll, not altitude-rate bank fiction."""
+    from viewer3d.motion import SampledPose
+    from viewer3d.scene import apply_sampled_jet_poses
+
+    header = _sample_header()
+    root = NodePath("att-root")
+    handles = build_static_scene(root, header)
+    targets = [
+        TargetFrame(target_id="Target_A", hp_remaining=5, claimed=False),
+        TargetFrame(target_id="SAM_Site_1", hp_remaining=1, claimed=False),
+    ]
+    frame = _jet_frame(
+        "Jet_1",
+        (10.0, 10.0),
+        heading=0.0,
+        pitch_deg=20.0,
+        roll_deg=35.0,
+        altitude=20.0,
+    )
+    update_tick(
+        handles,
+        header,
+        _tick(0, [frame], targets),
+        seconds_airborne={"Jet_1": 3.0},
+        apply_jet_pose=False,
+    )
+    apply_sampled_jet_poses(
+        handles,
+        {
+            "Jet_1": SampledPose(
+                entity_id="Jet_1",
+                x=10.0,
+                y=10.0,
+                heading_deg=0.0,
+                alpha=0.0,
+                from_tick=0,
+                to_tick=0,
+                pitch_deg=20.0,
+                roll_deg=35.0,
+            )
+        },
+    )
+    glyph = handles.jet_glyphs["Jet_1"]
+    assert glyph.get_p() == pytest.approx(20.0)
+    assert glyph.get_r() == pytest.approx(-35.0)
+    # Desired bank is authoritative roll, not a climb-fiction bank.
+    assert handles.desired_bank_deg["Jet_1"] == pytest.approx(35.0)
+    assert handles.desired_pitch_deg["Jet_1"] == pytest.approx(20.0)
+
+
 def test_viewer_app_drains_live_stream_without_raising():
     from viewer3d.app import WraithNetViewer3D
 

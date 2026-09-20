@@ -3,6 +3,12 @@
 Phases 46–48: headless-testable contracts — no Panda3D, sockets, or wall-clock
 sleeps inside sampler math.
 
+Phase 54: ``SampledPose`` carries authoritative ``pitch_deg`` / ``roll_deg``.
+Altitude is **not** interpolated here — the scene eases Z from tick
+``desired_altitude`` (single rule: XY/heading/attitude from samples; Z from
+flight easing). Pitch uses linear blend (Phase 50: no wrap). Roll uses
+shortest-arc into ``[-180, 180)``.
+
 Presentation aims at ``t_p - interp_delay_s`` so a ``next`` tick usually exists.
 When the buffer falls behind live accept time, ``advance`` may run faster (up to
 ``CATCHUP_MAX_RATE``). If backlog exceeds ``CATCHUP_BACKLOG_TICKS``, the buffer
@@ -15,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from wraithnet.geometry import shortest_signed_angle
+from wraithnet.geometry import normalize_roll_deg, shortest_signed_angle
 from wraithnet.trace_schemas import (
     CountermeasureEvent,
     JetFrame,
@@ -51,6 +57,10 @@ class SampledPose:
     alpha: float  # blend factor used
     from_tick: int
     to_tick: int
+    # Phase 54: authoritative attitude (sim conventions). Defaults keep
+    # pre-Phase-54 call sites and legacy missing-field ticks at wings-level.
+    pitch_deg: float = 0.0
+    roll_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,18 @@ def lerp(a: float, b: float, alpha: float) -> float:
 def lerp_heading_deg(a: float, b: float, alpha: float) -> float:
     """Shortest-arc heading blend; result normalized to ``[0, 360)``."""
     return (a + shortest_signed_angle(a, b) * alpha) % 360.0
+
+
+def lerp_roll_deg(a: float, b: float, alpha: float) -> float:
+    """Shortest-arc roll blend into Phase 50 ``[-180, 180)``."""
+    a_n = normalize_roll_deg(a)
+    b_n = normalize_roll_deg(b)
+    return normalize_roll_deg(a_n + shortest_signed_angle(a_n, b_n) * alpha)
+
+
+def lerp_pitch_deg(a: float, b: float, alpha: float) -> float:
+    """Linear pitch blend (no wrap; Phase 50 pitch is not circular)."""
+    return lerp(float(a), float(b), alpha)
 
 
 def clamp_alpha(alpha: float, *, max_extrapolation: float) -> float:
@@ -104,6 +126,8 @@ def _pose_from_jet(
         alpha=alpha,
         from_tick=from_tick,
         to_tick=to_tick,
+        pitch_deg=float(getattr(jet, "pitch_deg", 0.0) or 0.0),
+        roll_deg=normalize_roll_deg(float(getattr(jet, "roll_deg", 0.0) or 0.0)),
     )
 
 
@@ -136,6 +160,16 @@ def _lerp_jets(
                 alpha=alpha,
                 from_tick=ft,
                 to_tick=tt,
+                pitch_deg=lerp_pitch_deg(
+                    float(getattr(fj, "pitch_deg", 0.0) or 0.0),
+                    float(getattr(tj, "pitch_deg", 0.0) or 0.0),
+                    alpha,
+                ),
+                roll_deg=lerp_roll_deg(
+                    float(getattr(fj, "roll_deg", 0.0) or 0.0),
+                    float(getattr(tj, "roll_deg", 0.0) or 0.0),
+                    alpha,
+                ),
             )
         elif hold_missing_in_to:
             out[agent_id] = _pose_from_jet(fj, alpha=alpha, from_tick=ft, to_tick=tt)
