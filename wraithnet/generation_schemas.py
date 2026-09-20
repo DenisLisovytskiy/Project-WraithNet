@@ -7,6 +7,7 @@ catalogs from ``wraithnet.config``. Must not import ``ScenarioConfig`` so
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -121,7 +122,14 @@ class GenerationParameters(BaseModel):
     objective_distance_min_fraction: float = Field(default=0.20, ge=0.0, le=1.0)
     objective_distance_max_fraction: float = Field(default=0.85, ge=0.0, le=1.0)
     map_margin: float = Field(default=5.0, ge=1.0)
+    # Absolute floor for the friendly-base sanctuary (world units). Effective
+    # keep-out is max(this, base_safety_fraction * map diagonal) so large
+    # generation grids (5000×5000) keep a real empty bubble around home.
     base_safety_radius: float = Field(default=18.0, ge=5.0)
+    base_safety_fraction: float = Field(default=0.06, ge=0.0, le=0.45)
+    # Soft minimum bearing gap (from home) between DISPERSED / root centers so
+    # the AO fans across the map instead of collapsing into one wedge.
+    anchor_min_angular_separation_deg: float = Field(default=35.0, ge=0.0, le=180.0)
     group_min_separation: float = Field(default=16.0, ge=3.0)
     entity_min_separation: float = Field(default=3.0, ge=0.5)
     threat_overlap: float = Field(default=0.35, ge=0.0, le=1.0)
@@ -247,6 +255,18 @@ class GenerationParameters(BaseModel):
         if self.base_safety_radius >= min(usable_width, usable_height):
             errors.append(
                 f"base_safety_radius ({self.base_safety_radius}) is too large "
+                f"for the usable map after map_margin ({self.map_margin})."
+            )
+        map_diag = math.hypot(self.grid_width, self.grid_height)
+        effective_keepout = max(
+            self.base_safety_radius, self.base_safety_fraction * map_diag
+        )
+        if effective_keepout >= min(usable_width, usable_height):
+            errors.append(
+                f"effective base keep-out ({effective_keepout:.1f} = max("
+                f"base_safety_radius={self.base_safety_radius}, "
+                f"base_safety_fraction*{map_diag:.1f}="
+                f"{self.base_safety_fraction * map_diag:.1f})) is too large "
                 f"for the usable map after map_margin ({self.map_margin})."
             )
         if self.group_min_separation > max(usable_width, usable_height):

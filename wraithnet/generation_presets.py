@@ -57,6 +57,8 @@ class DifficultyPresetRecord:
     grid_height: float = config.DEFAULT_GENERATION_GRID_HEIGHT
     map_margin: float = 5.0
     base_safety_radius: float = 18.0
+    base_safety_fraction: float = 0.06
+    anchor_min_angular_separation_deg: float = 35.0
     group_min_separation: float = 16.0
     entity_min_separation: float = 3.0
     max_placement_attempts: int = 200
@@ -103,6 +105,8 @@ DIFFICULTY_PRESETS: dict[DifficultyPreset, DifficultyPresetRecord] = {
         objective_distance_max_fraction=0.65,
         threat_overlap=0.15,
         launch_threat_clearance=10.0,
+        base_safety_fraction=0.08,
+        anchor_min_angular_separation_deg=45.0,
         friendly_count_min=3,
         friendly_count_max=4,
         friendly_reserve_factor=1.6,
@@ -136,6 +140,8 @@ DIFFICULTY_PRESETS: dict[DifficultyPreset, DifficultyPresetRecord] = {
         objective_distance_max_fraction=0.85,
         threat_overlap=0.35,
         launch_threat_clearance=5.0,
+        base_safety_fraction=0.06,
+        anchor_min_angular_separation_deg=35.0,
         friendly_count_min=3,
         friendly_count_max=6,
         friendly_reserve_factor=1.35,
@@ -169,6 +175,8 @@ DIFFICULTY_PRESETS: dict[DifficultyPreset, DifficultyPresetRecord] = {
         objective_distance_max_fraction=0.90,
         threat_overlap=0.50,
         launch_threat_clearance=3.0,
+        base_safety_fraction=0.05,
+        anchor_min_angular_separation_deg=30.0,
         friendly_count_min=4,
         friendly_count_max=10,
         friendly_reserve_factor=1.2,
@@ -207,6 +215,8 @@ DIFFICULTY_PRESETS: dict[DifficultyPreset, DifficultyPresetRecord] = {
         objective_distance_max_fraction=0.95,
         threat_overlap=0.65,
         launch_threat_clearance=1.0,
+        base_safety_fraction=0.04,
+        anchor_min_angular_separation_deg=25.0,
         friendly_count_min=5,
         friendly_count_max=12,
         friendly_reserve_factor=1.05,
@@ -280,6 +290,8 @@ def parameters_for_preset(
         "grid_height": record.grid_height,
         "map_margin": record.map_margin,
         "base_safety_radius": record.base_safety_radius,
+        "base_safety_fraction": record.base_safety_fraction,
+        "anchor_min_angular_separation_deg": record.anchor_min_angular_separation_deg,
         "group_min_separation": record.group_min_separation,
         "entity_min_separation": record.entity_min_separation,
         "threat_overlap": record.threat_overlap,
