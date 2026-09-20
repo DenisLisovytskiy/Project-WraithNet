@@ -1338,7 +1338,7 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         glyph = anchor.find(f"**/glyph-{c.unit_id}")
         if c.destroyed or c.hp <= 0:
             if not glyph.is_empty():
-                glyph.set_color(*DESTROYED_COLOR)
+                glyph.set_color(*DESTROYED_COLOR, 1)
             ring = anchor.find("**/recovery-ring-*")
             if not ring.is_empty():
                 ring.hide()
@@ -1399,7 +1399,7 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         destroyed = bool(c.destroyed or c.hp <= 0)
         if destroyed:
             if not glyph.is_empty():
-                glyph.set_color(*DESTROYED_COLOR)
+                glyph.set_color(*DESTROYED_COLOR, 1)
             for pattern in ("**/sam-ring-*", "**/ciws-ring-*"):
                 ring = anchor.find(pattern)
                 if not ring.is_empty():
@@ -1451,7 +1451,7 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         destroyed = bool(t.destroyed or t.hp <= 0)
         if destroyed:
             if not glyph.is_empty():
-                glyph.set_color(*DESTROYED_COLOR)
+                glyph.set_color(*DESTROYED_COLOR, 1)
         else:
             _paint_glyph(glyph, color)
 
@@ -1561,7 +1561,8 @@ def flash_jam_transition(handles: SceneHandles, jet_id: str, jammed: bool) -> No
     color = JAM_FLASH_COLOR if jammed else UNJAM_FLASH_COLOR
     if glyph is not None and not glyph.is_empty():
         original = glyph.get_color()
-        glyph.set_color(*color)
+        # Priority 1: outrank the mesh's baked vertex colors for the flash.
+        glyph.set_color(*color, 1)
 
         def _restore(g=glyph, c=original) -> None:
             if g is not None and not g.is_empty():
@@ -1583,7 +1584,7 @@ def flash_rtb_transition(handles: SceneHandles, jet_id: str) -> None:
     glyph = handles.jet_glyphs.get(jet_id)
     if glyph is not None and not glyph.is_empty():
         original = glyph.get_color()
-        glyph.set_color(*RTB_FLASH_COLOR)
+        glyph.set_color(*RTB_FLASH_COLOR, 1)
 
         def _restore(g=glyph, c=original) -> None:
             if g is not None and not g.is_empty():

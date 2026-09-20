@@ -1,7 +1,9 @@
 """Procedural interceptor — needle-nosed, canarded, cropped-delta air superiority jet.
 
 Smaller and sharper than the strike fighter: close-coupled canards, short-span
-delta, twin outward-canted tails. Vertex-colored only — no JPEG.
+delta, twin outward-canted tails. Paint follows the concept JPEG: the darkest
+airframe of the three, hard spine-to-wingtip falloff, hot cyan leading edges.
+Vertex-colored only — no JPEG at render time.
 """
 
 from __future__ import annotations
@@ -18,11 +20,20 @@ from viewer3d.textures.geom import (
     add_solid_planform,
     attach_mesh_group,
     box_ring,
+    heat_fn,
     palette_color_fn,
     planform_outline,
+    stealth_fn,
 )
 
 _SCALE = MESH_SCALE * 0.82
+
+# From assets/textures/pics/interceptor.jpeg: near-black graphite airframe,
+# smoked canopy, glowing nozzle cans.
+BODY = (0.21, 0.24, 0.30, 1.0)
+GLASS = (0.16, 0.26, 0.38, 1.0)
+IRON = (0.14, 0.14, 0.16, 1.0)
+EMBER = (1.00, 0.46, 0.18, 1.0)
 
 
 def _mirror(left: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -102,10 +113,8 @@ def _add_tails(mesh: MeshBuilder, color_fn) -> None:
         add_prism(mesh, top, bot, color_fn)
 
 
-def _add_details(mesh: MeshBuilder, base: Color) -> None:
-    glass_fn = palette_color_fn((0.32, 0.50, 0.70, 1.0), extra_dark=0.10)
-    dark_fn = palette_color_fn(base, extra_dark=0.50)
-    color_fn = palette_color_fn(base)
+def _add_details(mesh: MeshBuilder, dark_fn) -> None:
+    glass_fn = palette_color_fn(GLASS, extra_dark=0.10)
     add_slab(
         mesh,
         [
@@ -121,7 +130,7 @@ def _add_details(mesh: MeshBuilder, base: Color) -> None:
         add_loft(
             mesh,
             [_nozzle_ring(sx, -0.98), _nozzle_ring(sx, -1.12, hw=0.028, hh=0.022)],
-            dark_fn,
+            heat_fn(IRON, EMBER, -0.98, -1.12),
             cap=True,
         )
         add_slab(
@@ -133,7 +142,7 @@ def _add_details(mesh: MeshBuilder, base: Color) -> None:
                 (sx * 0.08, 0.30, 0.00),
             ],
             (sx * 0.03, 0.0, -0.04),
-            color_fn,
+            dark_fn,
         )
 
 
@@ -154,15 +163,24 @@ def _nozzle_ring(
 
 def attach_interceptor(parent: NodePath, name: str, color: Color) -> NodePath:
     mesh = MeshBuilder()
-    color_fn = palette_color_fn(color)
+    color_fn = stealth_fn(BODY, color, span=0.54, spine=0.34, glow=0.60, tint_mix=0.28)
+    dark_fn = stealth_fn(
+        BODY, color, span=0.54, spine=0.34, glow=0.0, tint_mix=0.28, extra_dark=0.30
+    )
     _add_fuselage(mesh, color_fn)
     _add_pair(mesh, _LEFT_CANARD, color_fn)
     _add_pair(mesh, _LEFT_WING, color_fn)
     _add_tails(mesh, color_fn)
-    _add_details(mesh, color)
+    _add_details(mesh, dark_fn)
     outline = planform_outline(
         "sym-edge", SILHOUETTE, lambda x, y: max(_surf_upper(x, y), 0.06)
     )
     return attach_mesh_group(
-        parent, name, mesh.to_geom("sym-fill"), color, scale=_SCALE, outline=outline
+        parent,
+        name,
+        mesh.to_geom("sym-fill"),
+        color,
+        scale=_SCALE,
+        outline=outline,
+        vertex_colors=True,
     )

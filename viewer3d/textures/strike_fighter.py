@@ -1,7 +1,8 @@
 """Procedural low-poly strike fighter — simplified F-22-like jet.
 
 Pointed nose, canopy, trapezoid wings, twin canted tails, twin nozzles.
-Vertex-colored only — no JPEG.
+Paint follows the concept JPEG: the pale one — ice blue-gray with a soft
+spine-to-tip ramp and a seafoam wash along the edges. No JPEG at render time.
 """
 
 from __future__ import annotations
@@ -18,11 +19,20 @@ from viewer3d.textures.geom import (
     add_solid_planform,
     attach_mesh_group,
     box_ring,
+    heat_fn,
     palette_color_fn,
     planform_outline,
+    stealth_fn,
 )
 
 _SCALE = MESH_SCALE
+
+# From assets/textures/pics/strike_fighter.jpeg: pale ice hull, blue-green
+# canopy, scorched cans.
+BODY = (0.37, 0.43, 0.47, 1.0)
+GLASS = (0.30, 0.47, 0.58, 1.0)
+IRON = (0.18, 0.18, 0.20, 1.0)
+EMBER = (1.00, 0.52, 0.22, 1.0)
 
 
 def _mirror(left: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -112,11 +122,8 @@ def _add_tails(mesh: MeshBuilder, color_fn) -> None:
         )
 
 
-def _add_details(mesh: MeshBuilder, base: Color) -> None:
-    glass_fn = palette_color_fn((0.40, 0.62, 0.82, 1.0), extra_dark=0.12)
-    dark_fn = palette_color_fn(base, extra_dark=0.50)
-    color_fn = palette_color_fn(base)
-
+def _add_details(mesh: MeshBuilder, dark_fn) -> None:
+    glass_fn = palette_color_fn(GLASS, extra_dark=0.12)
     add_slab(
         mesh,
         [
@@ -133,7 +140,7 @@ def _add_details(mesh: MeshBuilder, base: Color) -> None:
         add_loft(
             mesh,
             [_nozzle_ring(sx, -0.96), _nozzle_ring(sx, -1.10, hw=0.038, hh=0.028)],
-            dark_fn,
+            heat_fn(IRON, EMBER, -0.96, -1.10),
             cap=True,
         )
         # Side intake scoop.
@@ -146,7 +153,7 @@ def _add_details(mesh: MeshBuilder, base: Color) -> None:
                 (sx * 0.14, -0.10, 0.04),
             ],
             (sx * 0.04, 0.0, -0.05),
-            color_fn,
+            dark_fn,
         )
 
 
@@ -168,11 +175,14 @@ def _nozzle_ring(
 def attach_strike_fighter(parent: NodePath, name: str, color: Color) -> NodePath:
     """Non-billboarded simplified jet. ``color`` is the jet palette tint."""
     mesh = MeshBuilder()
-    color_fn = palette_color_fn(color)
+    color_fn = stealth_fn(BODY, color, span=0.80, spine=0.30, glow=0.46, tint_mix=0.30)
+    dark_fn = stealth_fn(
+        BODY, color, span=0.80, spine=0.30, glow=0.0, tint_mix=0.30, extra_dark=0.34
+    )
     _add_fuselage(mesh, color_fn)
     _add_wings(mesh, color_fn)
     _add_tails(mesh, color_fn)
-    _add_details(mesh, color)
+    _add_details(mesh, dark_fn)
     outline = planform_outline(
         "sym-edge", SILHOUETTE, lambda x, y: max(_wing_upper(x, y), 0.08)
     )
@@ -183,4 +193,5 @@ def attach_strike_fighter(parent: NodePath, name: str, color: Color) -> NodePath
         color,
         scale=_SCALE,
         outline=outline,
+        vertex_colors=True,
     )

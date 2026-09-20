@@ -62,7 +62,11 @@ class MeshBuilder:
                 self.tri(hub, a, b)
 
     def to_geom(self, name: str) -> GeomNode:
-        fmt = GeomVertexFormat.get_v3c4()
+        # v3cp, not v3c4: the keyline sibling comes from LineSegs, which is
+        # packed_dabc. Both formats are stride 16, so a v3c4 fill next to a
+        # v3cp outline under one node gets munged through the line's binding
+        # and renders with red and blue swapped.
+        fmt = GeomVertexFormat.get_v3cp()
         vdata = GeomVertexData(name, fmt, Geom.UH_static)
         vertex = GeomVertexWriter(vdata, "vertex")
         col = GeomVertexWriter(vdata, "color")
@@ -563,3 +567,56 @@ def attach_mesh_group(
         edge.set_depth_offset(2)
     group.set_color(*color)
     return group
+
+
+def stealth_fn(
+    body: Color,
+    tint: Color,
+    *,
+    span: float = 0.80,
+    spine: float = 0.42,
+    glow: float = 0.55,
+    tint_mix: float = 0.30,
+    extra_dark: float = 0.0,
+) -> ColorFn:
+    """Concept-art stealth paint: black spine, pale wings, lit leading edges.
+
+    Airframes carry no UVs, so the "texture" is baked per vertex. Brightness
+    ramps outboard from the centerline (``spine`` is how dark the middle sits),
+    undersides stay in shadow, and perimeter vertices past ~60% of ``span`` pick
+    up the faction ``tint`` the art paints along the leading edges. ``tint_mix``
+    keeps enough faction color in the body to read friend/foe from above.
+    """
+    base = mix_color(body, tint, tint_mix)
+    # The lit edge has to out-brighten a body that already carries the tint.
+    edge = mix_color(tint, (1.0, 1.0, 1.0, tint[3]), 0.30)
+
+    def _fn(x: float, y: float, z: float, upper: bool, rim: bool) -> Color:
+        del z
+        out = min(abs(x) / span, 1.0)
+        light = (1.0 - spine) + spine * out**0.65 if upper else 0.26 + 0.14 * out
+        light *= 1.0 + 0.06 * max(-x, 0.0) + 0.05 * max(y, 0.0)
+        light *= 0.93 + 0.14 * cell_hash01(int(x * 9.0), int(y * 9.0), 11)  # panel wear
+        light = max(0.10, min(1.25, light - extra_dark))
+        col = (
+            min(1.0, base[0] * light),
+            min(1.0, base[1] * light),
+            min(1.0, base[2] * light),
+            base[3],
+        )
+        if rim and upper and out > 0.62:
+            return mix_color(col, edge, glow * (out - 0.62) / 0.38)
+        return col
+
+    return _fn
+
+
+def heat_fn(cool: Color, hot: Color, y_cool: float, y_hot: float) -> ColorFn:
+    """Exhaust can: cold metal at ``y_cool`` grading to ember at ``y_hot``."""
+    span = (y_hot - y_cool) or 1.0
+
+    def _fn(x: float, y: float, z: float, upper: bool, rim: bool) -> Color:
+        del x, z, upper, rim
+        return mix_color(cool, hot, (y - y_cool) / span)
+
+    return _fn
