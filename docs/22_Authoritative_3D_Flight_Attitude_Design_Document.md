@@ -1,10 +1,10 @@
 # Design Document: Authoritative 3D Flight Attitude & Weapon Release Gates
 
-> This document is the source of truth for reworking jet movement into **authoritative** pitch / roll / yaw flight in world space, with per-airframe maneuver limits and attitude-gated weapon release. **Nothing in this document is implemented yet.** See Phases 50–55 for LLM-ready implementation prompts.
+> This document is the source of truth for reworking jet movement into **authoritative** pitch / roll / yaw flight in world space, with per-airframe maneuver limits and attitude-gated weapon release. **Status (Phase 55 closeout):** Phases **50–55 are implemented** (contracts, movement, weapon gates, agent employment, trace/viewer parity, track acceptance). Phase files under `docs/phases/` remain the historical build prompts.
 >
 > Numbering note: Phases 46–49 remain the smooth live-motion presentation track. This expansion is an independent **gameplay flight** track starting at **Phase 50**.
 >
-> **Supersedes (for attitude / altitude authority):** the “altitude forever cosmetic / sim stays 2D” non-goals in `docs/09_...md` §6.2/§10 and `docs/12_Flight_Dynamics_and_Weapon_Effects_Design_Document.md` §1/§3/§4.1. Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles; this doc completes that direction for **attitude**. Viewer cosmetics from Phases 25–26 remain valid only as presentation easing until Phase 54 wires them to authoritative pose.
+> **Supersedes (for attitude / altitude authority):** the “altitude forever cosmetic / sim stays 2D” non-goals in `docs/09_...md` §6.2/§10 and `docs/12_Flight_Dynamics_and_Weapon_Effects_Design_Document.md` §1/§3/§4.1. Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles; this doc completes that direction for **attitude**. Viewer cosmetics from Phases 25–26 remain valid only as presentation easing toward authoritative pose (Phase 54).
 
 ## 0. Goal
 
@@ -235,14 +235,14 @@ Each phase file under `docs/phases/` is a **standalone LLM prompt** with explici
 
 The track is **done** when all of the following hold:
 
-1. **Per-frame sharpness:** Interceptor yaw/pitch/roll rates are strictly greater than Strike Fighter, which are strictly greater than Heavy Bomber (tests lock the inequalities).
-2. **3D pose:** Every living jet in sim state exposes yaw, pitch, roll, altitude; movement updates all four on ticks where intents request change.
-3. **Altitude coupling:** Changing pitch away from 0 produces altitude change on subsequent ticks (within climb clamps); agents can leave and return to cruise altitude without the old “altitude-only slider” as the sole combat API.
-4. **Bomb gate:** A jet with `|roll| > JDAM envelope` or inverted cannot successfully `STRIKE` with `JDAM`; after rolling upright within envelope, the same geometry can.
-5. **Missile contrast:** At least one AAM (`AIM9X` or `AMRAAM`) remains launchable under a roll attitude that would reject `JDAM` (catalog policy in §6.2), proving gates are weapon-specific.
-6. **Viewer parity:** Live 3D view pitch/roll track sim values (within interpolator delay); F3 or equivalent debug can show attitude.
-7. **Regression:** Full `pytest` green; any intentional PoC summarize drift is documented and accepted in Phase 55.
-8. **Docs:** This design doc’s “Nothing implemented yet” banner is updated when Phase 55 lands; README lists this doc.
+1. [x] **Per-frame sharpness:** Interceptor yaw/pitch/roll rates are strictly greater than Strike Fighter, which are strictly greater than Heavy Bomber (tests lock the inequalities). — `tests/test_flight_attitude_track_acceptance.py`
+2. [x] **3D pose:** Every living jet in sim state exposes yaw, pitch, roll, altitude; movement updates all four on ticks where intents request change.
+3. [x] **Altitude coupling:** Changing pitch away from 0 produces altitude change on subsequent ticks (within climb clamps); agents can leave and return to cruise altitude without the old “altitude-only slider” as the sole combat API.
+4. [x] **Bomb gate:** A jet with `|roll| > JDAM envelope` or inverted cannot successfully `STRIKE` with `JDAM`; after rolling upright within envelope, the same geometry can.
+5. [x] **Missile contrast:** At least one AAM (`AIM9X` or `AMRAAM`) remains launchable under a roll attitude that would reject `JDAM` (catalog policy in §6.2), proving gates are weapon-specific.
+6. [x] **Viewer parity:** Trace + motion sample preserve pitch/roll; scene orients from authoritative attitude (Phase 54 tests). **Manual:** launcher Launch shows bank/pitch; F3 debug matches selected jet (operator checklist).
+7. [x] **Regression:** PoC still solves under wings-level defaults (Phase 55 acceptance); no deferred golden refresh required. Full `pytest` green on clean tree.
+8. [x] **Docs:** Banner updated; README lists this doc (Phases 50–55).
 
 ## 12. Risks & mitigations
 

@@ -1,6 +1,8 @@
 # Design Document: Flight Dynamics & Weapon Effects (3D Viewer Visual Expansion)
 
 > This document is the source of truth for a new, self-contained visual expansion layered on top of the already-implemented `viewer3d/` package (Phases 14–16, reviewed in `docs/11_Code_Review_Phases_14-16.md`). **Nothing in this document is implemented yet.** See `docs/phases/Phase_25_Flight_Dynamics_3D_Altitude_and_Attitude.md` and `docs/phases/Phase_26_Weapon_Effects_Missiles_Bombs_and_Gun_Tracers.md` for the phase-by-phase build plan.
+>
+> **Superseded for authoritative attitude / altitude gameplay:** see [`docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md`](22_Authoritative_3D_Flight_Attitude_Design_Document.md) (Phases 50–55). Cosmetic viewer easing in this doc remains valid only as presentation smoothing toward sim-authoritative pose.
 
 ## 0. What this expansion is, in one paragraph
 
