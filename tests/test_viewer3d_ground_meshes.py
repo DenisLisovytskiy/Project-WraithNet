@@ -37,6 +37,17 @@ from wraithnet.trace_schemas import TankFrame, TraceHeader
 
 
 def _rgb_of(node: NodePath):
+    """Faction-readable RGB: baked vertex mean when present, else node color."""
+    fill = node.find("**/sym-fill")
+    if not fill.is_empty() and fill.get_tag("vertex-paint") == "1":
+        cols = _fill_vertex_colors(node)
+        if cols:
+            n = float(len(cols))
+            return (
+                sum(c[0] for c in cols) / n,
+                sum(c[1] for c in cols) / n,
+                sum(c[2] for c in cols) / n,
+            )
     c = node.get_color()
     return float(c[0]), float(c[1]), float(c[2])
 

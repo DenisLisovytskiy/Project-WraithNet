@@ -12,6 +12,7 @@ from panda3d.core import (
     GeomVertexReader,
     LineSegs,
     NodePath,
+    TransparencyAttrib,
     loadPrcFileData,
 )
 
@@ -186,6 +187,8 @@ def test_fill_color_format_matches_the_keyline_sibling():
 
 def test_a_prioritised_set_color_still_overrides_the_baked_paint():
     """scene.py flashes jam/RTB/destroyed state via set_color on the group."""
+    from viewer3d.textures.geom import restore_vertex_paint
+
     root = NodePath("flash")
     glyph = attach_jet_mesh(root, "flashy", "STRIKE_FIGHTER", FRIENDLY)
     fill = glyph.find("**/sym-fill")
@@ -194,7 +197,28 @@ def test_a_prioritised_set_color_still_overrides_the_baked_paint():
     )
     glyph.set_color(1.0, 0.35, 1.0, 1.0, 1)  # priority 1, as scene.py does
     assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == ColorAttrib.T_flat
-    glyph.set_color(*FRIENDLY)  # restore drops back to the baked paint
+    restore_vertex_paint(glyph)
     assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == (
         ColorAttrib.T_vertex
     )
+
+
+def test_overlapping_jets_keep_vertex_paint():
+    """Co-located jets must not fall back to a flat faction blob."""
+    root = NodePath("stack")
+    a = attach_jet_mesh(root, "Jet_A", "STRIKE_FIGHTER", FRIENDLY)
+    b = attach_jet_mesh(root, "Jet_B", "INTERCEPTOR", CYAN)
+    a.set_pos(0.0, 0.0, 0.0)
+    b.set_pos(0.05, 0.05, 0.0)  # clipped
+    for glyph in (a, b):
+        fill = glyph.find("**/sym-fill")
+        assert fill.get_tag("vertex-paint") == "1"
+        assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == (
+            ColorAttrib.T_vertex
+        )
+        assert fill.get_transparency() == TransparencyAttrib.MNone
+        # Group stays white — no solid cyan/magenta waiting to show through.
+        c = glyph.get_color()
+        assert c[0] == pytest.approx(1.0)
+        assert c[1] == pytest.approx(1.0)
+        assert c[2] == pytest.approx(1.0)

@@ -43,14 +43,18 @@ def _mirror(left: list[tuple[float, float]]) -> list[tuple[float, float]]:
 
 _LEFT_SILHOUETTE = [
     (0.00, 1.32),
-    (-0.05, 1.02),
-    (-0.32, 0.62),  # canard tip
-    (-0.10, 0.48),
-    (-0.54, -0.16),  # cropped delta
-    (-0.36, -0.36),
-    (-0.10, -0.22),
-    (-0.08, -1.02),
-    (0.00, -1.04),
+    (-0.038, 1.02),
+    (-0.07, 0.78),  # canard LE root
+    (-0.34, 0.60),  # canard tip
+    (-0.28, 0.48),
+    (-0.09, 0.18),  # wing LE root
+    (-0.54, -0.16),  # wing tip
+    (-0.36, -0.38),
+    (-0.09, -0.16),
+    (-0.075, -0.70),
+    (-0.26, -0.94),  # tail tip planform
+    (-0.062, -1.00),
+    (0.00, -1.12),  # nozzle aft
 ]
 SILHOUETTE = _mirror(_LEFT_SILHOUETTE)
 
@@ -161,6 +165,14 @@ def _nozzle_ring(
     ]
 
 
+def _outline_z(x: float, y: float) -> float:
+    """Follow canard/wing skin so the keyline is not floating above the mesh."""
+    ax = abs(x)
+    if ax > 0.08 and -0.42 <= y <= 0.82:
+        return _surf_upper(x, y)
+    return 0.016 + 0.03 * max(0.0, 1.0 - abs(y) / 1.32)
+
+
 def attach_interceptor(parent: NodePath, name: str, color: Color) -> NodePath:
     mesh = MeshBuilder()
     color_fn = stealth_fn(BODY, color, span=0.54, spine=0.34, glow=0.60, tint_mix=0.28)
@@ -172,9 +184,7 @@ def attach_interceptor(parent: NodePath, name: str, color: Color) -> NodePath:
     _add_pair(mesh, _LEFT_WING, color_fn)
     _add_tails(mesh, color_fn)
     _add_details(mesh, dark_fn)
-    outline = planform_outline(
-        "sym-edge", SILHOUETTE, lambda x, y: max(_surf_upper(x, y), 0.06)
-    )
+    outline = planform_outline("sym-edge", SILHOUETTE, _outline_z)
     return attach_mesh_group(
         parent,
         name,
