@@ -1641,44 +1641,25 @@ def pulse_destruction(handles: SceneHandles, entity_id: str, position=None) -> N
 
 
 def flash_jam_transition(handles: SceneHandles, jet_id: str, jammed: bool) -> None:
-    """Color-flash the jet glyph on jam / unjam transitions."""
-    from viewer3d.textures.geom import restore_vertex_paint
+    """Brief ring at the jet when it enters / leaves a jammer bubble.
 
-    glyph = handles.jet_glyphs.get(jet_id)
+    Does not recolor the airframe — priority flat flashes were wiping the
+    baked stealth paint (pink on jam, cyan on unjam).
+    """
     anchor = handles.jets.get(jet_id)
-    color = JAM_FLASH_COLOR if jammed else UNJAM_FLASH_COLOR
-    if glyph is not None and not glyph.is_empty():
-        # Priority 1: outrank the mesh's baked vertex colors for the flash.
-        glyph.set_color(*color, 1)
-
-        def _restore(g=glyph) -> None:
-            restore_vertex_paint(g)
-
-        dummy = _fx_parent(handles).attach_new_node(f"jam-flash-{jet_id}")
-        handles.highlight_fx.append(_FxItem(node=dummy, restore=_restore, duration=0.5))
-        return
     if anchor is None or anchor.is_empty():
         return
+    color = JAM_FLASH_COLOR if jammed else UNJAM_FLASH_COLOR
     p = anchor.get_pos()
-    np = _ground_ring(_fx_parent(handles), f"jam-ring-{jet_id}", p.x, p.y, p.z, 2.0, color)
+    np = _ground_ring(
+        _fx_parent(handles), f"jam-ring-{jet_id}", p.x, p.y, p.z, 2.0, color
+    )
     handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
 
 
 def flash_rtb_transition(handles: SceneHandles, jet_id: str) -> None:
-    """Brief blue ring when a jet begins RTB, analogous to the jam flash."""
-    from viewer3d.textures.geom import restore_vertex_paint
-
+    """Brief blue ring when a jet begins RTB — ring only, keep mesh paint."""
     anchor = handles.jets.get(jet_id)
-    glyph = handles.jet_glyphs.get(jet_id)
-    if glyph is not None and not glyph.is_empty():
-        glyph.set_color(*RTB_FLASH_COLOR, 1)
-
-        def _restore(g=glyph) -> None:
-            restore_vertex_paint(g)
-
-        dummy = _fx_parent(handles).attach_new_node(f"rtb-flash-{jet_id}")
-        handles.highlight_fx.append(_FxItem(node=dummy, restore=_restore, duration=0.5))
-        return
     if anchor is None or anchor.is_empty():
         last = handles.last_jet_xy.get(jet_id)
         if last is None:
@@ -1689,7 +1670,9 @@ def flash_rtb_transition(handles: SceneHandles, jet_id: str) -> None:
         handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
         return
     p = anchor.get_pos()
-    np = _ground_ring(_fx_parent(handles), f"rtb-ring-{jet_id}", p.x, p.y, p.z, 2.0, RTB_FLASH_COLOR)
+    np = _ground_ring(
+        _fx_parent(handles), f"rtb-ring-{jet_id}", p.x, p.y, p.z, 2.0, RTB_FLASH_COLOR
+    )
     handles.highlight_fx.append(_FxItem(node=np, duration=0.5))
 
 
