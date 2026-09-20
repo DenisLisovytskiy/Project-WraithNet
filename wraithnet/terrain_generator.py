@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import random
+from bisect import bisect_left, insort
 from collections import deque
 from dataclasses import dataclass
 
@@ -16,6 +17,7 @@ from wraithnet.terrain import (
     TerrainCell,
     TerrainGrid,
     TerrainType,
+    terrain_cell_size_for_grid,
 )
 
 # Coverage may miss the exact fraction by at most this many cells, or 3% of
@@ -188,66 +190,82 @@ def _retarget_count(
     target_water: int,
     rng: random.Random,
 ) -> list[list[bool]]:
-    """Grow/shrink water toward ``target_water`` via random boundary flips."""
+    """Grow/shrink water toward ``target_water`` via random boundary flips.
+
+    The two coast sets are maintained incrementally. A flip can only change
+    membership for the flipped cell and its four neighbours, so a run costs
+    ``O(flips * log cells)`` instead of rescanning every cell per flip —
+    the difference between 0.01s and seconds once a map is 100x100 cells.
+
+    Candidate ordering (row-major) and candidate *count* are identical to the
+    rescanning version, so ``rng`` is drawn from in exactly the same sequence
+    and a given seed still yields byte-identical terrain.
+    """
     rows = len(water)
     cols = len(water[0])
     current = [row[:] for row in water]
     total = rows * cols
     target_water = max(0, min(total, target_water))
 
-    def water_count() -> int:
-        return _count_true(current)
+    n_water = _count_true(current)
+
+    #: Land cells touching water, and water cells touching land, as row-major
+    #: ``r * cols + c`` keys. The byte arrays mirror membership so a refresh
+    #: can test "already in there?" without a bisect.
+    coast_land: list[int] = []
+    coast_water: list[int] = []
+    in_coast_land = bytearray(total)
+    in_coast_water = bytearray(total)
+
+    def _set_member(
+        keys: list[int], flags: bytearray, key: int, present: bool
+    ) -> None:
+        if present and not flags[key]:
+            insort(keys, key)
+            flags[key] = 1
+        elif not present and flags[key]:
+            del keys[bisect_left(keys, key)]
+            flags[key] = 0
+
+    def _refresh(c: int, r: int) -> None:
+        """Re-derive both coast memberships for one cell."""
+        key = r * cols + c
+        is_water = current[r][c]
+        touches_opposite = any(
+            current[nr][nc] != is_water
+            for nc, nr in _neighbors4(c, r, cols, rows)
+        )
+        _set_member(coast_water, in_coast_water, key, is_water and touches_opposite)
+        _set_member(
+            coast_land, in_coast_land, key, not is_water and touches_opposite
+        )
+
+    for r in range(rows):
+        for c in range(cols):
+            _refresh(c, r)
 
     # Bounded: at most total cells flips.
     for _ in range(total * 2):
-        n = water_count()
-        if n == target_water:
+        if n_water == target_water:
             break
-        if n < target_water:
-            # Flip a land cell adjacent to water (or any land if isolated).
-            candidates = [
-                (c, r)
-                for r in range(rows)
-                for c in range(cols)
-                if not current[r][c]
-                and any(
-                    current[nr][nc]
-                    for nc, nr in _neighbors4(c, r, cols, rows)
-                )
-            ]
-            if not candidates:
-                candidates = [
-                    (c, r)
-                    for r in range(rows)
-                    for c in range(cols)
-                    if not current[r][c]
-                ]
-            if not candidates:
-                break
-            c, r = candidates[rng.randrange(len(candidates))]
-            current[r][c] = True
+        grow = n_water < target_water
+        candidates = coast_land if grow else coast_water
+        if candidates:
+            key = candidates[rng.randrange(len(candidates))]
+            r, c = divmod(key, cols)
         else:
-            candidates = [
-                (c, r)
-                for r in range(rows)
-                for c in range(cols)
-                if current[r][c]
-                and any(
-                    not current[nr][nc]
-                    for nc, nr in _neighbors4(c, r, cols, rows)
-                )
-            ]
-            if not candidates:
-                candidates = [
-                    (c, r)
-                    for r in range(rows)
-                    for c in range(cols)
-                    if current[r][c]
-                ]
-            if not candidates:
+            # No coastline: the grid is uniform. Growing from all-land (or
+            # shrinking from all-water) falls back to "every cell", which is
+            # what the rescanning version built here — same length, same order.
+            uniform = (grow and n_water == 0) or (not grow and n_water == total)
+            if not uniform:
                 break
-            c, r = candidates[rng.randrange(len(candidates))]
-            current[r][c] = False
+            r, c = divmod(rng.randrange(total), cols)
+        current[r][c] = grow
+        n_water += 1 if grow else -1
+        _refresh(c, r)
+        for nc, nr in _neighbors4(c, r, cols, rows):
+            _refresh(nc, nr)
     return current
 
 
@@ -330,6 +348,36 @@ def _enforce_min_component(
     )
 
 
+def _nearest_seed_chebyshev(
+    seeds: list[tuple[int, int]], cols: int, rows: int
+) -> list[int]:
+    """Chebyshev distance from every cell to its nearest seed, row-major.
+
+    Multi-source BFS over the 8-connected rectangle: with no obstacles a
+    king-move hop count *is* Chebyshev distance, so this returns exactly what
+    ``min(max(abs(dc), abs(dr)) for each seed)`` would -- but in one pass over
+    the grid instead of one pass per cell per seed, which is quadratic once
+    both the cell count and the seed count grow with map size.
+    """
+    dist = [-1] * (cols * rows)
+    queue: deque[tuple[int, int]] = deque()
+    for sc, sr in seeds:
+        key = sr * cols + sc
+        if dist[key] < 0:
+            dist[key] = 0
+            queue.append((sc, sr))
+    while queue:
+        c, r = queue.popleft()
+        nxt = dist[r * cols + c] + 1
+        for nr in range(max(0, r - 1), min(rows, r + 2)):
+            base = nr * cols
+            for nc in range(max(0, c - 1), min(cols, c + 2)):
+                if dist[base + nc] < 0:
+                    dist[base + nc] = nxt
+                    queue.append((nc, nr))
+    return dist
+
+
 def _assign_forest_and_city(
     water: list[list[bool]],
     parameters: TerrainGenerationParameters,
@@ -362,12 +410,11 @@ def _assign_forest_and_city(
         for i in range(min(n_seeds, len(remaining))):
             seeds.append(remaining[i])
         # Rank all land by distance to nearest seed (clustered fill).
+        seed_dist = _nearest_seed_chebyshev(seeds, cols, rows)
+
         def cluster_key(cell: tuple[int, int]) -> tuple[int, int, int]:
             c, r = cell
-            best = min(
-                max(abs(c - sc), abs(r - sr)) for sc, sr in seeds
-            )
-            return (best, c, r)
+            return (seed_dist[r * cols + c], c, r)
 
         ranked = sorted(land, key=cluster_key)
         for cell in ranked:
@@ -396,9 +443,16 @@ def generate_terrain(
     parameters: TerrainGenerationParameters,
     *,
     seed: int,
-    cell_size: float = 5.0,
+    cell_size: float | None = None,
 ) -> TerrainGrid:
-    """Build a coherent ``TerrainGrid`` from ``parameters`` and ``seed``."""
+    """Build a coherent ``TerrainGrid`` from ``parameters`` and ``seed``.
+
+    ``cell_size`` defaults to :func:`terrain_cell_size_for_grid`, so callers
+    that only know the world size cannot accidentally ask a 5000-unit map for
+    5.0-unit cells (a million of them, through superlinear passes).
+    """
+    if cell_size is None:
+        cell_size = terrain_cell_size_for_grid(grid_width, grid_height)
     if cell_size <= 0 or grid_width <= 0 or grid_height <= 0:
         raise TerrainGenerationError(
             "INVALID_DIMENSIONS",

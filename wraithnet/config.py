@@ -833,10 +833,20 @@ def max_grid_distance(grid_width: float, grid_height: float) -> float:
 
 
 def contract_claim_ttl_for_grid(grid_width: float, grid_height: float) -> int:
-    """TTL long enough for a round-trip transit at JET_SPEED on this map."""
-    transit = int(
-        math.ceil(2.0 * max(float(grid_width), float(grid_height)) / JET_SPEED)
+    """TTL long enough for the slowest frame to fly a round trip on this map.
+
+    Normalizing by ``JET_SPEED`` would only cover the *default* frame: a
+    HEAVY_BOMBER cruises at 3.0, so on a 5000-unit map its cross-map round
+    trip is 3333 ticks against a 2000-tick TTL. The contract would expire
+    mid-transit and the target reopen for bidding while a bomber was still
+    inbound. Size the TTL off the slowest frame and the true diagonal.
+    """
+    slowest = min(
+        (spec.max_speed for spec in JET_FRAME_CATALOG.values() if spec.max_speed > 0.0),
+        default=JET_SPEED,
     )
+    diagonal = math.sqrt(float(grid_width) ** 2 + float(grid_height) ** 2)
+    transit = int(math.ceil(2.0 * diagonal / max(slowest, 1e-9)))
     return max(CONTRACT_CLAIM_TTL_TICKS, transit)
 
 

@@ -95,10 +95,38 @@ class TerrainGrid(BaseModel):
         return self
 
 
+#: Cell size the PoC 100×100 map has always used, and the floor for any map.
+DEFAULT_CELL_SIZE: float = 5.0
+
+#: Cells along the longer side once a map is big enough to need coarser cells.
+#: 100 keeps the PoC's 20×20 feel on a 100-unit map while capping a 5000-unit
+#: battlespace at 100×100 = 10k cells instead of 1000×1000 = 1M.
+TERRAIN_CELLS_ON_LONG_SIDE: float = 100.0
+
+
+def terrain_cell_size_for_grid(grid_width: float, grid_height: float) -> float:
+    """Cell size that keeps a map's cell count bounded as it grows.
+
+    Maps up to ``DEFAULT_CELL_SIZE * TERRAIN_CELLS_ON_LONG_SIDE`` units get the
+    historical 5.0, so PoC-scale scenarios are untouched; past that, cells grow
+    with the map so cell count stays ~100 on the long side. Terrain generation
+    and mesh building are both superlinear in cell count, so letting a 5000-unit
+    map keep 5.0 would mean a million cells.
+    """
+    long_side = max(float(grid_width), float(grid_height))
+    return max(DEFAULT_CELL_SIZE, long_side / TERRAIN_CELLS_ON_LONG_SIDE)
+
+
 def all_plains_terrain(
-    width: float, height: float, cell_size: float = 5.0
+    width: float, height: float, cell_size: float | None = None
 ) -> TerrainGrid:
-    """Uniform PLAINS grid covering ``width`` × ``height`` world units."""
+    """Uniform PLAINS grid covering ``width`` × ``height`` world units.
+
+    ``cell_size`` defaults to :func:`terrain_cell_size_for_grid` so a large
+    battlespace cannot silently fall back to 5.0 and build a million cells.
+    """
+    if cell_size is None:
+        cell_size = terrain_cell_size_for_grid(width, height)
     if cell_size <= 0:
         raise ValueError(f"cell_size must be positive, got {cell_size}")
     if width <= 0 or height <= 0:

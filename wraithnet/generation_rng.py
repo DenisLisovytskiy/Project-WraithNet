@@ -17,7 +17,11 @@ ENEMY_NAVAL_SALT: int = 0x454E4156_0005  # enemy naval stream
 FRIENDLY_GROUND_SALT: int = 0x4652474E_0006  # friendly ground / tanks
 ENEMY_GROUND_SALT: int = 0x4547524E_0007  # enemy ground / tanks
 LOADOUT_SALT: int = 0x4C4F4144_0008  # loadout stream
-GENERATOR_VERSION: int = 3
+# 4: placement no longer quantizes a sampled position into its terrain cell,
+# and the CLUSTERED band sits outside group_min_separation instead of inside
+# it. Both were invisible at PoC cell sizes and broke large battlespaces, so
+# a given seed produces a different (valid) layout than v3 did.
+GENERATOR_VERSION: int = 4
 
 _MASK64: int = (1 << 64) - 1
 # SplitMix64 finalizer constants (Steele / Lea / Hacker's Delight lineage).

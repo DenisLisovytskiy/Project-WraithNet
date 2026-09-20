@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -68,6 +69,7 @@ from wraithnet.terrain import (
     TerrainGrid,
     cell_center,
     is_passable,
+    terrain_cell_size_for_grid,  # noqa: F401 — re-exported for callers
     world_to_cell,
 )
 from wraithnet.terrain_generator import TerrainGenerationError, generate_terrain
@@ -219,12 +221,6 @@ def max_normalized_distance(
     return max(math.dist(home_base, corner) for corner in corners) or 1.0
 
 
-def terrain_cell_size_for_grid(grid_width: float, grid_height: float) -> float:
-    """Keep roughly 100 cells on the long side (PoC used 20 at 100/5)."""
-    long_side = max(float(grid_width), float(grid_height))
-    return max(5.0, long_side / 100.0)
-
-
 def _grid_tuple(parameters: GenerationParameters) -> tuple[float, float]:
     return (parameters.grid_width, parameters.grid_height)
 
@@ -268,16 +264,49 @@ def _is_ground_land(terrain: TerrainGrid, position: tuple[float, float]) -> bool
         return False
 
 
-def _project_to_land(
+#: Single-entry memo backing ``_project_to_land``'s land lookup. The list is
+#: held alongside the set so its ``id`` cannot be recycled under us, and
+#: generation is single-threaded, so one entry is enough.
+_LAND_LOOKUP: dict[str, object] = {}
+
+
+def _land_lookup(land: list[tuple[int, int]]) -> set[tuple[int, int]]:
+    if _LAND_LOOKUP.get("list") is not land:
+        _LAND_LOOKUP["list"] = land
+        _LAND_LOOKUP["set"] = set(land)
+    return _LAND_LOOKUP["set"]  # type: ignore[return-value]
+
+
+def _ring_cells(
+    col0: int, row0: int, ring: int, columns: int, rows: int
+) -> Iterator[tuple[int, int]]:
+    """Cells at Chebyshev distance ``ring`` from ``(col0, row0)``, clipped."""
+    if ring == 0:
+        if 0 <= col0 < columns and 0 <= row0 < rows:
+            yield (col0, row0)
+        return
+    c_lo, c_hi = col0 - ring, col0 + ring
+    r_lo, r_hi = row0 - ring, row0 + ring
+    for c in range(c_lo, c_hi + 1):
+        if not 0 <= c < columns:
+            continue
+        for r in (r_lo, r_hi):
+            if 0 <= r < rows:
+                yield (c, r)
+    for r in range(r_lo + 1, r_hi):
+        if not 0 <= r < rows:
+            continue
+        for c in (c_lo, c_hi):
+            if 0 <= c < columns:
+                yield (c, r)
+
+
+def _nearest_land_by_scan(
     terrain: TerrainGrid,
     position: tuple[float, float],
     land: list[tuple[int, int]],
 ) -> tuple[float, float] | None:
-    """Keep on-land positions; otherwise snap to the nearest land cell center."""
-    if not land:
-        return None
-    if _is_ground_land(terrain, position):
-        return position
+    """Row-major scan over every land cell (out-of-bounds fallback path)."""
     best: tuple[float, float] | None = None
     best_d = float("inf")
     px, py = position
@@ -288,6 +317,50 @@ def _project_to_land(
             best_d = d
             best = (cx, cy)
     return best
+
+
+def _project_to_land(
+    terrain: TerrainGrid,
+    position: tuple[float, float],
+    land: list[tuple[int, int]],
+) -> tuple[float, float] | None:
+    """Keep on-land positions; otherwise snap to the nearest land cell center.
+
+    Searches outward ring by ring from the cell containing ``position`` rather
+    than scanning every land cell. A cell at Chebyshev ring ``r`` has its near
+    edge at least ``(r - 1) * cell_size`` away, so once the best candidate so
+    far beats that bound no later ring can improve on it. Ties resolve to the
+    lowest ``(row, col)``, which is what the row-major scan this replaces did.
+    """
+    if not land:
+        return None
+    if _is_ground_land(terrain, position):
+        return position
+    px, py = position
+    try:
+        col0, row0 = world_to_cell(terrain, px, py)
+    except OutOfTerrainBoundsError:
+        # Off-map: the ring bound below assumes the point sits in its cell.
+        return _nearest_land_by_scan(terrain, position, land)
+
+    lookup = _land_lookup(land)
+    best_key: tuple[float, int, int] | None = None
+    best_pos: tuple[float, float] | None = None
+    for ring in range(max(terrain.columns, terrain.rows) + 1):
+        if best_key is not None:
+            bound = (ring - 1) * terrain.cell_size
+            if bound > 0.0 and best_key[0] <= bound * bound:
+                break
+        for col, row in _ring_cells(col0, row0, ring, terrain.columns, terrain.rows):
+            if (col, row) not in lookup:
+                continue
+            cx, cy = cell_center(terrain, col, row)
+            d = (cx - px) * (cx - px) + (cy - py) * (cy - py)
+            key = (d, row, col)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_pos = (cx, cy)
+    return best_pos
 
 
 def _jitter_in_cell(
@@ -326,17 +399,24 @@ def _land_position_from_sample(
         except OutOfTerrainBoundsError:
             return None
         if prefer_plains and terrain.cells[row][col].terrain_type == "CITY":
-            # Try a nearby non-city land cell first.
+            # Try a nearby non-city land cell first. Walking the 5x5 window in
+            # row-major order visits the same cells, in the same order, as
+            # filtering the whole land list did -- without the full scan.
             nearby = [
                 (c, r)
-                for c, r in land
-                if max(abs(c - col), abs(r - row)) <= 2
-                and terrain.cells[r][c].terrain_type != "CITY"
+                for r in range(max(0, row - 2), min(terrain.rows, row + 3))
+                for c in range(max(0, col - 2), min(terrain.columns, col + 3))
+                if terrain.cells[r][c].terrain_type not in ("WATER", "CITY")
             ]
             if nearby:
                 c, r = nearby[rng.randrange(len(nearby))]
                 return _jitter_in_cell(terrain, c, r, rng)
-        return _jitter_in_cell(terrain, col, row, rng)
+        # The sample is already a valid continuous land position -- keep it.
+        # Re-drawing it inside its own cell quantizes placement to the terrain
+        # grid, which is invisible at 5-unit cells but destroys every tactical
+        # separation once cells are 50 units wide (a candidate drawn 12 units
+        # from an anchor comes back 40 units away, and the caller rejects it).
+        return sample
 
     # Nearest non-city land if possible, else any land.
     px, py = sample
@@ -523,6 +603,16 @@ def _assign_center_styles(
     # MIXED: roughly half each; index 0 (root) counts toward dispersed preference.
     dispersed_n = (count + 1) // 2
     return ["DISPERSED"] * dispersed_n + ["CLUSTERED"] * (count - dispersed_n)
+
+
+#: A CLUSTERED centre sits this many multiples of ``group_min_separation``
+#: from one of the cluster anchors. The band has to start *outside* the
+#: minimum separation: the old ``[0.5, 1.0]`` asked for a point simultaneously
+#: closer to the anchor than the separation and no closer than it, which is
+#: satisfiable only on the exact rim. It appeared to work because snapping a
+#: sample into its terrain cell happened to push it back out past the rim.
+CLUSTER_BAND_LO: float = 1.05
+CLUSTER_BAND_HI: float = 2.0
 
 
 def _pairwise_min_for_style(style: GroupStyle, group_min_separation: float) -> float:
@@ -715,8 +805,8 @@ def _place_group_centers(
                 anchor_pos = records[anchor_index].position
                 # Prefer discovery parent = nearest existing that can link; sample
                 # near anchor within cluster band, then require a discovery parent.
-                band_lo = 0.5 * parameters.group_min_separation
-                band_hi = 1.0 * parameters.group_min_separation
+                band_lo = CLUSTER_BAND_LO * parameters.group_min_separation
+                band_hi = CLUSTER_BAND_HI * parameters.group_min_separation
                 cand = _sample_in_annulus(anchor_pos, band_lo, band_hi, rng)
             else:
                 # DISPERSED: sample in the mission distance band from home.
@@ -748,17 +838,17 @@ def _place_group_centers(
                 # Enforce cluster-band vs at least one anchor.
                 anchors = positions[: min(n_anchors, len(positions))]
                 if not any(
-                    0.5 * parameters.group_min_separation
+                    CLUSTER_BAND_LO * parameters.group_min_separation - 1e-6
                     <= math.dist(cand, anchor)
-                    <= 1.0 * parameters.group_min_separation
-                    + 1e-6
+                    <= CLUSTER_BAND_HI * parameters.group_min_separation + 1e-6
                     for anchor in anchors
                 ):
-                    # Allow slightly looser if still within group_min of an anchor
-                    # after discovery-forced placement — reject if nowhere near.
+                    # Allow slightly looser if still near an anchor after
+                    # discovery-forced placement — reject if nowhere near.
                     if not any(
                         math.dist(cand, anchor)
-                        <= 1.0 * parameters.group_min_separation + THREAT_OVERLAP_TOLERANCE
+                        <= CLUSTER_BAND_HI * parameters.group_min_separation
+                        + THREAT_OVERLAP_TOLERANCE
                         for anchor in anchors
                     ):
                         continue

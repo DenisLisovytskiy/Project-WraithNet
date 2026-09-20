@@ -20,8 +20,10 @@ from wraithnet.scenario_schema import SUPPORTED_SCENARIO_VERSION, scenario_from_
 from wraithnet.world import WraithNetModel
 
 
-def test_generator_version_is_v3():
-    assert GENERATOR_VERSION == 3
+def test_generator_version_is_v4():
+    # v4: placement keeps the sampled position instead of snapping it into a
+    # terrain cell, and the CLUSTERED band moved outside group_min_separation.
+    assert GENERATOR_VERSION == 4
 
 
 def test_legacy_poc_migrates_to_latest():

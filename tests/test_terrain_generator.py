@@ -11,6 +11,7 @@ from wraithnet.generation_presets import parameters_for_preset
 from wraithnet.generation_rng import (
     ENEMY_SALT,
     FRIENDLY_SALT,
+    GENERATOR_VERSION,
     TERRAIN_SALT,
     derived_seed,
 )
@@ -197,10 +198,10 @@ def test_generated_land_entities_are_passable():
                 assert ground_entity_on_passable_terrain(sc.terrain, ent_pos)
 
 
-def test_generator_version_is_two():
+def test_generator_version_matches_the_rng_module():
     result = generate_scenario(parameters_for_preset("STANDARD", seed=0))
     assert result.scenario.generation is not None
-    assert result.scenario.generation.generator_version == 3
+    assert result.scenario.generation.generator_version == GENERATOR_VERSION
     assert result.scenario.generation.resolved_parameters.terrain.water_fraction > 0.0
 
 
@@ -211,7 +212,7 @@ def test_auto_balanced_seed_matrix_terrain_feasible(preset):
     n = 25 if preset != "NIGHTMARE" else 15
     for seed in range(n):
         result = generate_scenario(parameters_for_preset(preset, seed=seed))
-        assert result.scenario.generation.generator_version == 3
+        assert result.scenario.generation.generator_version == GENERATOR_VERSION
         assert result.feasibility.feasible, (
             preset,
             seed,
@@ -220,8 +221,16 @@ def test_auto_balanced_seed_matrix_terrain_feasible(preset):
 
 
 def test_standard_100_seed_matrix():
+    # Broad matrix on the cheap PoC map; the default map size gets its own
+    # (smaller) matrix in test_auto_balanced_seed_matrix_terrain_feasible.
     for seed in range(100):
-        result = generate_scenario(parameters_for_preset("STANDARD", seed=seed))
+        result = generate_scenario(
+            parameters_for_preset(
+                "STANDARD",
+                seed=seed,
+                overrides={"grid_width": 100.0, "grid_height": 100.0},
+            )
+        )
         assert result.feasibility.feasible, seed
 
 
@@ -292,15 +301,32 @@ def test_entity_on_water_feasibility_error():
 
 
 def test_generation_performance_budget():
-    """Phase 35 keeps Phase 32 STANDARD median budget (<100ms) on this machine."""
+    """STANDARD generation stays interactive at both map sizes.
+
+    Quick Generate runs this synchronously, so the budget is what a user sits
+    through. The 5000-unit default has ~25x the cell count of the PoC map, so
+    it gets a proportionally larger budget rather than an unbounded one --
+    but a bounded one, because every pass over those cells is linear-ish now.
+    """
     import time
 
-    times = []
-    for seed in range(20):
-        t0 = time.perf_counter()
-        generate_scenario(parameters_for_preset("STANDARD", seed=seed))
-        times.append(time.perf_counter() - t0)
-    times.sort()
-    median = times[len(times) // 2]
-    # Documented Phase 32 budget; terrain adds little on a 20×20 grid.
-    assert median < 0.15, f"STANDARD median {median:.3f}s exceeds revised 150ms budget"
+    def _median(**overrides):
+        times = []
+        for seed in range(20):
+            t0 = time.perf_counter()
+            generate_scenario(
+                parameters_for_preset(
+                    "STANDARD", seed=seed, overrides=overrides or None
+                )
+            )
+            times.append(time.perf_counter() - t0)
+        times.sort()
+        return times[len(times) // 2]
+
+    poc = _median(grid_width=100.0, grid_height=100.0)
+    assert poc < 0.15, f"PoC-map STANDARD median {poc:.3f}s exceeds 150ms budget"
+
+    default_map = _median()
+    assert default_map < 1.0, (
+        f"default-map STANDARD median {default_map:.3f}s exceeds 1s budget"
+    )

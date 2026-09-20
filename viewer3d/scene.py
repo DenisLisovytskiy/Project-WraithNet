@@ -56,6 +56,7 @@ from viewer3d.flight_dynamics import (
 from viewer3d.highlights import TickHighlights
 from viewer3d.motion import SampledPose
 from viewer3d.terrain_mesh import build_terrain_root, resolve_header_terrain
+from viewer3d.world_scale import header_map_scale
 from viewer3d.textures import (
     ENEMY,
     FRIENDLY,
@@ -123,6 +124,19 @@ SAM_DISC_COLOR = (0.90, 0.26, 0.24, 1.0)
 AAA_DISC_COLOR = (0.95, 0.58, 0.18, 1.0)
 JAM_DISC_COLOR = (0.62, 0.32, 0.85, 1.0)
 GLYPH_SCALE = 1.85
+
+#: Map-scale multiplier for the scene currently being built, set by
+#: `build_static_scene` from the header. Module-level because the glyph
+#: builders below are free functions shared by every entity type, and the
+#: viewer only ever has one scene alive at a time. Without it a 1.85-unit
+#: glyph on a 5000-unit map renders well under a pixel from any framing
+#: that shows the battlespace -- the map is visible and nothing on it is.
+_SCENE_MAP_SCALE = 1.0
+
+
+def glyph_scale() -> float:
+    """Glyph size in world units for the scene currently being built."""
+    return GLYPH_SCALE * _SCENE_MAP_SCALE
 HIGHLIGHT_DURATION = 0.45
 STRIKE_COLOR = (1.0, 0.90, 0.32, 1.0)
 DESTRUCTION_COLOR = (1.0, 1.0, 1.0, 1.0)
@@ -291,7 +305,7 @@ def _attach_glyph(
     group.set_light_off()
     group.set_two_sided(True)
     group.set_transparency(TransparencyAttrib.MAlpha)
-    group.set_scale(GLYPH_SCALE)
+    group.set_scale(glyph_scale())
 
     if halo:
         # Only meaningful for a glyph centered on the origin; the home-base
@@ -315,7 +329,7 @@ def _attach_glyph(
         detail.set_depth_offset(2)
 
     if pin:
-        lift = -min(z for _x, z in points_xz) * GLYPH_SCALE + 0.14
+        lift = -min(z for _x, z in points_xz) * glyph_scale() + 0.14
         group.set_z(lift)
         _attach_ground_pin(parent, color, lift)
     return group
@@ -528,7 +542,7 @@ def _attach_jet_dart(parent: NodePath, name: str, color) -> NodePath:
     group.set_light_off()
     group.set_two_sided(True)
     group.set_transparency(TransparencyAttrib.MAlpha)
-    group.set_scale(GLYPH_SCALE)
+    group.set_scale(glyph_scale())
     group.attach_new_node(_dart_geom("sym-fill", color))
     edge = group.attach_new_node(_dart_outline_geom("sym-edge", GLYPH_KEYLINE_COLOR))
     edge.set_color(*GLYPH_KEYLINE_COLOR)
@@ -1000,6 +1014,8 @@ def _target_points(target_type: str):
 
 def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
     """Called once, when the header first arrives. Jets start hidden until tick 0."""
+    global _SCENE_MAP_SCALE
+    _SCENE_MAP_SCALE = header_map_scale(header)
     root = render_root.attach_new_node("wraithnet-scene")
     terrain = resolve_header_terrain(header)
     terrain_root = build_terrain_root(root, terrain)
@@ -1492,7 +1508,7 @@ def _update_missile_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
             glyph = _attach_glyph(
                 node, f"missile-glyph-{m.missile_id}", _diamond_pts(), MISSILE_COLOR
             )
-            glyph.set_scale(GLYPH_SCALE * 0.55)
+            glyph.set_scale(glyph_scale() * 0.55)
             handles.missiles[m.missile_id] = node
         node.set_pos(float(pos[0]), float(pos[1]), float(pos[2]))
         node.show()

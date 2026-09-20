@@ -123,6 +123,13 @@ _CAPACITY_ERROR_CODES = frozenset(
 
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_feasible_over_seed_matrix(preset):
+    # Broad matrix on the cheap PoC map. Cramming NIGHTMARE's 10 objectives,
+    # 5 SAMs, 4 jammers and 2 AAA into 100x100 at 16-unit separation genuinely
+    # has no legal layout for a couple of seeds, so exhaustion is allowed --
+    # but *budgeted*. Silently skipping every exhausted seed (what this test
+    # used to do) is what let a 42%-failure regression on the shipped default
+    # map size through unnoticed.
+    exhausted = []
     for seed in range(100):
         params = parameters_for_preset(
             preset,
@@ -134,6 +141,7 @@ def test_auto_balanced_feasible_over_seed_matrix(preset):
             result = generate_scenario(params)
         except GenerationError as exc:
             if exc.code in (PLACEMENT_EXHAUSTED, AUTO_BALANCE_CAPACITY):
+                exhausted.append((seed, exc.code))
                 continue
             raise
         capacity_errors = [
@@ -141,7 +149,28 @@ def test_auto_balanced_feasible_over_seed_matrix(preset):
             for i in result.feasibility.issues
             if i.severity == "ERROR" and i.code in _CAPACITY_ERROR_CODES
         ]
-        assert not capacity_errors
+        assert not capacity_errors, (preset, seed, [i.code for i in capacity_errors])
+    assert len(exhausted) <= 5, (preset, exhausted)
+
+
+@pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
+def test_auto_balanced_generates_on_the_default_map_size(preset):
+    """The *shipped* battlespace must generate reliably, not just the PoC one.
+
+    ``GenerationParameters`` defaults to DEFAULT_GENERATION_GRID (5000x5000).
+    Every other matrix in this file pins the map back to 100x100 to stay fast,
+    which leaves the size users actually get with no seed coverage at all.
+    """
+    n = 15 if preset == "NIGHTMARE" else 25
+    for seed in range(n):
+        params = parameters_for_preset(preset, seed=seed)
+        assert params.grid_width == config.DEFAULT_GENERATION_GRID_WIDTH
+        result = generate_scenario(params)
+        assert result.feasibility.feasible, (
+            preset,
+            seed,
+            [i.code for i in result.feasibility.issues if i.severity == "ERROR"],
+        )
 
 
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
@@ -152,12 +181,7 @@ def test_auto_roster_within_bounds_and_joint_allocation(preset):
             seed=seed,
             overrides={"grid_width": 100.0, "grid_height": 100.0},
         )
-        try:
-            result = generate_scenario(params)
-        except GenerationError as exc:
-            if exc.code in (PLACEMENT_EXHAUSTED, AUTO_BALANCE_CAPACITY):
-                continue
-            raise
+        result = generate_scenario(params)
         n = len(result.scenario.jets)
         assert params.friendly_count_min <= n <= params.friendly_count_max
         for jet in result.scenario.jets:
