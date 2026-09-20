@@ -89,4 +89,4 @@ catch-up / extrapolating). The 2D Pygame replay path remains discrete-tick.
 - Terrain / combined arms: [`docs/19_Terrain_Naval_and_Combined_Arms_Design_Document.md`](docs/19_Terrain_Naval_and_Combined_Arms_Design_Document.md)
 - Risk-aware CNP: [`docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md`](docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md)
 - Smooth live motion (dual-clock interpolation, Phases 46–49): [`docs/21_Smooth_Live_Motion_Design_Document.md`](docs/21_Smooth_Live_Motion_Design_Document.md)
-- Authoritative 3D flight attitude & weapon release gates (Phases 50–55): [`docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md`](docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md)
+- Authoritative 3D flight attitude & weapon release gates (**Phases 50–55 implemented**): [`docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md`](docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md)
