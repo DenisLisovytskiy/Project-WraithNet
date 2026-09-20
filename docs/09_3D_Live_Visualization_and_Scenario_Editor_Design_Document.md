@@ -111,6 +111,8 @@ The sim's world is 2D: `(x, y)` on a `100×100` grid, `y` "up." Panda3D's defaul
 
 ### 6.2 Synthetic altitude — explicit scope boundary
 
+> **Superseded for authoritative attitude / altitude:** [`docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md`](22_Authoritative_3D_Flight_Attitude_Design_Document.md) (Phases 50–55; Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles).
+
 **The simulation itself stays 2D.** There is no altitude in `wraithnet`'s data model, no altitude-based gameplay (no terrain-following, no vertical evasion, no altitude affecting sensor/SAM range) — this is an explicit non-goal (§8), not an oversight. The 3D viewer alone decides, purely for presentation, to render jets at a fixed flight altitude (e.g. `z = 8` world-units) above a ground plane at `z = 0`, with targets/SAM sites/the jammer sitting on the ground (`z = 0`). This gives an "aircraft flying over a map" look without requiring any change to the tactical model Phases 0–10 already validated. If two jets ever occupy the exact same `(x, y)`, a small deterministic per-jet vertical offset (keyed by index in `jet_ids`, same pattern the 2D viewer uses for its color palette) prevents them from perfectly overlapping — purely cosmetic, never affects gameplay.
 
 ### 6.3 Visual style reference: Ace Combat's holographic mission-briefing map
