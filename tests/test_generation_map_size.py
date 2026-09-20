@@ -11,11 +11,11 @@ from wraithnet.scenario_feasibility import approximate_fuel_range, round_trip_fu
 from wraithnet.scenario_generator import generate_scenario, terrain_cell_size_for_grid
 
 
-def test_generation_defaults_to_fifty_x_poc_map():
+def test_generation_defaults_to_two_x_poc_map():
     params = GenerationParameters(seed=1)
     assert params.grid_width == config.DEFAULT_GENERATION_GRID_WIDTH
     assert params.grid_height == config.DEFAULT_GENERATION_GRID_HEIGHT
-    assert params.grid_width == config.GRID_WIDTH * 50.0
+    assert params.grid_width == config.GRID_WIDTH * 2.0
 
 
 def test_preset_carries_generation_grid_size():

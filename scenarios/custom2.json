@@ -1,13 +1,13 @@
 {
   "scenario_version": 9,
-  "grid_width": 5000.0,
-  "grid_height": 5000.0,
+  "grid_width": 200.0,
+  "grid_height": 200.0,
   "jets": [
     {
       "agent_id": "Jet_01",
       "position": [
-        9.473628748606545,
-        4979.955058659975
+        0.37894514994426187,
+        199.19820234639903
       ],
       "payload": {
         "JDAM": 5,
@@ -31,8 +31,8 @@
     {
       "agent_id": "Jet_02",
       "position": [
-        11.256469246702203,
-        4978.485243442573
+        0.45025876986808816,
+        199.13940973770295
       ],
       "payload": {
         "JDAM": 8,
@@ -56,8 +56,8 @@
     {
       "agent_id": "Jet_03",
       "position": [
-        12.252498121517874,
-        4977.678368545574
+        0.49009992486071496,
+        199.10713474182296
       ],
       "payload": {
         "JDAM": 2,
@@ -83,8 +83,8 @@
     {
       "target_id": "Target_01",
       "position": [
-        4210.987848774056,
-        4986.761873330558
+        168.43951395096227,
+        199.47047493322236
       ],
       "hp_required": 3,
       "target_type": "HARDENED_BUNKER"
@@ -92,8 +92,8 @@
     {
       "target_id": "Target_02",
       "position": [
-        3461.114243386078,
-        1029.980481572755
+        138.44456973544314,
+        41.199219262910205
       ],
       "hp_required": 2,
       "target_type": "HARDENED_BUNKER"
@@ -101,8 +101,8 @@
     {
       "target_id": "Target_03",
       "position": [
-        3455.0,
-        1005.0
+        138.20000000000002,
+        40.2
       ],
       "hp_required": 4,
       "target_type": "MOBILE_RADAR"
@@ -112,8 +112,8 @@
     {
       "target_id": "SAM_01",
       "position": [
-        4222.5942374049955,
-        4992.458408433277
+        168.90376949619986,
+        199.6983363373311
       ],
       "hp_required": 1,
       "target_type": "SAM_SITE",
@@ -128,20 +128,20 @@
     {
       "jammer_id": "Jammer_01",
       "position": [
-        4216.98054790141,
-        4989.692134168507
+        168.67922191605643,
+        199.58768536674032
       ]
     }
   ],
   "home_base": [
-    10.615481189459834,
-    4975.326739282216
+    0.4246192475783934,
+    199.01306957128867
   ],
   "terrain": {
-    "world_width": 5000.0,
-    "world_height": 5000.0,
+    "world_width": 200.0,
+    "world_height": 200.0,
     "terrain_edit_seed": 8761187918780596835,
-    "cell_size": 50.0,
+    "cell_size": 2.0,
     "columns": 100,
     "rows": 100,
     "cells": [
@@ -40381,8 +40381,8 @@
     {
       "base_id": "Base_Home",
       "position": [
-        10.615481189459834,
-        4975.326739282216
+        0.4246192475783934,
+        199.01306957128867
       ]
     }
   ],
@@ -40392,8 +40392,8 @@
     {
       "target_id": "AAA_01",
       "position": [
-        4212.266675199035,
-        4981.955835177066
+        168.4906670079614,
+        199.27823340708267
       ],
       "heading": 345.09957082573555,
       "faction": "ENEMY",
@@ -40411,8 +40411,8 @@
     "resolved_parameters": {
       "seed": 16857872049056229546,
       "preset": "STANDARD",
-      "grid_width": 5000.0,
-      "grid_height": 5000.0,
+      "grid_width": 200.0,
+      "grid_height": 200.0,
       "objective_count": 3,
       "sam_count": 1,
       "jammer_count": 1,
@@ -40428,12 +40428,12 @@
       ],
       "objective_distance_min_fraction": 0.2,
       "objective_distance_max_fraction": 0.85,
-      "map_margin": 5.0,
-      "base_safety_radius": 18.0,
-      "group_min_separation": 16.0,
-      "entity_min_separation": 3.0,
+      "map_margin": 0.2,
+      "base_safety_radius": 0.7200000000000001,
+      "group_min_separation": 0.6400000000000001,
+      "entity_min_separation": 0.12000000000000002,
       "threat_overlap": 0.35,
-      "launch_threat_clearance": 5.0,
+      "launch_threat_clearance": 0.2,
       "friendly_mode": "AUTO_BALANCED",
       "friendly_count_min": 3,
       "friendly_count_max": 6,

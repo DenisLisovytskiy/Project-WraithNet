@@ -152,6 +152,10 @@ CORVETTE_CIWS_RING = (0.96, 0.58, 0.22, 1.0)
 TANK_FRIENDLY_COLOR = FRIENDLY
 TANK_ENEMY_COLOR = ENEMY
 MISSILE_COLOR = (1.0, 0.82, 0.25, 1.0)
+# Card-suit diamonds floating above units (distinct from mesh faction paint).
+MARKER_FRIENDLY_COLOR = (0.22, 0.55, 1.0, 1.0)
+MARKER_ENEMY_COLOR = (1.0, 0.22, 0.22, 1.0)
+MARKER_SPIN_DEG_PER_SEC = 70.0
 
 
 @dataclass
@@ -572,6 +576,53 @@ def _attach_altitude_cue(parent: NodePath, name: str, color) -> NodePath:
     cue.set_transparency(TransparencyAttrib.MAlpha)
     cue.set_depth_offset(1)
     return cue
+
+
+def _attach_faction_marker(
+    parent: NodePath,
+    faction: str,
+    *,
+    lift: float | None = None,
+) -> NodePath:
+    """Card-diamond above a unit; spins on local Z (world up when parent is upright).
+
+    Not billboarded — yaw is the whole point. Parenting to the unit anchor
+    makes it follow motion; hide it when the unit is destroyed.
+    """
+    color = (
+        MARKER_FRIENDLY_COLOR
+        if str(faction or "").upper() == "FRIENDLY"
+        else MARKER_ENEMY_COLOR
+    )
+    group = parent.attach_new_node("faction-marker")
+    group.set_light_off()
+    group.set_two_sided(True)
+    group.set_transparency(TransparencyAttrib.MAlpha)
+    scale = glyph_scale() * 0.55
+    group.set_scale(scale)
+    group.set_z(float(lift) if lift is not None else 1.35 * glyph_scale())
+    pts = _diamond_pts()
+    group.attach_new_node(_polygon_geom("marker-fill", pts, color)).set_depth_offset(1)
+    edge = group.attach_new_node(
+        _polyline_geom("marker-edge", pts, GLYPH_KEYLINE_COLOR, 1.8)
+    )
+    edge.set_color(*GLYPH_KEYLINE_COLOR)
+    edge.set_depth_offset(2)
+    group.set_color(*color)
+    group.set_tag("faction-marker-spin", "1")
+    return group
+
+
+def _set_faction_marker_alive(anchor: NodePath, alive: bool) -> None:
+    marker = anchor.find("**/faction-marker")
+    if marker.is_empty():
+        return
+    if alive:
+        marker.show()
+        marker.set_tag("faction-marker-spin", "1")
+    else:
+        marker.hide()
+        marker.set_tag("faction-marker-spin", "0")
 
 
 def _update_altitude_cue(handles: SceneHandles, agent_id: str, altitude: float) -> None:
@@ -1064,6 +1115,7 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
                 5.0,
                 AAA_DISC_COLOR,
             )
+        _attach_faction_marker(anchor, "ENEMY")
         handles.targets[tid] = anchor
 
     for jid, pos in header.jammer_positions.items():
@@ -1078,6 +1130,7 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
             pin=False,
         )
         _jam_dome(anchor, f"jam-ring-{jid}", header.jam_radius, JAM_DISC_COLOR)
+        _attach_faction_marker(anchor, "ENEMY")
         handles.jammers[jid] = anchor
 
     home = getattr(header, "home_base", None)
@@ -1105,6 +1158,7 @@ def build_static_scene(render_root, header: TraceHeader) -> SceneHandles:
         if glyph is None:
             glyph = _attach_jet_dart(anchor, f"glyph-{aid}", jet_color)
         _attach_altitude_cue(anchor, f"altcue-{aid}", jet_color)
+        _attach_faction_marker(anchor, "FRIENDLY", lift=1.1 * glyph_scale())
         anchor.hide()  # no jet position in the header; first tick reveals them
         handles.jets[aid] = anchor
         handles.jet_glyphs[aid] = glyph
@@ -1275,6 +1329,7 @@ def update_tick(
         if frame.hp_remaining <= 0:
             # Priority 1 so the glyph's own keyline/halo colors give way and
             # the whole marker really does go dim grey, not just its fill.
+            _set_faction_marker_alive(anchor, False)
             anchor.set_color(*DESTROYED_COLOR, 1)
             anchor.set_render_mode_wireframe()
             ring = anchor.find("**/sam-ring-*")
@@ -1292,6 +1347,7 @@ def update_tick(
             rotor = anchor.find("**/radar-rotor")
             if not rotor.is_empty():
                 rotor.set_tag("radar-spin", "1")
+            _set_faction_marker_alive(anchor, True)
 
     _sync_aaa_sprites(handles, tick)
     _update_missile_glyphs(handles, tick)
@@ -1346,6 +1402,7 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 float(wn_config.RECOVERY_APPROACH_RADIUS),
                 CARRIER_RECOVERY_RING,
             )
+            _attach_faction_marker(anchor, "FRIENDLY")
             handles.carriers[c.unit_id] = anchor
         x, y = float(c.position[0]), float(c.position[1])
         anchor.set_pos(x, y, 0.18)
@@ -1358,11 +1415,13 @@ def _update_carrier_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
             ring = anchor.find("**/recovery-ring-*")
             if not ring.is_empty():
                 ring.hide()
+            _set_faction_marker_alive(anchor, False)
         else:
             _paint_glyph(glyph, CARRIER_COLOR)
             ring = anchor.find("**/recovery-ring-*")
             if not ring.is_empty():
                 ring.show()
+            _set_faction_marker_alive(anchor, True)
 
 
 def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
@@ -1407,6 +1466,7 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 float(getattr(c, "ciws_range", 4.0) or 4.0),
                 CORVETTE_CIWS_RING,
             )
+            _attach_faction_marker(anchor, "ENEMY")
             handles.corvettes[c.unit_id] = anchor
         x, y = float(c.position[0]), float(c.position[1])
         anchor.set_pos(x, y, 0.16)
@@ -1420,12 +1480,14 @@ def _update_corvette_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 ring = anchor.find(pattern)
                 if not ring.is_empty():
                     ring.hide()
+            _set_faction_marker_alive(anchor, False)
         else:
             _paint_glyph(glyph, CORVETTE_COLOR)
             for pattern in ("**/sam-ring-*", "**/ciws-ring-*"):
                 ring = anchor.find(pattern)
                 if not ring.is_empty():
                     ring.show()
+            _set_faction_marker_alive(anchor, True)
 
 
 def _tank_hull_points() -> list[tuple[float, float]]:
@@ -1459,6 +1521,12 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
                 points=_tank_hull_points(),
                 pin=False,
             )
+            faction = (
+                "FRIENDLY"
+                if str(getattr(t, "faction", "")) == "FRIENDLY"
+                else "ENEMY"
+            )
+            _attach_faction_marker(anchor, faction)
             handles.tanks[t.unit_id] = anchor
         x, y = float(t.position[0]), float(t.position[1])
         anchor.set_pos(x, y, 0.14)
@@ -1468,8 +1536,10 @@ def _update_tank_glyphs(handles: SceneHandles, tick: TraceTick) -> None:
         if destroyed:
             if not glyph.is_empty():
                 glyph.set_color(*DESTROYED_COLOR, 1)
+            _set_faction_marker_alive(anchor, False)
         else:
             _paint_glyph(glyph, color)
+            _set_faction_marker_alive(anchor, True)
 
 
 def _sync_aaa_sprites(handles: SceneHandles, tick: TraceTick) -> None:
@@ -1645,6 +1715,7 @@ def decay_highlights(handles: SceneHandles, dt: float) -> None:
     animate_water(handles, dt)
     animate_radars(handles, dt)
     animate_jammers(handles, dt)
+    animate_faction_markers(handles, dt)
 
 
 def clear_highlight_fx(handles: SceneHandles) -> None:
@@ -1696,6 +1767,17 @@ def animate_jammers(handles: SceneHandles, dt: float) -> None:
         if rate is None:
             rate = 45.0
         ring.set_h(ring.get_h() + float(rate) * float(dt))
+
+
+def animate_faction_markers(handles: SceneHandles, dt: float) -> None:
+    """Yaw card-diamond IFF markers around vertical so they read from any view."""
+    if handles.root is None or handles.root.is_empty() or dt <= 0.0:
+        return
+    step = MARKER_SPIN_DEG_PER_SEC * float(dt)
+    for marker in handles.root.find_all_matches("**/faction-marker"):
+        if marker.is_empty() or marker.get_tag("faction-marker-spin") != "1":
+            continue
+        marker.set_h(marker.get_h() + step)
 
 
 def apply_tick_highlights(

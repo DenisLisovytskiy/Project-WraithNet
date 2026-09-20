@@ -31,7 +31,7 @@ from typing import Literal
 # --- Grid ---
 
 # PoC / hand-authored default scenario size (scenarios/default.json). Generated
-# missions default to DEFAULT_GENERATION_GRID_* (50× larger) via GenerationParameters.
+# missions default to DEFAULT_GENERATION_GRID_* (2× larger) via GenerationParameters.
 
 GRID_WIDTH: float = 100.0
 
@@ -39,9 +39,9 @@ GRID_HEIGHT: float = 100.0
 
 # Default battlespace for Quick Generate / GenerationParameters (jet transit scale).
 
-DEFAULT_GENERATION_GRID_WIDTH: float = 5000.0
+DEFAULT_GENERATION_GRID_WIDTH: float = 200.0
 
-DEFAULT_GENERATION_GRID_HEIGHT: float = 5000.0
+DEFAULT_GENERATION_GRID_HEIGHT: float = 200.0
 
 GRID_TORUS: bool = False
 
@@ -740,9 +740,9 @@ TARGET_SIGNATURE_DEFAULTS: dict[TargetType, SensorSignature] = {
 
 # burn_per_tick=1.0 for every frame, matching SAM_DAMAGE_PER_TICK's "1 unit per
 
-# tick" simplicity. Capacities are sized for DEFAULT_GENERATION_GRID (5000) —
+# tick" simplicity. Capacities are sized for DEFAULT_GENERATION_GRID (200) —
 
-# 50× the original PoC map — so a round-trip to a distant AO plus RTB margin fits:
+# 2× the original PoC map — so a round-trip to a distant AO plus RTB margin fits:
 
 #   INTERCEPTOR    2000 ticks × 7.0 = 14000 units (~1.4 width round-trips)
 
