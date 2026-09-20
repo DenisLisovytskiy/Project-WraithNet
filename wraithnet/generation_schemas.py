@@ -100,7 +100,7 @@ def _default_terrain_parameters() -> TerrainGenerationParameters:
 class GenerationParameters(BaseModel):
     seed: int = Field(ge=0, le=2**64 - 1)
     preset: DifficultyPreset = "STANDARD"
-    # Battlespace size (world units). Defaults are 50× the PoC 100×100 map so
+    # Battlespace size (world units). Defaults are 20× the PoC 100×100 map so
     # generated jet missions have realistic transit distance to the AO.
     grid_width: float = Field(
         default=config.DEFAULT_GENERATION_GRID_WIDTH, gt=20.0, le=20000.0

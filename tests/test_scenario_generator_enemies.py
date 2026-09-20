@@ -35,7 +35,7 @@ def _params(**overrides) -> GenerationParameters:
     base = {
         "seed": 42,
         "preset": "CUSTOM",
-        # Compact grid for fast unit geometry; production defaults are 5000×5000.
+        # Compact grid for fast unit geometry; production defaults are 2000×2000.
         "grid_width": 100.0,
         "grid_height": 100.0,
         "objective_count": 4,

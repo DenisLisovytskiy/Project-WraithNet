@@ -157,7 +157,7 @@ def test_auto_balanced_feasible_over_seed_matrix(preset):
 def test_auto_balanced_generates_on_the_default_map_size(preset):
     """The *shipped* battlespace must generate reliably, not just the PoC one.
 
-    ``GenerationParameters`` defaults to DEFAULT_GENERATION_GRID (5000x5000).
+    ``GenerationParameters`` defaults to DEFAULT_GENERATION_GRID (2000x2000).
     Every other matrix in this file pins the map back to 100x100 to stay fast,
     which leaves the size users actually get with no seed coverage at all.
     """
