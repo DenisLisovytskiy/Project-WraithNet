@@ -410,3 +410,27 @@ def test_ships_keep_faction_colors():
     jet = attach_strike_fighter(root, "j", faction_paint("FRIENDLY"))
     jr, jg, jb = _rgb_of(jet)
     assert jg + jb > jr
+
+
+def test_faction_markers_spin_and_hide_on_destroy():
+    from viewer3d.scene import (
+        MARKER_SPIN_DEG_PER_SEC,
+        SceneHandles,
+        _attach_faction_marker,
+        _set_faction_marker_alive,
+        animate_faction_markers,
+    )
+
+    root = NodePath("markers")
+    anchor = root.attach_new_node("unit")
+    marker = _attach_faction_marker(anchor, "FRIENDLY")
+    assert marker.get_tag("faction-marker-spin") == "1"
+    before = float(marker.get_h())
+    handles = SceneHandles(root=root, fx_root=root.attach_new_node("fx"))
+    animate_faction_markers(handles, 1.0)
+    assert float(marker.get_h()) == pytest.approx(before + MARKER_SPIN_DEG_PER_SEC)
+    _set_faction_marker_alive(anchor, False)
+    assert marker.is_hidden()
+    mid = float(marker.get_h())
+    animate_faction_markers(handles, 1.0)
+    assert float(marker.get_h()) == pytest.approx(mid)
