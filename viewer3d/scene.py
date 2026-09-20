@@ -1642,17 +1642,17 @@ def pulse_destruction(handles: SceneHandles, entity_id: str, position=None) -> N
 
 def flash_jam_transition(handles: SceneHandles, jet_id: str, jammed: bool) -> None:
     """Color-flash the jet glyph on jam / unjam transitions."""
+    from viewer3d.textures.geom import restore_vertex_paint
+
     glyph = handles.jet_glyphs.get(jet_id)
     anchor = handles.jets.get(jet_id)
     color = JAM_FLASH_COLOR if jammed else UNJAM_FLASH_COLOR
     if glyph is not None and not glyph.is_empty():
-        original = glyph.get_color()
         # Priority 1: outrank the mesh's baked vertex colors for the flash.
         glyph.set_color(*color, 1)
 
-        def _restore(g=glyph, c=original) -> None:
-            if g is not None and not g.is_empty():
-                g.set_color(c)
+        def _restore(g=glyph) -> None:
+            restore_vertex_paint(g)
 
         dummy = _fx_parent(handles).attach_new_node(f"jam-flash-{jet_id}")
         handles.highlight_fx.append(_FxItem(node=dummy, restore=_restore, duration=0.5))
@@ -1666,15 +1666,15 @@ def flash_jam_transition(handles: SceneHandles, jet_id: str, jammed: bool) -> No
 
 def flash_rtb_transition(handles: SceneHandles, jet_id: str) -> None:
     """Brief blue ring when a jet begins RTB, analogous to the jam flash."""
+    from viewer3d.textures.geom import restore_vertex_paint
+
     anchor = handles.jets.get(jet_id)
     glyph = handles.jet_glyphs.get(jet_id)
     if glyph is not None and not glyph.is_empty():
-        original = glyph.get_color()
         glyph.set_color(*RTB_FLASH_COLOR, 1)
 
-        def _restore(g=glyph, c=original) -> None:
-            if g is not None and not g.is_empty():
-                g.set_color(c)
+        def _restore(g=glyph) -> None:
+            restore_vertex_paint(g)
 
         dummy = _fx_parent(handles).attach_new_node(f"rtb-flash-{jet_id}")
         handles.highlight_fx.append(_FxItem(node=dummy, restore=_restore, duration=0.5))

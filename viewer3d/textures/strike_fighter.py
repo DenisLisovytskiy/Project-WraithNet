@@ -40,16 +40,20 @@ def _mirror(left: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return [*left, *right]
 
 
-# Top-down silhouette used for the keyline (body + wings, not the tails).
+# Top-down silhouette from the same wing / stab / nose extrema as the mesh.
 _LEFT_SILHOUETTE = [
     (0.00, 1.24),
-    (-0.08, 0.92),
-    (-0.16, 0.42),
-    (-0.78, -0.10),
-    (-0.52, -0.42),
-    (-0.16, -0.28),
-    (-0.12, -0.98),
-    (0.00, -1.00),
+    (-0.055, 0.92),
+    (-0.11, 0.50),
+    (-0.14, 0.34),  # wing LE root
+    (-0.80, -0.10),  # wing tip
+    (-0.50, -0.44),  # wing TE
+    (-0.14, -0.24),
+    (-0.10, -0.70),
+    (-0.40, -0.78),  # stab tip
+    (-0.36, -0.94),
+    (-0.095, -0.98),
+    (0.00, -1.10),  # nozzle aft
 ]
 SILHOUETTE = _mirror(_LEFT_SILHOUETTE)
 
@@ -172,6 +176,16 @@ def _nozzle_ring(
     ]
 
 
+def _outline_z(x: float, y: float) -> float:
+    """Ride the wing/stab skin — a constant lift made the keyline float off."""
+    ax = abs(x)
+    if ax > 0.14 and -0.50 <= y <= 0.40:
+        return _wing_upper(x, y)
+    if ax > 0.12 and -0.96 <= y <= -0.68:
+        return 0.045
+    return 0.02 + 0.04 * max(0.0, 1.0 - abs(y) / 1.24)
+
+
 def attach_strike_fighter(parent: NodePath, name: str, color: Color) -> NodePath:
     """Non-billboarded simplified jet. ``color`` is the jet palette tint."""
     mesh = MeshBuilder()
@@ -183,9 +197,7 @@ def attach_strike_fighter(parent: NodePath, name: str, color: Color) -> NodePath
     _add_wings(mesh, color_fn)
     _add_tails(mesh, color_fn)
     _add_details(mesh, dark_fn)
-    outline = planform_outline(
-        "sym-edge", SILHOUETTE, lambda x, y: max(_wing_upper(x, y), 0.08)
-    )
+    outline = planform_outline("sym-edge", SILHOUETTE, _outline_z)
     return attach_mesh_group(
         parent,
         name,

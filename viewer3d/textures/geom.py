@@ -8,6 +8,7 @@ the jet palette (applied later via ``NodePath.set_color``).
 from __future__ import annotations
 
 import math
+import zlib
 from collections.abc import Callable, Sequence
 
 from panda3d.core import (
@@ -554,19 +555,49 @@ def attach_mesh_group(
 ) -> NodePath:
     group = parent.attach_new_node(name)
     group.set_light_off()
-    group.set_two_sided(True)
-    group.set_transparency(TransparencyAttrib.MAlpha)
     group.set_scale(scale)
     fill = group.attach_new_node(geom)
+    fill.set_name("sym-fill")
+    fill.set_two_sided(True)
+    fill.set_transparency(TransparencyAttrib.MNone)
+    fill.set_depth_write(True)
+    fill.set_depth_test(True)
+    fill.set_bin("opaque", 20)
     if vertex_colors:
-        # Keep group.set_color for faction/destroyed API; fill uses baked materials.
+        # Faction tint is baked into vertices. Keep group color white so a
+        # lost ColorAttrib cannot reveal a solid cyan/magenta parent color
+        # when airframes interpenetrate.
         fill.set_attrib(ColorAttrib.make_vertex())
+        fill.set_tag("vertex-paint", "1")
+        fill.set_depth_offset(1 + (zlib.adler32(name.encode("utf-8")) % 6))
+        group.set_color(1.0, 1.0, 1.0, 1.0)
+    else:
+        group.set_two_sided(True)
+        group.set_transparency(TransparencyAttrib.MAlpha)
+        group.set_color(*color)
     if outline is not None:
         edge = group.attach_new_node(outline)
+        edge.set_name("sym-edge")
         edge.set_color(*KEYLINE_COLOR)
-        edge.set_depth_offset(2)
-    group.set_color(*color)
+        edge.set_transparency(TransparencyAttrib.MAlpha)
+        edge.set_bin("transparent", 30)
+        edge.set_depth_write(False)
+        edge.set_depth_offset(1)
+        edge.set_light_off()
+        edge.set_two_sided(True)
     return group
+
+
+def restore_vertex_paint(glyph: NodePath) -> None:
+    """Re-assert baked vertex colors after a priority flat flash (jam/RTB)."""
+    if glyph is None or glyph.is_empty():
+        return
+    glyph.set_color(1.0, 1.0, 1.0, 1.0)
+    fill = glyph.find("**/sym-fill")
+    if fill.is_empty():
+        return
+    if fill.get_tag("vertex-paint") == "1":
+        fill.set_attrib(ColorAttrib.make_vertex())
 
 
 def stealth_fn(
