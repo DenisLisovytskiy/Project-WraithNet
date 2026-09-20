@@ -1,7 +1,10 @@
 """Procedural flying-wing mesh for HEAVY_BOMBER.
 
 Inspired by the concept art: cranked-kite stealth bomber, buried engines,
-serrated trailing edge, no vertical tail. Vertex-colored only — no JPEG.
+serrated trailing edge, no vertical tail. Paint follows the same JPEG — the
+darkest, flattest airframe of the three: near-black navy, almost no
+spine-to-tip ramp, a cold blue sheen on the outer panels rather than a hot
+leading edge. Vertex-colored only — no JPEG at render time.
 """
 
 from __future__ import annotations
@@ -16,12 +19,21 @@ from viewer3d.textures.geom import (
     add_slab,
     add_solid_planform,
     attach_mesh_group,
+    heat_fn,
     palette_color_fn,
     planform_outline,
+    stealth_fn,
 )
 
 # Wider than it is long — the silhouette that separates this from a fighter.
 _SCALE = MESH_SCALE * 1.08
+
+# From assets/textures/pics/heavy_bomber.jpeg: near-black navy skin, faint blue
+# panel sheen, cold shielded exhausts (no visible flame on a stealth bomber).
+BODY = (0.07, 0.085, 0.115, 1.0)
+GLASS = (0.20, 0.31, 0.44, 1.0)
+IRON = (0.12, 0.12, 0.14, 1.0)
+SCORCH = (0.30, 0.22, 0.20, 1.0)
 
 
 def _mirror(left: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -102,10 +114,8 @@ def _add_engine_beaks(mesh: MeshBuilder, color_fn) -> None:
         add_prism(mesh, top, bot, color_fn)
 
 
-def _add_details(mesh: MeshBuilder, base: Color) -> None:
-    color_fn = palette_color_fn(base, extra_dark=0.04)
-    glass_fn = palette_color_fn((0.35, 0.55, 0.75, 1.0), extra_dark=0.15)
-    dark_fn = palette_color_fn(base, extra_dark=0.45)
+def _add_details(mesh: MeshBuilder, color_fn, dark_fn) -> None:
+    glass_fn = palette_color_fn(GLASS, extra_dark=0.15)
 
     # Cockpit glass, sitting on the blister.
     add_slab(
@@ -154,7 +164,7 @@ def _add_details(mesh: MeshBuilder, base: Color) -> None:
                 (sx * 0.06, -0.84, 0.03),
             ],
             (0.0, 0.03, 0.0),
-            dark_fn,
+            heat_fn(IRON, SCORCH, -0.80, -0.86),
         )
 
 
@@ -179,11 +189,16 @@ def _outline():
 def attach_heavy_bomber(parent: NodePath, name: str, color: Color) -> NodePath:
     """Non-billboarded flying wing. ``color`` is the jet palette tint."""
     mesh = MeshBuilder()
-    color_fn = palette_color_fn(color, extra_dark=0.08)
+    color_fn = stealth_fn(
+        BODY, color, span=1.72, spine=0.34, glow=0.48, tint_mix=0.20, extra_dark=0.06
+    )
+    dark_fn = stealth_fn(
+        BODY, color, span=1.72, spine=0.34, glow=0.0, tint_mix=0.20, extra_dark=0.26
+    )
     add_solid_planform(mesh, PLANFORM, _upper_z, _lower_z, color_fn)
     _add_saw_teeth(mesh, color_fn)
-    _add_engine_beaks(mesh, color_fn)
-    _add_details(mesh, color)
+    _add_engine_beaks(mesh, dark_fn)
+    _add_details(mesh, color_fn, dark_fn)
     outline = planform_outline("sym-edge", _outline(), lambda x, y: _upper_z(x, y))
     return attach_mesh_group(
         parent,
@@ -192,4 +207,5 @@ def attach_heavy_bomber(parent: NodePath, name: str, color: Color) -> NodePath:
         color,
         scale=_SCALE,
         outline=outline,
+        vertex_colors=True,
     )

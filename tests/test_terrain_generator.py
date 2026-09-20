@@ -11,6 +11,7 @@ from wraithnet.generation_presets import parameters_for_preset
 from wraithnet.generation_rng import (
     ENEMY_SALT,
     FRIENDLY_SALT,
+    GENERATOR_VERSION,
     TERRAIN_SALT,
     derived_seed,
 )
@@ -20,12 +21,7 @@ from wraithnet.scenario_feasibility import (
     has_discovery_los,
     largest_land_component_size,
 )
-from wraithnet.scenario_generator import (
-    AUTO_BALANCE_CAPACITY,
-    GenerationError,
-    PLACEMENT_EXHAUSTED,
-    generate_scenario,
-)
+from wraithnet.scenario_generator import generate_scenario
 from wraithnet.terrain import TerrainCell
 from wraithnet.terrain_generator import (
     TerrainGenerationError,
@@ -202,44 +198,43 @@ def test_generated_land_entities_are_passable():
                 assert ground_entity_on_passable_terrain(sc.terrain, ent_pos)
 
 
-def test_generator_version_is_two():
+def test_generator_version_matches_the_rng_module():
     result = generate_scenario(parameters_for_preset("STANDARD", seed=0))
     assert result.scenario.generation is not None
-    assert result.scenario.generation.generator_version == 3
+    assert result.scenario.generation.generator_version == GENERATOR_VERSION
     assert result.scenario.generation.resolved_parameters.terrain.water_fraction > 0.0
 
 
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_seed_matrix_terrain_feasible(preset):
-    # Phase 35 acceptance: successful gens must be terrain-feasible. Dense
-    # NIGHTMARE packs may raise PLACEMENT_EXHAUSTED on some seeds (same
-    # contract as the friendlies AUTO_BALANCED matrix); skip those and require
-    # that every completed scenario is feasible.
+    # Phase 35 acceptance: every seed generates, and every scenario is
+    # terrain-feasible. The skip-on-PLACEMENT_EXHAUSTED escape this carried
+    # was accommodating a bug, not a real constraint: on the default map the
+    # CLUSTERED band asked for centres both nearer to and no nearer than
+    # group_min_separation, which no seed could satisfy except by accident.
+    # With that fixed, dense NIGHTMARE packs place on every seed.
     n = 25 if preset != "NIGHTMARE" else 15
-    completed = 0
     for seed in range(n):
-        try:
-            result = generate_scenario(parameters_for_preset(preset, seed=seed))
-        except GenerationError as exc:
-            if preset == "NIGHTMARE" and exc.code in (
-                PLACEMENT_EXHAUSTED,
-                AUTO_BALANCE_CAPACITY,
-            ):
-                continue
-            raise
-        completed += 1
-        assert result.scenario.generation.generator_version == 3
+        result = generate_scenario(parameters_for_preset(preset, seed=seed))
+        assert result.scenario.generation.generator_version == GENERATOR_VERSION
         assert result.feasibility.feasible, (
             preset,
             seed,
             [i.code for i in result.feasibility.issues if i.severity == "ERROR"],
         )
-    assert completed >= 1, f"{preset}: every seed exhausted placement"
 
 
 def test_standard_100_seed_matrix():
+    # Broad matrix on the cheap PoC map; the default map size gets its own
+    # (smaller) matrix in test_auto_balanced_seed_matrix_terrain_feasible.
     for seed in range(100):
-        result = generate_scenario(parameters_for_preset("STANDARD", seed=seed))
+        result = generate_scenario(
+            parameters_for_preset(
+                "STANDARD",
+                seed=seed,
+                overrides={"grid_width": 100.0, "grid_height": 100.0},
+            )
+        )
         assert result.feasibility.feasible, seed
 
 
@@ -310,26 +305,32 @@ def test_entity_on_water_feasibility_error():
 
 
 def test_generation_performance_budget():
-    """Compact-grid STANDARD median stays interactive (Phase 32/35 spirit).
+    """STANDARD generation stays interactive at both map sizes.
 
-    Default missions use 5000×5000 maps (multi-second); this budget pins the
-    historical small-map Quick Generate path so regressions stay visible.
+    Quick Generate runs this synchronously, so the budget is what a user sits
+    through. The 5000-unit default has ~25x the cell count of the PoC map, so
+    it gets a proportionally larger budget rather than an unbounded one --
+    but a bounded one, because every pass over those cells is linear-ish now.
     """
     import time
 
-    times = []
-    for seed in range(20):
-        t0 = time.perf_counter()
-        generate_scenario(
-            parameters_for_preset(
-                "STANDARD",
-                seed=seed,
-                overrides={"grid_width": 100.0, "grid_height": 100.0},
+    def _median(**overrides):
+        times = []
+        for seed in range(20):
+            t0 = time.perf_counter()
+            generate_scenario(
+                parameters_for_preset(
+                    "STANDARD", seed=seed, overrides=overrides or None
+                )
             )
-        )
-        times.append(time.perf_counter() - t0)
-    times.sort()
-    median = times[len(times) // 2]
-    assert median < 0.50, (
-        f"STANDARD 100×100 median {median:.3f}s exceeds 500ms compact-grid budget"
+            times.append(time.perf_counter() - t0)
+        times.sort()
+        return times[len(times) // 2]
+
+    poc = _median(grid_width=100.0, grid_height=100.0)
+    assert poc < 0.15, f"PoC-map STANDARD median {poc:.3f}s exceeds 150ms budget"
+
+    default_map = _median()
+    assert default_map < 1.0, (
+        f"default-map STANDARD median {default_map:.3f}s exceeds 1s budget"
     )

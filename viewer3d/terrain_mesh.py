@@ -44,6 +44,30 @@ BUILDING_EDGE_COLOR = tint(BORDER_SOFT, 1.0, alpha=0.62)
 
 TERRAIN_TILE_WORLD = 12.0
 
+#: Cells per chunk edge, once a grid is big enough for chunking to pay off.
+#: Each chunk is its own GeomNode, so Panda3D can frustum-cull it; one
+#: map-sized batch has a map-sized bounding volume and is never culled.
+TERRAIN_CHUNK_CELLS = 16
+
+#: Grids at or below this many cells stay a single batch per terrain type.
+#: The PoC 100x100 map is 400 cells: culling would not pay for the extra draw
+#: calls there, and keeping one batch keeps that map's geometry untouched.
+TERRAIN_CHUNK_MIN_CELLS = 1024
+
+#: Above this cell size, per-cell props (trees, scrub, windows, building
+#: edges) are dropped. Their density was written against 5-unit cells and is
+#: derived from cell span, so it explodes as cells grow -- and on a map whose
+#: cells are this large they are sub-pixel from any useful camera distance.
+PROP_DETAIL_MAX_CELL_SIZE = 12.0
+
+#: Target footprint of a single city building, in world units. A CITY cell is
+#: a district, not a building: on a large map it subdivides into blocks this
+#: size rather than becoming one cell-sized slab.
+CITY_BLOCK_WORLD = 14.0
+
+#: Cap on buildings per city-cell edge, so one cell stays a handful of boxes.
+CITY_BLOCKS_MAX = 3
+
 
 def resolve_header_terrain(header: TraceHeader) -> TerrainGrid:
     if header.terrain is not None:
@@ -383,6 +407,64 @@ def _window_faces(
     return faces
 
 
+def _chunk_edge_cells(terrain: TerrainGrid) -> int:
+    """Cells per chunk edge; one chunk for PoC-sized grids."""
+    if terrain.columns * terrain.rows <= TERRAIN_CHUNK_MIN_CELLS:
+        return max(terrain.columns, terrain.rows, 1)
+    return TERRAIN_CHUNK_CELLS
+
+
+def _prop_detail(terrain: TerrainGrid) -> bool:
+    """Whether to emit per-cell props (trees, scrub, windows, edges)."""
+    return float(terrain.cell_size) <= PROP_DETAIL_MAX_CELL_SIZE
+
+
+def _surface_subdivision(terrain: TerrainGrid, n: int) -> int:
+    """Heightfield subdivision for one cell, capped on coarse grids.
+
+    The ``_*_z`` functions wobble on a ~16-unit wavelength. Subdividing a
+    50-unit cell into 2x2 samples that wavelength far too coarsely to read as
+    rolling ground, so it buys vertices and no visual -- keep such cells flat.
+    """
+    return n if _prop_detail(terrain) else 1
+
+
+def _city_buildings(
+    terrain: TerrainGrid,
+    cell,
+    col: int,
+    row: int,
+    bounds: tuple[float, float, float, float],
+    seed: int,
+) -> list[tuple[float, float, float, float, float]]:
+    """``(x0, y0, x1, y1, height)`` footprints for one CITY cell.
+
+    At PoC cell sizes this is the single inset block the viewer has always
+    drawn. On a large map the cell subdivides into a grid of ~CITY_BLOCK_WORLD
+    blocks with jittered heights, so a city reads as a skyline rather than one
+    flat slab the width of a cell.
+    """
+    x0, y0, x1, y1 = bounds
+    span = min(x1 - x0, y1 - y0)
+    n = max(1, min(CITY_BLOCKS_MAX, int(span / CITY_BLOCK_WORLD)))
+    base_height = float(cell.building_height or 8.0)
+    out: list[tuple[float, float, float, float, float]] = []
+    for j in range(n):
+        for i in range(n):
+            bx0 = x0 + (x1 - x0) * (i / n)
+            by0 = y0 + (y1 - y0) * (j / n)
+            bx1 = x0 + (x1 - x0) * ((i + 1) / n)
+            by1 = y0 + (y1 - y0) * ((j + 1) / n)
+            inset = min(bx1 - bx0, by1 - by0) * 0.18
+            if n == 1:
+                height = base_height
+            else:
+                jitter = _hash01(col * CITY_BLOCKS_MAX + i, row * CITY_BLOCKS_MAX + j, seed, 13)
+                height = base_height * (0.55 + 0.90 * jitter)
+            out.append((bx0 + inset, by0 + inset, bx1 - inset, by1 - inset, height))
+    return out
+
+
 def _attach(root: NodePath, node: GeomNode | None, *, alpha: bool = False, two_sided: bool = False) -> None:
     if node is None:
         return
@@ -394,85 +476,149 @@ def _attach(root: NodePath, node: GeomNode | None, *, alpha: bool = False, two_s
         np.set_transparency(TransparencyAttrib.MAlpha)
 
 
-def build_terrain_root(parent: NodePath, terrain: TerrainGrid) -> NodePath:
-    """Attach batched terrain meshes under ``parent``; return terrain root."""
-    root = parent.attach_new_node("terrain-root")
-    water_patches: list[tuple[float, float, float, float]] = []
-    plains_patches: list[tuple[float, float, float, float]] = []
-    forest_patches: list[tuple[float, float, float, float]] = []
-    city_patches: list[tuple[float, float, float, float]] = []
-    prop_boxes: list[tuple[float, float, float, float, float, float, Color]] = []
-    building_boxes: list[tuple[float, float, float, float, float, float, Color]] = []
-    building_edges: list[tuple[float, float, float, float, float, float]] = []
-    window_faces: list[tuple[list[Vec3], Color]] = []
-    seed = terrain.terrain_edit_seed
+class _ChunkGeometry:
+    """Accumulated geometry for one spatial chunk of the terrain grid."""
 
-    for row in range(terrain.rows):
-        for col in range(terrain.columns):
-            cell = terrain.cells[row][col]
-            x0, y0, x1, y1 = _cell_bounds(terrain, col, row)
-            t = cell.terrain_type
-            if t == "WATER":
-                water_patches.append((x0, y0, x1, y1))
-            elif t == "FOREST":
-                forest_patches.append((x0, y0, x1, y1))
-                cell_w = min(x1 - x0, y1 - y0)
-                for u, v, scale in _tree_layout(col, row, seed):
-                    cx = x0 + (x1 - x0) * u
-                    cy = y0 + (y1 - y0) * v
-                    half = cell_w * 0.10 * scale
-                    _add_pine(prop_boxes, cx, cy, _forest_z(cx, cy), half, scale)
-            elif t == "CITY":
-                city_patches.append((x0, y0, x1, y1))
-                height = float(cell.building_height or 8.0)
-                inset = min(x1 - x0, y1 - y0) * 0.18
-                bx0, by0 = x0 + inset, y0 + inset
-                bx1, by1 = x1 - inset, y1 - inset
-                building_boxes.append((bx0, by0, bx1, by1, 0.0, height, BUILDING_COLOR))
-                building_edges.append((bx0, by0, bx1, by1, 0.0, height))
-                window_faces.extend(
+    __slots__ = (
+        "water_patches",
+        "plains_patches",
+        "forest_patches",
+        "city_patches",
+        "prop_boxes",
+        "building_boxes",
+        "building_edges",
+        "window_faces",
+    )
+
+    def __init__(self) -> None:
+        self.water_patches: list[tuple[float, float, float, float]] = []
+        self.plains_patches: list[tuple[float, float, float, float]] = []
+        self.forest_patches: list[tuple[float, float, float, float]] = []
+        self.city_patches: list[tuple[float, float, float, float]] = []
+        self.prop_boxes: list[tuple[float, float, float, float, float, float, Color]] = []
+        self.building_boxes: list[tuple[float, float, float, float, float, float, Color]] = []
+        self.building_edges: list[tuple[float, float, float, float, float, float]] = []
+        self.window_faces: list[tuple[list[Vec3], Color]] = []
+
+
+def _collect_cell(
+    chunk: _ChunkGeometry,
+    terrain: TerrainGrid,
+    col: int,
+    row: int,
+    seed: int,
+    detail: bool,
+) -> None:
+    """Append one cell's geometry to its chunk."""
+    cell = terrain.cells[row][col]
+    x0, y0, x1, y1 = _cell_bounds(terrain, col, row)
+    t = cell.terrain_type
+    if t == "WATER":
+        chunk.water_patches.append((x0, y0, x1, y1))
+    elif t == "FOREST":
+        chunk.forest_patches.append((x0, y0, x1, y1))
+        if detail:
+            cell_w = min(x1 - x0, y1 - y0)
+            for u, v, scale in _tree_layout(col, row, seed):
+                cx = x0 + (x1 - x0) * u
+                cy = y0 + (y1 - y0) * v
+                half = cell_w * 0.10 * scale
+                _add_pine(chunk.prop_boxes, cx, cy, _forest_z(cx, cy), half, scale)
+    elif t == "CITY":
+        chunk.city_patches.append((x0, y0, x1, y1))
+        for bx0, by0, bx1, by1, height in _city_buildings(
+            terrain, cell, col, row, (x0, y0, x1, y1), seed
+        ):
+            chunk.building_boxes.append(
+                (bx0, by0, bx1, by1, 0.0, height, BUILDING_COLOR)
+            )
+            if detail:
+                chunk.building_edges.append((bx0, by0, bx1, by1, 0.0, height))
+                chunk.window_faces.extend(
                     _window_faces(bx0, by0, bx1, by1, 0.0, height, col, row, seed)
                 )
-                hx = bx0 + (bx1 - bx0) * (0.25 + 0.35 * _hash01(col, row, seed, 3))
-                hy = by0 + (by1 - by0) * (0.25 + 0.35 * _hash01(col, row, seed, 5))
-                hw = min(bx1 - bx0, by1 - by0) * 0.16
-                building_boxes.append(
-                    (hx - hw, hy - hw * 0.7, hx + hw, hy + hw * 0.7, height, height + 0.55, ROOF_COLOR)
+            hx = bx0 + (bx1 - bx0) * (0.25 + 0.35 * _hash01(col, row, seed, 3))
+            hy = by0 + (by1 - by0) * (0.25 + 0.35 * _hash01(col, row, seed, 5))
+            hw = min(bx1 - bx0, by1 - by0) * 0.16
+            chunk.building_boxes.append(
+                (hx - hw, hy - hw * 0.7, hx + hw, hy + hw * 0.7, height, height + 0.55, ROOF_COLOR)
+            )
+    else:
+        chunk.plains_patches.append((x0, y0, x1, y1))
+        if detail:
+            cell_w = min(x1 - x0, y1 - y0)
+            for u, v in _scrub_layout(col, row, seed):
+                cx = x0 + (x1 - x0) * u
+                cy = y0 + (y1 - y0) * v
+                half = cell_w * 0.06
+                gz = _plains_z(cx, cy)
+                chunk.prop_boxes.append(
+                    (cx - half, cy - half, cx + half, cy + half, gz, gz + 0.22, SCRUB_COLOR)
                 )
-            else:
-                plains_patches.append((x0, y0, x1, y1))
-                cell_w = min(x1 - x0, y1 - y0)
-                for u, v in _scrub_layout(col, row, seed):
-                    cx = x0 + (x1 - x0) * u
-                    cy = y0 + (y1 - y0) * v
-                    half = cell_w * 0.06
-                    gz = _plains_z(cx, cy)
-                    prop_boxes.append(
-                        (cx - half, cy - half, cx + half, cy + half, gz, gz + 0.22, SCRUB_COLOR)
-                    )
 
-    _attach(root, _surface_batch("terrain-water", water_patches, 3, _water_z, _water_color), alpha=True)
-    _attach(root, _surface_batch("terrain-plains", plains_patches, 2, _plains_z, _plains_color))
+
+def _attach_chunk(
+    parent: NodePath, chunk: _ChunkGeometry, terrain: TerrainGrid
+) -> None:
+    """Emit one chunk's batches under ``parent``."""
+    sub = _surface_subdivision
     _attach(
-        root,
-        _surface_batch("terrain-forest-base", forest_patches, 2, _forest_z, _forest_floor_color),
+        parent,
+        _surface_batch("terrain-water", chunk.water_patches, sub(terrain, 3), _water_z, _water_color),
+        alpha=True,
     )
     _attach(
-        root,
-        _surface_batch("terrain-city-base", city_patches, 2, lambda *_: 0.02, _city_street_color),
+        parent,
+        _surface_batch("terrain-plains", chunk.plains_patches, sub(terrain, 2), _plains_z, _plains_color),
     )
-    _attach(root, _colored_box_batch("terrain-trees", prop_boxes), two_sided=True)
-    _attach(root, _colored_box_batch("terrain-buildings", building_boxes), two_sided=True)
-    _attach(root, _face_batch("terrain-windows", window_faces), alpha=True, two_sided=True)
-    edge_node = _box_edges("terrain-building-edges", building_edges, BUILDING_EDGE_COLOR)
+    _attach(
+        parent,
+        _surface_batch("terrain-forest-base", chunk.forest_patches, sub(terrain, 2), _forest_z, _forest_floor_color),
+    )
+    _attach(
+        parent,
+        _surface_batch("terrain-city-base", chunk.city_patches, sub(terrain, 2), lambda *_: 0.02, _city_street_color),
+    )
+    _attach(parent, _colored_box_batch("terrain-trees", chunk.prop_boxes), two_sided=True)
+    _attach(parent, _colored_box_batch("terrain-buildings", chunk.building_boxes), two_sided=True)
+    _attach(parent, _face_batch("terrain-windows", chunk.window_faces), alpha=True, two_sided=True)
+    edge_node = _box_edges("terrain-building-edges", chunk.building_edges, BUILDING_EDGE_COLOR)
     if edge_node is not None:
-        np = root.attach_new_node(edge_node)
+        np = parent.attach_new_node(edge_node)
         np.set_light_off()
         np.set_transparency(TransparencyAttrib.MAlpha)
         np.set_depth_offset(1)
 
-    water_np = root.find("**/terrain-water")
-    if not water_np.is_empty():
+
+def build_terrain_root(parent: NodePath, terrain: TerrainGrid) -> NodePath:
+    """Attach batched terrain meshes under ``parent``; return terrain root.
+
+    Geometry is split into spatial chunks so each GeomNode has a bounding
+    volume smaller than the map and Panda3D can frustum-cull it. A single
+    map-wide batch is always "in frustum", so a camera looking at one corner
+    of a large battlespace still pays for every triangle on it. PoC-sized
+    grids stay a single chunk (see ``TERRAIN_CHUNK_MIN_CELLS``).
+    """
+    root = parent.attach_new_node("terrain-root")
+    seed = terrain.terrain_edit_seed
+    edge = _chunk_edge_cells(terrain)
+    detail = _prop_detail(terrain)
+
+    chunks: dict[tuple[int, int], _ChunkGeometry] = {}
+    for row in range(terrain.rows):
+        for col in range(terrain.columns):
+            key = (col // edge, row // edge)
+            chunk = chunks.get(key)
+            if chunk is None:
+                chunk = chunks[key] = _ChunkGeometry()
+            _collect_cell(chunk, terrain, col, row, seed, detail)
+
+    single = len(chunks) <= 1
+    for (cx, cy), chunk in sorted(chunks.items()):
+        holder = root if single else root.attach_new_node(f"terrain-chunk-{cx}-{cy}")
+        _attach_chunk(holder, chunk, terrain)
+
+    for water_np in root.find_all_matches("**/terrain-water"):
         water_np.set_shader_auto()
         water_np.set_tag("water-anim", "1")
 

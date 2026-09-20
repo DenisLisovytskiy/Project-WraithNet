@@ -95,10 +95,15 @@ class OrbitCamera:
     _PITCH_MAX = 89.0
     _WHEEL_STEP = 8.0
 
-    def __init__(self, base, center=(50.0, 50.0, 0.0), radius=90.0) -> None:
+    def __init__(self, base, center=(50.0, 50.0, 0.0), radius=90.0, scale=1.0) -> None:
         self.base = base
         self.center = tuple(float(c) for c in center)
         self.radius = float(radius)
+        # Movement is in world units, so it has to grow with the battlespace:
+        # 55 u/s crosses the PoC map in ~2s and a 5000-unit one in 91s.
+        self.scale = max(1.0, float(scale))
+        self.move_speed = self._MOVE_SPEED * self.scale
+        self.wheel_step = self._WHEEL_STEP * self.scale
         self._default_center = self.center
         self._default_radius = self.radius
         self._pos = (0.0, 0.0, 0.0)
@@ -132,7 +137,7 @@ class OrbitCamera:
     def nudge_along_look(self, steps: float) -> None:
         """Mouse-wheel / bump along the look axis (`steps` in wheel clicks)."""
         forward, _right, _up = _look_axes(self._heading_deg, self._pitch_deg)
-        dist = float(steps) * self._WHEEL_STEP
+        dist = float(steps) * self.wheel_step
         x, y, z = self._pos
         self._pos = (
             x + forward[0] * dist,
@@ -204,7 +209,7 @@ class OrbitCamera:
         if forward_axis == 0.0 and up_axis == 0.0:
             return
         forward, _right = _ground_move_axes(self._heading_deg)
-        speed = self._MOVE_SPEED * (self._FAST_MULTIPLIER if self._key_down("fast") else 1.0)
+        speed = self.move_speed * (self._FAST_MULTIPLIER if self._key_down("fast") else 1.0)
         scale = speed * dt
         x, y, z = self._pos
         self._pos = (
@@ -227,10 +232,13 @@ class ChaseCamera:
     TraceTick.JetFrame.heading (and scene.py's billboard roll).
     """
 
-    def __init__(self, base, follow_distance=12.0, follow_height=5.0) -> None:
+    def __init__(self, base, follow_distance=12.0, follow_height=5.0, scale=1.0) -> None:
         self.base = base
-        self.follow_distance = float(follow_distance)
-        self.follow_height = float(follow_height)
+        # Jet glyphs scale with the battlespace (see viewer3d.world_scale), so
+        # a fixed 12-unit trail would sit inside the jet on a large map.
+        self.scale = max(1.0, float(scale))
+        self.follow_distance = float(follow_distance) * self.scale
+        self.follow_height = float(follow_height) * self.scale
 
     def update(self, dt: float, jet_position, jet_heading) -> None:
         cam = _camera_node(self.base)

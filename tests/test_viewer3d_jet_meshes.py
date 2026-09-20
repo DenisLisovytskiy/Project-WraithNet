@@ -6,7 +6,14 @@ import pytest
 
 pytest.importorskip("panda3d")
 
-from panda3d.core import BillboardEffect, NodePath, loadPrcFileData
+from panda3d.core import (
+    BillboardEffect,
+    ColorAttrib,
+    GeomVertexReader,
+    LineSegs,
+    NodePath,
+    loadPrcFileData,
+)
 
 loadPrcFileData("", "window-type none")
 loadPrcFileData("", "audio-library-name null")
@@ -14,6 +21,8 @@ loadPrcFileData("", "notify-level error")
 
 from viewer3d.scene import build_static_scene
 from viewer3d.textures import (
+    ENEMY,
+    FRIENDLY,
     attach_heavy_bomber,
     attach_interceptor,
     attach_jet_mesh,
@@ -22,6 +31,22 @@ from viewer3d.textures import (
 from wraithnet.trace_schemas import TraceHeader
 
 CYAN = (80 / 255, 200 / 255, 255 / 255, 1.0)
+FRAMES = ("HEAVY_BOMBER", "STRIKE_FIGHTER", "INTERCEPTOR")
+
+
+def _fill_geom(glyph: NodePath):
+    fill = glyph.find("**/sym-fill")
+    assert not fill.is_empty()
+    return fill.node().get_geoms()[0]
+
+
+def _baked_colors(glyph: NodePath) -> list[tuple[float, float, float]]:
+    reader = GeomVertexReader(_fill_geom(glyph).get_vertex_data(), "color")
+    out = []
+    while not reader.is_at_end():
+        c = reader.get_data4()
+        out.append((c[0], c[1], c[2]))
+    return out
 
 
 def _bounds(node: NodePath):
@@ -121,3 +146,55 @@ def test_scene_uses_meshes_not_jpeg_billboards():
     assert bomber.get_effect(BillboardEffect) is None
     assert fighter.get_effect(BillboardEffect) is None
     assert interceptor.get_effect(BillboardEffect) is None
+
+
+def test_jets_bake_shaded_paint_instead_of_one_flat_faction_color():
+    root = NodePath("paint")
+    for frame in FRAMES:
+        glyph = attach_jet_mesh(root, f"p-{frame}", frame, FRIENDLY)
+        colors = _baked_colors(glyph)
+        assert len(set(colors)) > 10, f"{frame} is flat-painted, not shaded"
+        lum = sorted(0.2126 * r + 0.7152 * g + 0.0722 * b for r, g, b in colors)
+        # Dark spine through lit leading edges: a real range, not near-black mush.
+        assert lum[-1] - lum[0] > 0.15, f"{frame} has no spine-to-tip ramp"
+        assert lum[len(lum) // 2] > 0.06, f"{frame} reads as an empty outline"
+
+
+def test_faction_still_reads_off_the_airframe_not_just_the_keyline():
+    root = NodePath("faction")
+    for frame in FRAMES:
+        friendly = _baked_colors(attach_jet_mesh(root, f"f-{frame}", frame, FRIENDLY))
+        hostile = _baked_colors(attach_jet_mesh(root, f"h-{frame}", frame, ENEMY))
+        green = sum(g - r for r, g, _b in friendly) / len(friendly)
+        red = sum(r - g for r, g, _b in hostile) / len(hostile)
+        assert green > 0.02, f"friendly {frame} lost its teal tint"
+        assert red > 0.02, f"hostile {frame} lost its rust tint"
+
+
+def test_fill_color_format_matches_the_keyline_sibling():
+    """A v3c4 fill beside a v3cp LineSegs outline renders red and blue swapped."""
+    segs = LineSegs("probe")
+    segs.move_to(0, 0, 0)
+    segs.draw_to(1, 0, 0)
+    keyline = segs.create().get_geoms()[0]
+    expected = keyline.get_vertex_data().get_format().get_column("color").get_numeric_type()
+    root = NodePath("fmt")
+    for frame in FRAMES:
+        fmt = _fill_geom(attach_jet_mesh(root, f"x-{frame}", frame, CYAN)).get_vertex_data()
+        assert fmt.get_format().get_column("color").get_numeric_type() == expected
+
+
+def test_a_prioritised_set_color_still_overrides_the_baked_paint():
+    """scene.py flashes jam/RTB/destroyed state via set_color on the group."""
+    root = NodePath("flash")
+    glyph = attach_jet_mesh(root, "flashy", "STRIKE_FIGHTER", FRIENDLY)
+    fill = glyph.find("**/sym-fill")
+    assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == (
+        ColorAttrib.T_vertex
+    )
+    glyph.set_color(1.0, 0.35, 1.0, 1.0, 1)  # priority 1, as scene.py does
+    assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == ColorAttrib.T_flat
+    glyph.set_color(*FRIENDLY)  # restore drops back to the baked paint
+    assert fill.get_net_state().get_attrib(ColorAttrib).get_color_type() == (
+        ColorAttrib.T_vertex
+    )

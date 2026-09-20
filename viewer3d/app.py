@@ -64,6 +64,7 @@ from viewer3d.stream_client import (
     TickEvent,
 )
 from viewer3d.trace_io import load_trace
+from viewer3d.world_scale import header_map_scale
 from wraithnet.paths import user_data_dir
 
 # view_mode transitions:
@@ -78,8 +79,30 @@ from wraithnet.paths import user_data_dir
 # collapse a 60-tick mission into ~2s of wall-clock accept times (and so the
 # TickBuffer never snap-skips to the final pair).
 LIVE_PRESENTATION_TPS = 3.0
-LIVE_TICK_SPACING_S = 1.0 / LIVE_PRESENTATION_TPS
+# Mission length in *ticks* scales with the battlespace: a jet crosses the PoC
+# map in 20 ticks and a 5000-unit one in 1000, so the same mission is ~50x more
+# ticks. Held at a flat 3 tps that is 45 minutes of watching a dot cross empty
+# terrain. Scale the rate with the map so a mission stays roughly as long to
+# watch as it always was -- time compression, not a shorter mission. Capped
+# because past ~2 ticks per 60Hz frame interpolation stops buying anything.
+LIVE_PRESENTATION_TPS_MAX = 30.0
 WATCH_MAX_BACKLOG_TICKS = 10_000
+
+
+def _compressed_spacing_s(base_tps: float, header) -> float:
+    """Seconds between presented ticks, time-compressed for this map size."""
+    tps = min(LIVE_PRESENTATION_TPS_MAX, base_tps * header_map_scale(header))
+    return 1.0 / max(tps, 1e-6)
+
+
+def live_tick_spacing_s(header) -> float:
+    """Seconds between presented ticks for a live mission on this map."""
+    return _compressed_spacing_s(LIVE_PRESENTATION_TPS, header)
+
+
+def replay_tick_spacing_s(header) -> float:
+    """Seconds between presented ticks for an offline replay on this map."""
+    return _compressed_spacing_s(1.0 / DEFAULT_REPLAY_TICK_SPACING_S, header)
 
 
 class WraithNetViewer3D(ShowBase):
@@ -156,10 +179,10 @@ class WraithNetViewer3D(ShowBase):
             self.accept("mouse1-up", self._on_editor_mouse1_up)
             self.accept("wheel_up", self._on_editor_zoom_in)
             self.accept("wheel_down", self._on_editor_zoom_out)
-            self.accept("arrow_up", lambda: self._editor_pan(0.0, 4.0))
-            self.accept("arrow_down", lambda: self._editor_pan(0.0, -4.0))
-            self.accept("arrow_left", lambda: self._editor_pan(-4.0, 0.0))
-            self.accept("arrow_right", lambda: self._editor_pan(4.0, 0.0))
+            self.accept("arrow_up", lambda: self._editor_pan_steps(0.0, 1.0))
+            self.accept("arrow_down", lambda: self._editor_pan_steps(0.0, -1.0))
+            self.accept("arrow_left", lambda: self._editor_pan_steps(-1.0, 0.0))
+            self.accept("arrow_right", lambda: self._editor_pan_steps(1.0, 0.0))
 
         self.accept("o", self._on_orbit)
         self.accept("O", self._on_orbit)
@@ -275,8 +298,21 @@ class WraithNetViewer3D(ShowBase):
             self._editor.camera.zoom_by(1 / 1.15)
 
     def _editor_pan(self, dx: float, dy: float) -> None:
+        """Pan the editor camera by ``(dx, dy)`` world units."""
         if self._editor is not None and self.view_mode == "editor":
             self._editor.camera.pan(dx, dy)
+
+    def _editor_pan_steps(self, dx: float, dy: float) -> None:
+        """Pan by ``(dx, dy)`` in units of 4% of the currently visible film.
+
+        Arrow keys have to move a consistent *fraction* of what you can see: a
+        fixed world-unit step is a quarter of the PoC map and a rounding error
+        on a 5000-unit one.
+        """
+        if self._editor is None or self.view_mode != "editor":
+            return
+        cam = self._editor.camera
+        self._editor_pan(dx * cam.film_width * 0.04, dy * cam.film_height * 0.04)
 
     def _on_escape(self) -> None:
         if self._sim_handle is not None or self._previewing_from_editor:
@@ -418,11 +454,31 @@ class WraithNetViewer3D(ShowBase):
             return
         cx, cy = header.grid_width / 2.0, header.grid_height / 2.0
         diag = math.hypot(header.grid_width, header.grid_height)
-        self._orbit = OrbitCamera(self, center=(cx, cy, 0.0), radius=max(90.0, diag * 0.75))
-        self._chase = ChaseCamera(self)
+        scale = header_map_scale(header)
+        self._orbit = OrbitCamera(
+            self, center=(cx, cy, 0.0), radius=max(90.0, diag * 0.75), scale=scale
+        )
+        self._chase = ChaseCamera(self, scale=scale)
         self._brief = MissionBriefCamera(
             self, center=(cx, cy, 0.0), radius=max(70.0, diag * 0.55)
         )
+        self._apply_lens_depth_range(diag)
+
+    def _apply_lens_depth_range(self, diag: float) -> None:
+        """Fit near/far to the battlespace.
+
+        Panda3D's default 1.0/100000 gives a 1e5 depth ratio; at the
+        thousands-of-units distances a large map is viewed from, that spends
+        almost all depth precision on the first few units and z-fights terrain
+        against ground glyphs. Scale both planes with the map instead.
+        """
+        lens = getattr(self, "camLens", None)
+        if lens is None:
+            return
+        try:
+            lens.set_near_far(max(0.1, diag * 0.0005), max(1000.0, diag * 4.0))
+        except (AttributeError, TypeError):
+            return
 
     def _on_orbit(self) -> None:
         if self.view_mode in ("live", "finished"):
@@ -493,7 +549,8 @@ class WraithNetViewer3D(ShowBase):
         self._tick_buffer.load_scheduled_ticks(
             ticks,
             t0=0.0,
-            spacing_s=DEFAULT_REPLAY_TICK_SPACING_S,
+            # Same time compression as live: a big-map replay is mostly transit.
+            spacing_s=replay_tick_spacing_s(self._header),
         )
         # Start after delay so the first segment has a next tick when possible.
         self._tick_buffer.set_presentation_time(self._tick_buffer.interp_delay_s)
@@ -688,7 +745,8 @@ class WraithNetViewer3D(ShowBase):
         # wall clock of a bursty sim finish.
         if self._live_pres_epoch is None:
             self._live_pres_epoch = now
-        t_accept = self._live_pres_epoch + float(tick.tick) * LIVE_TICK_SPACING_S
+        spacing = live_tick_spacing_s(self._header)
+        t_accept = self._live_pres_epoch + float(tick.tick) * spacing
         self._tick_buffer.push(tick, t_accept=t_accept)
         self._latest_tick = tick
         self._ticks.append(tick)

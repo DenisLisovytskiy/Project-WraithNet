@@ -94,6 +94,7 @@ from wraithnet.scenario_schema import (
 from wraithnet.tanks import TANK_FRAME_CATALOG
 from wraithnet.terrain import OutOfTerrainBoundsError, is_passable
 from wraithnet.terrain_generator import TerrainGenerationError, generate_terrain
+from viewer3d.world_scale import map_scale
 from wraithnet.terrain_paint import (
     BrushType,
     CityHeightMode,
@@ -1640,8 +1641,17 @@ class ScenarioEditor:
             return ent["unit_id"]
         return ent["target_id"]
 
-    def _nearest(self, world_pos: tuple[float, float], max_dist: float = 5.0):
+    def _nearest(self, world_pos: tuple[float, float], max_dist: float | None = None):
         best = None
+        # A fixed 5-unit pick radius is a comfortable click target on the PoC
+        # map and sub-pixel on a 5000-unit one, where a pixel is ~5 units to
+        # begin with. Scale it with the battlespace like every other
+        # world-unit interaction distance.
+        if max_dist is None:
+            max_dist = 5.0 * map_scale(
+                float(self.scenario_draft["grid_width"]),
+                float(self.scenario_draft["grid_height"]),
+            )
         best_d = max_dist
         for kind, ent in self._all_entities():
             x, y = ent["position"]
@@ -2845,12 +2855,17 @@ class ScenarioEditor:
                 self._set_banner([str(exc)])
             return
         seed = int(self.scenario_draft["terrain"].get("terrain_edit_seed", 0))
+        # Re-roll content at the draft's existing resolution; regenerating must
+        # not silently re-cell the map (and must never fall back to a fixed
+        # cell size on a large battlespace).
+        existing_cell = self.scenario_draft["terrain"].get("cell_size")
         try:
             grid = generate_terrain(
                 float(self.scenario_draft["grid_width"]),
                 float(self.scenario_draft["grid_height"]),
                 params,
                 seed=seed,
+                cell_size=float(existing_cell) if existing_cell else None,
             )
         except TerrainGenerationError as exc:
             self._set_banner([str(exc)])

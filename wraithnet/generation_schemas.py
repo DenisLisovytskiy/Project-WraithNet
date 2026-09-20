@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from wraithnet import config
 from wraithnet.config import JetFrameType, TargetType, WeaponType
+from wraithnet.generation_rng import GENERATOR_VERSION
 
 DifficultyPreset = Literal["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE", "CUSTOM"]
 FriendlyMode = Literal["AUTO_BALANCED", "RANDOM_LEGAL", "CUSTOM_ROSTER"]
@@ -261,7 +262,7 @@ class GenerationParameters(BaseModel):
 
 class GenerationMetadata(BaseModel):
     # Phase 35 emits 2; v1 provenance remains loadable for older scenarios.
-    generator_version: int = Field(default=3, ge=1)
+    generator_version: int = Field(default=GENERATOR_VERSION, ge=1)
     seed: int
     preset: DifficultyPreset
     resolved_parameters: GenerationParameters
