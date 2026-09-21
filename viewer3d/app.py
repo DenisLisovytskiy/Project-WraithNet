@@ -161,6 +161,7 @@ class WraithNetViewer3D(ShowBase):
         self._pres_wall_last: float | None = None
         self._live_pres_epoch: float | None = None
         self._sampled_poses: dict[str, SampledPose] = {}
+        self._fullscreen = False
         self._orbit = OrbitCamera(self)
         self._chase = ChaseCamera(self)
         self._brief = MissionBriefCamera(self)
@@ -205,6 +206,8 @@ class WraithNetViewer3D(ShowBase):
             self.accept(event, self._on_camera_zoom_out)
         self.accept("f3", self._toggle_presentation_debug)
         self.accept("F3", self._toggle_presentation_debug)
+        self.accept("f11", self._toggle_fullscreen)
+        self.accept("F11", self._toggle_fullscreen)
         self.accept("escape", self._on_escape)
         # Always bind wheel to the shared zoom router (editor + live).
         for event in ("wheel_up", "wheelup"):
@@ -261,6 +264,26 @@ class WraithNetViewer3D(ShowBase):
     def _maximize_window_task(self, task):
         self._maximize_window()
         return task.done
+
+    def _toggle_fullscreen(self) -> None:
+        """F11 — toggle borderless fullscreen that covers taskbar and snap overlays."""
+        if self.win is None:
+            return
+        self._fullscreen = not self._fullscreen
+        if self._fullscreen:
+            pipe = self.pipe
+            width = int(pipe.get_display_width()) if pipe is not None else 0
+            height = int(pipe.get_display_height()) if pipe is not None else 0
+            props = WindowProperties()
+            props.set_fullscreen(True)
+            if width > 0 and height > 0:
+                props.set_size(width, height)
+            self.win.request_properties(props)
+        else:
+            props = WindowProperties()
+            props.set_fullscreen(False)
+            self.win.request_properties(props)
+            self._maximize_window()
 
     def _editor_map_world_pos(self):
         if self._editor is None or self.view_mode != "editor":
