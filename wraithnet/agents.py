@@ -32,6 +32,7 @@ from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
 from wraithnet.geometry import bearing_to, is_in_firing_arc
 from wraithnet.weapons_release import (
+    attack_altitude,
     needed_attitude_for_release,
     release_attitude_ok,
     weapon_has_attitude_envelope,
@@ -81,6 +82,7 @@ def _threat_contacts_from_observation(obs: Observation) -> list[ThreatContact]:
                 kind="GUN_AAA",
                 position=tuple(getattr(gun, "position", obs.current_position)),
                 altitude=0.0,
+                altitude_ceiling=getattr(gun, "altitude_ceiling", None),
                 observed_tick=int(obs.tick),
                 confidence=1.0,
                 source="DIRECT",
@@ -89,6 +91,36 @@ def _threat_contacts_from_observation(obs: Observation) -> list[ThreatContact]:
             )
         )
     return contacts
+
+
+def transit_altitude(obs: Observation, known_targets: list[TargetInfo]) -> float:
+    """Tactical altitude band for transit/egress from the known threat picture.
+
+    Known guns: climb over the highest ceiling (guns kill low). Approaching a
+    live SAM site: go low — the world floor holds terrain clearance and
+    surface radar loses jets below SAM_RADAR_MIN_ENGAGEMENT_AGL. Otherwise
+    cruise, where sensors see over buildings.
+    """
+    frame = config.JET_FRAME_CATALOG[obs.frame_type]
+    cruise = float(frame.cruise_altitude)
+    ceilings = [
+        float(g.altitude_ceiling)
+        for g in obs.observed_gun_threats
+        if g.altitude_ceiling is not None
+    ]
+    if ceilings:
+        return max(cruise, max(ceilings) + config.GUN_CEILING_MARGIN)
+    # Start the descent early enough to be under the clutter floor on entry.
+    descent_reach = frame.max_speed * math.ceil(cruise / frame.max_climb_per_tick)
+    low_radius = config.WEAPON_CATALOG["SAM_RADAR"].range + descent_reach
+    if any(
+        t.target_type == "SAM_SITE"
+        and t.hp_remaining > 0
+        and math.dist(obs.current_position, t.position) <= low_radius
+        for t in known_targets
+    ):
+        return 0.0
+    return cruise
 
 
 def compute_bid_proposals(
@@ -128,6 +160,7 @@ def compute_bid_proposals(
         threat_contacts=contacts,
         context_hash=context_hash or "",
         map_diagonal=float(observation.map_diagonal),
+        planned_altitude=transit_altitude(observation, list(observation.known_targets)),
     )
 
 
@@ -894,7 +927,23 @@ class JetAgentRuntime:
         return threats[0]
 
     def _cruise_altitude(self, obs: Observation) -> float:
-        return float(config.JET_FRAME_CATALOG[obs.frame_type].cruise_altitude)
+        """Transit/egress altitude (tactical band, see ``transit_altitude``)."""
+        return transit_altitude(obs, self.effective_known_targets())
+
+    def _run_in_altitude(
+        self, obs: Observation, weapon: config.WeaponSpec, distance: float
+    ) -> float:
+        """Stay at transit, then descend just in time to release at the target."""
+        transit = self._cruise_altitude(obs)
+        attack = attack_altitude(weapon, transit)
+        if attack >= transit:
+            return transit
+        frame = config.JET_FRAME_CATALOG[obs.frame_type]
+        descent_ticks = math.ceil(
+            max(0.0, obs.current_altitude - attack) / frame.max_climb_per_tick
+        )
+        start = weapon.range + frame.max_speed * (descent_ticks + 2)
+        return attack if distance <= start else transit
 
     def _with_defense(self, intent: ActionIntent, obs: Observation) -> ActionIntent:
         """Attach FLARE/NOTCH alongside the primary task intent when threatened.
@@ -1003,6 +1052,8 @@ class JetAgentRuntime:
         directly_sensed = any(t.target_id == target.target_id for t in obs.known_targets)
         weapon = config.WEAPON_CATALOG[self.committed_weapon_type]
         bearing = bearing_to(obs.current_position, target.position)
+        # Transit high/low by threat picture; unguided weapons descend late.
+        run_in_alt = self._run_in_altitude(obs, weapon, distance)
         gated = weapon_has_attitude_envelope(weapon)
         delivery = (
             needed_attitude_for_release(
@@ -1024,6 +1075,7 @@ class JetAgentRuntime:
                     weapon,
                     pitch_deg=obs.current_pitch_deg,
                     roll_deg=obs.current_roll_deg,
+                    altitude=obs.current_altitude,
                 )
                 if not ok_att:
                     # Phase 53: roll upright / pitch legally before STRIKE/LAUNCH.
@@ -1037,6 +1089,7 @@ class JetAgentRuntime:
                         desired_heading=bearing,
                         desired_pitch_deg=att.desired_pitch_deg,
                         desired_roll_deg=att.desired_roll_deg,
+                        desired_altitude=run_in_alt,
                     )
                     return self._with_defense(intent, obs)
                 self.committed_payload -= 1
@@ -1067,6 +1120,7 @@ class JetAgentRuntime:
                 "tick": obs.tick,
                 "action_type": "IDLE",
                 "desired_heading": bearing,
+                "desired_altitude": run_in_alt,
             }
             if delivery is not None:
                 bear_kwargs["desired_pitch_deg"] = delivery.desired_pitch_deg
@@ -1083,7 +1137,7 @@ class JetAgentRuntime:
                 target_position=target.position,
                 desired_heading=bearing,
                 desired_pitch_deg=0.0,
-                desired_altitude=cruise_alt,
+                desired_altitude=run_in_alt,
             )
             return self._with_defense(intent, obs)
         # Close on a release gate just inside weapon range (not the target
@@ -1105,7 +1159,7 @@ class JetAgentRuntime:
             target_position=gate,
             desired_heading=bearing,
             desired_pitch_deg=0.0,
-            desired_altitude=cruise_alt,
+            desired_altitude=run_in_alt,
         )
         return self._with_defense(intent, obs)
 

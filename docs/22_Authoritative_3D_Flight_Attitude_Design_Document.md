@@ -125,6 +125,8 @@ Each movement tick after attitude update:
 
 * **Primary (combat cruise):** agents set `desired_pitch` to climb/dive; world integrates altitude.
 * **Recovery / RTB / carrier:** existing code paths may still set `desired_altitude` (e.g. deck height). When `desired_altitude` is set for recovery, world may synthesize a pitch toward that altitude **or** bypass pitch and ease altitude directly — Phase 51 must choose **one** rule, document it, and cover it with tests. Recommendation: **recovery override** may ease altitude directly while forcing pitch toward level on short final; combat path uses pitch.
+* **Level flight (tactical altitude):** a non-zero desired or held pitch uses the pitch path. With pitch level (desired pitch 0 or unset), the world eases toward `desired_altitude` at `max_climb_per_tick`, so agent altitude bands (transit over gun ceilings, low under SAM radar, descent for unguided release) take effect.
+* **Terrain safety (always, after either path):** altitude never drops below the obstacle under the jet (roof / treetop / ground) plus `TERRAIN_CLEARANCE`, and a distance-discounted look-ahead (`terrain.lookahead_required_altitude`) starts rate-limited climbs early enough to clear any reachable obstacle. Only final approach to land is exempt. A jet that ends up below an obstacle anyway is destroyed and logged in `crash_log` (safety net).
 
 ### 5.4 Coordinated turn (optional assist, not full aero)
 

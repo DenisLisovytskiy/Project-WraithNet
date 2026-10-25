@@ -248,6 +248,7 @@ def test_jdam_deals_at_least_one_damage_through_tank_armor():
     assert tank.armor >= 1
     hp0 = tank.hp
     jet = model.jets["Jet_1"]
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     model._apply_strike(jet, "Red_1", "JDAM")
     assert tank.hp == hp0 - 1
     assert jet.payload["JDAM"] == 1
@@ -363,6 +364,7 @@ def test_jet_jdam_strike_damages_tank():
     )
     model = WraithNetModel(seed=0, scenario=scenario_from_data(data))
     jet = model.jets["Jet_1"]
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     before = model.tanks["Red_1"].hp
     model._apply_strike(jet, "Red_1", "JDAM")
     assert model.tanks["Red_1"].hp == before - 1

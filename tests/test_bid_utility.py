@@ -10,6 +10,7 @@ from wraithnet.bid_schemas import AwardContext, ThreatContact
 from wraithnet.bid_utility import (
     build_bid_proposals,
     estimate_threat_exposure,
+    exposure_from_threat_contacts,
     flare_readiness,
     gun_risk,
     ir_risk,
@@ -33,6 +34,7 @@ def _proposals(
     contacts: list[ThreatContact],
     context_hash: str = "ctx",
     payload: dict[str, int] | None = None,
+    planned_altitude: float | None = None,
 ):
     return build_bid_proposals(
         bidder_id=bidder,
@@ -56,6 +58,7 @@ def _proposals(
         hp_max=3,
         threat_contacts=contacts,
         context_hash=context_hash,
+        planned_altitude=planned_altitude,
     )
 
 
@@ -240,3 +243,52 @@ def test_calibration_smoke_threat_flavors_no_nan():
             _finite(award.award_score)
             covered = sum(int(p.expected_damage_milli) for p in award.accepted)
             assert covered >= 2000
+
+
+def _gun(ceiling: float | None) -> list[ThreatContact]:
+    return [
+        ThreatContact(
+            threat_id="g1",
+            kind="GUN_AAA",
+            position=(12.0, 12.0),
+            altitude_ceiling=ceiling,
+            observed_tick=1,
+        )
+    ]
+
+
+def test_gun_ceiling_zeroes_risk_above_planned_altitude():
+    # AGM65 has no release-altitude cap, so it really launches at planned altitude.
+    agm = {"AGM65": 2}
+    below = _proposals(
+        bidder="J1", flares=6, contacts=_gun(18.0), payload=agm, planned_altitude=10.0
+    )[0]
+    above = _proposals(
+        bidder="J1", flares=6, contacts=_gun(18.0), payload=agm, planned_altitude=25.0
+    )[0]
+    assert below.risk.gun_risk > 0.0
+    assert above.risk.gun_risk == 0.0
+    assert above.utility.total > below.utility.total
+    assert above.plan.launch_altitude == 25.0
+
+
+def test_jdam_descends_under_gun_ceiling_and_keeps_gun_risk():
+    # JDAM must drop to max_release_altitude - margin (13) even over an 18 ceiling.
+    plan = _proposals(bidder="J1", flares=6, contacts=_gun(18.0), planned_altitude=25.0)[0]
+    assert plan.weapon_type == "JDAM"
+    assert plan.risk.gun_risk > 0.0
+    assert plan.plan.launch_altitude == 13.0
+
+
+def test_gun_without_ceiling_unaffected_by_planned_altitude():
+    low = _proposals(bidder="J1", flares=6, contacts=_gun(None), planned_altitude=10.0)[0]
+    high = _proposals(bidder="J1", flares=6, contacts=_gun(None), planned_altitude=40.0)[0]
+    assert high.risk.gun_risk == low.risk.gun_risk > 0.0
+
+
+def test_planned_altitude_default_keeps_altitude_blind_exposure():
+    default = _proposals(bidder="J1", flares=6, contacts=_gun(5.0))[0]
+    assert default.risk.gun_risk > 0.0
+    assert default.plan.launch_altitude == 8.0
+    assert exposure_from_threat_contacts(_gun(5.0)) == (0.0, 0.0, 1.0)
+    assert exposure_from_threat_contacts(_gun(5.0), planned_altitude=8.0) == (0.0, 0.0, 0.0)

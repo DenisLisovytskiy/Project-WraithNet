@@ -25,16 +25,25 @@ def release_attitude_ok(
     *,
     pitch_deg: float,
     roll_deg: float,
+    altitude: float | None = None,
 ) -> tuple[bool, str | None]:
     """Return ``(ok, reason_code)``. ``reason_code`` is None when ok.
 
     Stable rejection codes:
     ``outside_release_attitude_roll`` |
     ``outside_release_attitude_pitch`` |
-    ``jet_inverted_release_forbidden``
+    ``jet_inverted_release_forbidden`` |
+    ``above_max_release_altitude``
 
     Inverted uses the Phase 50 signed-roll convention: ``|roll| > 90``.
+    ``altitude`` None skips the altitude gate (attitude-only callers).
     """
+    if (
+        altitude is not None
+        and weapon.max_release_altitude is not None
+        and altitude > weapon.max_release_altitude
+    ):
+        return False, "above_max_release_altitude"
     roll = normalize_roll_deg(roll_deg)
     if weapon.requires_upright and abs(roll) > 90.0:
         return False, "jet_inverted_release_forbidden"
@@ -45,6 +54,17 @@ def release_attitude_ok(
         if abs(pitch_deg) > weapon.max_release_abs_pitch_deg:
             return False, "outside_release_attitude_pitch"
     return True, None
+
+
+#: Fly this far under ``max_release_altitude`` so ease overshoot still releases.
+RELEASE_ALTITUDE_MARGIN: float = 2.0
+
+
+def attack_altitude(weapon: WeaponSpec, transit_altitude: float) -> float:
+    """Altitude for the attack run: transit unless the weapon must come down."""
+    if weapon.max_release_altitude is None:
+        return transit_altitude
+    return min(transit_altitude, weapon.max_release_altitude - RELEASE_ALTITUDE_MARGIN)
 
 
 def weapon_has_attitude_envelope(weapon: WeaponSpec) -> bool:

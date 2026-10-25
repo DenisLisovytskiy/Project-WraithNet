@@ -67,6 +67,8 @@ class JetFrame(BaseModel):
     fuel: float = 0.0
     # Phase 37: authoritative altitude when present; None → legacy viewer cosmetics.
     altitude: Optional[float] = None
+    # Height above the roof/treetop/ground under the jet; None in older traces.
+    relative_altitude: Optional[float] = None
     # Phase 54: authoritative attitude (sim conventions). Defaults keep legacy
     # traces loadable as wings-level / pitch-0 without a version bump.
     pitch_deg: float = 0.0

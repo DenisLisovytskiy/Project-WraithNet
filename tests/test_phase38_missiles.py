@@ -298,6 +298,7 @@ def test_decide_intent_emits_launch_for_guided_strike_for_direct():
         payload={"JDAM": 3},
         known_targets=[bunker],
         current_heading=0.0,
+        current_altitude=8.0,  # JDAM releases at or below max_release_altitude
     )
     runtime.set_observation(obs2)
     runtime.refresh_world_view()

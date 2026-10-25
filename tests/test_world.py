@@ -241,6 +241,7 @@ def test_strike_in_range_damages_and_logs():
     jet = model.jets["Jet_1"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     intent = ActionIntent(
         agent_id="Jet_1",
         tick=0,
@@ -262,6 +263,7 @@ def test_strike_coasts_forward_instead_of_hovering():
     jet = model.jets["Jet_1"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     jet.heading = 90.0  # +x
     release = tuple(jet.pos)
     intent = ActionIntent(
@@ -308,6 +310,7 @@ def test_strike_suitable_jdam_on_hardened_bunker():
     jet = model.jets["Jet_2"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     jdam_before = jet.payload["JDAM"]
     intent = ActionIntent(
         agent_id="Jet_2",
@@ -1089,6 +1092,7 @@ def test_strike_damage_per_hit_greater_than_one_floors_at_zero():
     )
     jet = model.jets["Gunner"]
     target = model.targets["Bunker"]
+    jet.altitude = 8.0  # GUN_POD releases at or below max_release_altitude
     damage = config.WEAPON_CATALOG["GUN_POD"].damage_per_hit
     assert damage > 1
     model._apply_strike(jet, "Bunker", "GUN_POD")

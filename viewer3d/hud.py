@@ -275,6 +275,16 @@ def _kv_line(label: str, value: str, width: int = 14) -> str:
     return f"{label:<{width}}{value}"
 
 
+def _alt_text(frame) -> str:
+    """`` ALT z AGL h`` when the trace carries altitude; empty for old traces."""
+    alt = getattr(frame, "altitude", None)
+    if alt is None:
+        return ""
+    agl = getattr(frame, "relative_altitude", None)
+    text = f" ALT {alt:>2.0f}"
+    return text if agl is None else f"{text} AGL {agl:>2.0f}"
+
+
 def _hp_tone(hp: float, hp_max: float):
     frac = hp / hp_max if hp_max > 0 else 0.0
     if frac <= 0.34:
@@ -827,7 +837,7 @@ class Hud:
             hp_max, cap = self._jet_limits(header, frame)
             jet_lines.append(
                 f"  {frame.agent_id}  HP {frame.hp:.0f}/{hp_max:.0f}  "
-                f"FUEL {frame.fuel:.0f}/{cap:.0f}"
+                f"FUEL {frame.fuel:.0f}/{cap:.0f}{_alt_text(frame)}"
             )
         self._set_force("\n".join(counts), "\n".join(counts + jet_lines))
         used = self._fill_jet_rows(header, frames)
@@ -853,7 +863,8 @@ class Hud:
             row.set_key(frame.agent_id)
             row.key["text_fg"] = JET_PALETTE[index % len(JET_PALETTE)]
             row.set_value(
-                f"HP {frame.hp:>2.0f}/{hp_max:<2.0f} FUEL {frame.fuel:>4.0f}/{cap:<4.0f}",
+                f"HP {frame.hp:>2.0f}/{hp_max:<2.0f} FUEL {frame.fuel:>4.0f}/{cap:<4.0f}"
+                f"{_alt_text(frame)}",
                 fg=_hp_tone(float(frame.hp), hp_max),
             )
             row.show()

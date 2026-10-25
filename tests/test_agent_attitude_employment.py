@@ -110,7 +110,7 @@ def test_wings_level_legal_envelope_strikes():
             targets=[target],
             pitch_deg=0.0,
             roll_deg=0.0,
-        )
+        ).model_copy(update={"current_altitude": 8.0})  # JDAM releases at or below max_release_altitude
     )
     jet.refresh_world_view()
     jet._commit("Bunker", 2, "JDAM")
@@ -227,6 +227,8 @@ def test_inverted_world_integration_rolls_then_can_release():
     jet.pitch_deg = 0.0
     jet.roll_deg = 170.0
     jet.desired_roll_deg = None
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
+    jet.desired_altitude = 10.0
     jdam_before = jet.payload["JDAM"]
     hp_before = target.hp_remaining
 

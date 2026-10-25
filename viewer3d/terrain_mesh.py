@@ -460,7 +460,8 @@ def _city_buildings(
                 height = base_height
             else:
                 jitter = _hash01(col * CITY_BLOCKS_MAX + i, row * CITY_BLOCKS_MAX + j, seed, 13)
-                height = base_height * (0.55 + 0.90 * jitter)
+                # Never taller than the sim's building: jets clear the real roof.
+                height = base_height * (0.55 + 0.45 * jitter)
             out.append((bx0 + inset, by0 + inset, bx1 - inset, by1 - inset, height))
     return out
 

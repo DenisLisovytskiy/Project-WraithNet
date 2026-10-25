@@ -113,7 +113,12 @@ from wraithnet.schemas import (
     TargetInfo,
 )
 from wraithnet.taxonomy import are_hostile, reject_engagement, target_class_for_target_type
-from wraithnet.terrain import TerrainGrid, has_line_of_sight
+from wraithnet.terrain import (
+    TerrainGrid,
+    has_line_of_sight,
+    lookahead_required_altitude,
+    obstacle_height_at,
+)
 
 # Phase 37 F — six staged tick phases (bridge may call these individually).
 _STAGE_PRE_MOVE_OBS = "pre_move_obs"
@@ -355,6 +360,8 @@ class WraithNetModel(mesa.Model):
         self.tanks: dict[str, TankState] = {}
         self.carrier_recoveries: int = 0
         self.strike_log: list[dict] = []  # ground truth for Phase 5 validation
+        # Controlled flight into obstacles; floor + look-ahead keep this empty.
+        self.crash_log: list[dict] = []
         self.missiles: list[MissileState] = []
         self._next_missile_seq: int = 0
         self.missile_events: list[dict] = []  # launch/impact/flare/notch audit trail
@@ -832,6 +839,17 @@ class WraithNetModel(mesa.Model):
             ox, oy = jet._pos_at_move_start
             jet.velocity_xy = (float(jet.pos[0]) - ox, float(jet.pos[1]) - oy)
             self._update_recovery_phase(jet)
+            if self.relative_altitude(jet) < -1e-9:
+                # Below the roof/treetop it is over: destroyed like any loss.
+                self.crash_log.append(
+                    {
+                        "tick": self.tick,
+                        "agent_id": jet.agent_id,
+                        "altitude": float(jet.altitude),
+                        "obstacle_height": self._obstacle_below(jet),
+                    }
+                )
+                jet.hp = 0
 
     def stage_post_move_obs(
         self, intents: dict[str, ActionIntent] | None = None
@@ -1355,7 +1373,7 @@ class WraithNetModel(mesa.Model):
         ``consume_ammo`` is called with no args after validation succeeds and
         must decrement the shooter's magazine.
         """
-        reason = validate_launch(req)
+        reason = validate_launch(req) or self._radar_clutter_reason(req)
         if reason is not None:
             return LaunchAcknowledgement(
                 accepted=False, missile_id=None, reason=reason
@@ -2499,19 +2517,63 @@ class WraithNetModel(mesa.Model):
         self.space.move_agent(jet, new_pos)
         jet.distance_traveled += moved
 
+    def _radar_clutter_reason(self, req: LaunchRequest) -> str | None:
+        """Surface radar cannot hold a jet flying below the clutter floor."""
+        jet = self.jets.get(req.target_id)
+        if jet is None or req.shooter_id in self.jets:
+            return None
+        if config.WEAPON_CATALOG[req.weapon_type].guidance != "RADAR":
+            return None
+        if self.relative_altitude(jet) < config.SAM_RADAR_MIN_ENGAGEMENT_AGL:
+            return "below_radar_clutter_floor"
+        return None
+
+    def _is_landing(self, jet: JetAgent) -> bool:
+        """Final approach: the only time a jet may descend below clearance."""
+        if not jet.is_rtb or jet.recovery_abort:
+            return False
+        if self._is_carrier_base(jet.active_base_id):
+            # Carrier recovery may descend to RECOVERY_ALTITUDE / deck.
+            return jet.recovery_phase == "APPROACH"
+        return (
+            math.dist(jet.pos, self._primary_base_xy(jet))
+            <= config.RTB_LANDING_RADIUS
+        )
+
+    def _obstacle_below(self, jet: JetAgent) -> float:
+        return obstacle_height_at(
+            self.terrain, (float(jet.pos[0]), float(jet.pos[1]))
+        )
+
+    def relative_altitude(self, jet: JetAgent) -> float:
+        """Height above whatever is directly under the jet (roof/treetop/ground)."""
+        return float(jet.altitude) - self._obstacle_below(jet)
+
     def _altitude_floor(self, jet: JetAgent) -> float:
+        if self._is_landing(jet):
+            return self._obstacle_below(jet)
         frame = config.JET_FRAME_CATALOG[jet.frame_type]
-        if jet.is_rtb and not jet.recovery_abort:
-            base_id = jet.active_base_id
-            if self._is_carrier_base(base_id):
-                # Carrier recovery may descend to RECOVERY_ALTITUDE / deck.
-                return 0.0
-            near_base = (
-                math.dist(jet.pos, self._primary_base_xy(jet))
-                <= config.RTB_LANDING_RADIUS
+        return max(
+            frame.min_combat_altitude,
+            self._obstacle_below(jet) + config.TERRAIN_CLEARANCE,
+        )
+
+    def _apply_terrain_avoidance(self, jet: JetAgent, alt_before: float) -> None:
+        """Climb early (rate-limited) for obstacles the jet could reach soon."""
+        if self._is_landing(jet):
+            return
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        need = lookahead_required_altitude(
+            self.terrain,
+            (float(jet.pos[0]), float(jet.pos[1])),
+            reach_per_tick=frame.max_speed,
+            climb_per_tick=frame.max_climb_per_tick,
+            clearance=config.TERRAIN_CLEARANCE,
+        )
+        if jet.altitude < need:
+            jet.altitude = max(
+                jet.altitude, min(need, alt_before + frame.max_climb_per_tick)
             )
-            return 0.0 if near_base else frame.min_combat_altitude
-        return frame.min_combat_altitude
 
     def _apply_altitude(self, jet: JetAgent) -> None:
         """Ease altitude toward desired_altitude (recovery / wings-level compat)."""
@@ -2546,13 +2608,16 @@ class WraithNetModel(mesa.Model):
         * Wings-level (pitch≈0, no pitch intent): legacy ``desired_altitude``
           ease so existing PoC / altitude tests stay compatible.
         """
+        alt_before = float(jet.altitude)
         if self._uses_recovery_altitude_override(jet):
             self._apply_altitude(jet)
-            return
-        if jet.desired_pitch_deg is not None or abs(jet.pitch_deg) > 1e-9:
+        elif (
+            jet.desired_pitch_deg is not None and abs(jet.desired_pitch_deg) > 1e-9
+        ) or abs(jet.pitch_deg) > 1e-9:
             self._apply_pitch_coupled_altitude(jet)
-            return
-        self._apply_altitude(jet)
+        else:
+            self._apply_altitude(jet)
+        self._apply_terrain_avoidance(jet, alt_before)
 
     def _jet_release_attitude_reason(
         self, jet: JetAgent, weapon_type: str
@@ -2563,7 +2628,7 @@ class WraithNetModel(mesa.Model):
             return "unknown_weapon"
         pose = self._weapon_release_pose(jet)
         ok, reason = release_attitude_ok(
-            weapon, pitch_deg=pose[4], roll_deg=pose[5]
+            weapon, pitch_deg=pose[4], roll_deg=pose[5], altitude=pose[2]
         )
         return reason if not ok else None
 

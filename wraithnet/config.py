@@ -262,6 +262,10 @@ class WeaponSpec:
 
     max_release_abs_pitch_deg: float | None = None
 
+    # Unguided deliveries must come down to this altitude to release, which
+    # pulls attack runs into AAA reach (None = release from any altitude).
+    max_release_altitude: float | None = None
+
     requires_upright: bool = False  # reject |roll| > 90° when True
 
 
@@ -324,6 +328,8 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
         max_release_abs_roll_deg=45.0,
 
         max_release_abs_pitch_deg=30.0,
+
+        max_release_altitude=15.0,
 
     ),
 
@@ -425,6 +431,8 @@ WEAPON_CATALOG: dict[WeaponType, WeaponSpec] = {
         max_release_abs_roll_deg=90.0,
 
         max_release_abs_pitch_deg=45.0,
+
+        max_release_altitude=10.0,
 
     ),
 
@@ -981,6 +989,18 @@ RTB_FUEL_SAFETY_MARGIN: float = 1.2
 # zone" against SAMs.
 
 RTB_LANDING_RADIUS: float = 2.0
+
+# Minimum height above the obstacle under a jet (building roof, treetops,
+# ground). The world enforces it with a look-ahead climb; dipping below the
+# obstacle itself is a crash.
+TERRAIN_CLEARANCE: float = 3.0
+
+# Surface-launched radar missiles lose jets below this relative altitude in
+# ground clutter: flying low beats radar SAMs, flying high beats guns.
+SAM_RADAR_MIN_ENGAGEMENT_AGL: float = 6.0
+
+# Agent altitude tactics: transit this far above the highest known gun ceiling.
+GUN_CEILING_MARGIN: float = 3.0
 
 # --- Carrier recovery (Phase 40; catalog constants, not viewer cosmetics) ---
 

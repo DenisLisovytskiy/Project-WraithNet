@@ -178,7 +178,9 @@ def test_decide_intent_strikes_when_narrow_arc_weapon_is_in_arc():
     broker = MessageBroker()
     jet = JetAgentRuntime("Gunner", broker)
     target = _bunker()
-    jet.set_observation(_gunner_obs((50.0, 50.0), 90.0, {"GUN_POD": 1}, [target]))
+    # GUN_POD releases at or below max_release_altitude
+    obs = _gunner_obs((50.0, 50.0), 90.0, {"GUN_POD": 1}, [target])
+    jet.set_observation(obs.model_copy(update={"current_altitude": 8.0}))
     jet.refresh_world_view()
     jet._commit("Bunker", 2, "GUN_POD")
     intent = jet.decide_intent()
@@ -241,6 +243,7 @@ def test_agents_and_world_agree_on_firing_arc_gate():
     jet = model.jets["Gunner"]
     target = model.targets["Bunker"]
     weapon = config.WEAPON_CATALOG["GUN_POD"]
+    jet.altitude = 8.0  # GUN_POD releases at or below max_release_altitude
     cases = [
         ((50.0 + edge_dx, 50.0 + dy), 0.0, True),
         ((50.0 + out_dx, 50.0 + dy), 0.0, False),

@@ -111,6 +111,7 @@ def build_trace_tick(
                 heading=float(jet.heading),
                 fuel=max(0.0, float(jet.fuel)),
                 altitude=float(getattr(jet, "altitude", config.JET_COMBAT_ALTITUDE)),
+                relative_altitude=model.relative_altitude(jet),
                 pitch_deg=float(getattr(jet, "pitch_deg", 0.0)),
                 roll_deg=float(getattr(jet, "roll_deg", 0.0)),
                 flares_remaining=int(getattr(jet, "flares_remaining", 0)),
