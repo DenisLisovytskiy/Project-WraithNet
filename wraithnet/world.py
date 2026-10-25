@@ -113,6 +113,7 @@ from wraithnet.schemas import (
     TargetInfo,
 )
 from wraithnet.taxonomy import are_hostile, reject_engagement, target_class_for_target_type
+from wraithnet.altitude_tactics import climb_rate
 from wraithnet.terrain import (
     TerrainGrid,
     has_line_of_sight,
@@ -362,6 +363,7 @@ class WraithNetModel(mesa.Model):
         self.strike_log: list[dict] = []  # ground truth for Phase 5 validation
         # Controlled flight into obstacles; floor + look-ahead keep this empty.
         self.crash_log: list[dict] = []
+        self.altitude_rules = self._scenario.altitude_rules
         self.missiles: list[MissileState] = []
         self._next_missile_seq: int = 0
         self.missile_events: list[dict] = []  # launch/impact/flare/notch audit trail
@@ -727,7 +729,9 @@ class WraithNetModel(mesa.Model):
             if self._uses_recovery_altitude_override(jet):
                 jet.desired_pitch_deg = 0.0
             else:
-                jet.desired_pitch_deg = intent.desired_pitch_deg
+                jet.desired_pitch_deg = self._autopilot_pitch(
+                    jet, intent.desired_pitch_deg
+                )
             jet.desired_roll_deg = intent.desired_roll_deg
             self._apply_attitude(jet)
 
@@ -2524,7 +2528,7 @@ class WraithNetModel(mesa.Model):
             return None
         if config.WEAPON_CATALOG[req.weapon_type].guidance != "RADAR":
             return None
-        if self.relative_altitude(jet) < config.SAM_RADAR_MIN_ENGAGEMENT_AGL:
+        if self.relative_altitude(jet) < self.altitude_rules.sam_radar_min_engagement_agl:
             return "below_radar_clutter_floor"
         return None
 
@@ -2555,25 +2559,76 @@ class WraithNetModel(mesa.Model):
         frame = config.JET_FRAME_CATALOG[jet.frame_type]
         return max(
             frame.min_combat_altitude,
-            self._obstacle_below(jet) + config.TERRAIN_CLEARANCE,
+            self._obstacle_below(jet) + self.altitude_rules.terrain_clearance,
         )
 
-    def _apply_terrain_avoidance(self, jet: JetAgent, alt_before: float) -> None:
-        """Climb early (rate-limited) for obstacles the jet could reach soon."""
+    def _terrain_required_altitude(self, jet: JetAgent) -> float:
+        """Altitude to hold now so a flown (pitch-limited) climb clears terrain.
+
+        Lag is the time to rotate from the current nose angle to full climb;
+        a nose-down jet also keeps sinking for part of it, so add that loss.
+        """
         if self._is_landing(jet):
-            return
+            return 0.0
         frame = config.JET_FRAME_CATALOG[jet.frame_type]
-        need = lookahead_required_altitude(
+        rate = frame.pitch_rate_deg_per_tick
+        lag = math.ceil(max(0.0, frame.pitch_limit_deg - jet.pitch_deg) / rate)
+        sink = 0.0
+        if jet.pitch_deg < 0.0:
+            sink = (
+                frame.max_speed
+                * math.sin(math.radians(-jet.pitch_deg))
+                * math.ceil(-jet.pitch_deg / rate)
+            )
+        return sink + lookahead_required_altitude(
             self.terrain,
             (float(jet.pos[0]), float(jet.pos[1])),
             reach_per_tick=frame.max_speed,
-            climb_per_tick=frame.max_climb_per_tick,
-            clearance=config.TERRAIN_CLEARANCE,
+            climb_per_tick=climb_rate(frame),
+            clearance=self.altitude_rules.terrain_clearance,
+            lag_ticks=lag,
         )
+
+    def _min_overflight_altitude(
+        self, jet: JetAgent, position: tuple[float, float]
+    ) -> float:
+        """Lowest altitude ``jet``'s airframe can hold, level, over ``position``."""
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        return max(
+            frame.min_combat_altitude,
+            lookahead_required_altitude(
+                self.terrain,
+                (float(position[0]), float(position[1])),
+                reach_per_tick=frame.max_speed,
+                climb_per_tick=climb_rate(frame),
+                clearance=self.altitude_rules.terrain_clearance,
+                lag_ticks=math.ceil(
+                    frame.pitch_limit_deg / frame.pitch_rate_deg_per_tick
+                ),
+            ),
+        )
+
+    def _autopilot_pitch(self, jet: JetAgent, commanded: float | None) -> float | None:
+        """Altitude changes are flown with the nose, never slid vertically.
+
+        Below the terrain look-ahead altitude, climb at full pitch whatever the
+        intent says (auto-GCAS). Otherwise an explicit non-zero pitch command
+        wins; a level/unset one means "hold desired_altitude", which becomes
+        the pitch whose ``max_speed * sin(pitch)`` closes the altitude error.
+        """
+        frame = config.JET_FRAME_CATALOG[jet.frame_type]
+        rate = climb_rate(frame)
+        need = self._terrain_required_altitude(jet)
         if jet.altitude < need:
-            jet.altitude = max(
-                jet.altitude, min(need, alt_before + frame.max_climb_per_tick)
-            )
+            dz = rate
+        elif commanded is not None and abs(commanded) > 1e-9:
+            return commanded
+        else:
+            target = jet.altitude if jet.desired_altitude is None else jet.desired_altitude
+            target = max(target, need, self._altitude_floor(jet))
+            dz = (target - jet.altitude) * config.ALTITUDE_HOLD_GAIN
+            dz = max(-rate, min(rate, dz))
+        return math.degrees(math.asin(dz / frame.max_speed))
 
     def _apply_altitude(self, jet: JetAgent) -> None:
         """Ease altitude toward desired_altitude (recovery / wings-level compat)."""
@@ -2604,20 +2659,14 @@ class WraithNetModel(mesa.Model):
 
         * Recovery (RTB): ease ``desired_altitude``; pitch is driven to 0
           elsewhere on the recovery path.
-        * Combat with commanded or held non-zero pitch: pitch-coupled dz.
-        * Wings-level (pitch≈0, no pitch intent): legacy ``desired_altitude``
-          ease so existing PoC / altitude tests stay compatible.
+        * Everything else is flown: dz = max_speed * sin(pitch). Altitude
+          commands reach the nose through ``_autopilot_pitch``, so a level
+          nose holds altitude instead of sliding toward ``desired_altitude``.
         """
-        alt_before = float(jet.altitude)
         if self._uses_recovery_altitude_override(jet):
             self._apply_altitude(jet)
-        elif (
-            jet.desired_pitch_deg is not None and abs(jet.desired_pitch_deg) > 1e-9
-        ) or abs(jet.pitch_deg) > 1e-9:
-            self._apply_pitch_coupled_altitude(jet)
         else:
-            self._apply_altitude(jet)
-        self._apply_terrain_avoidance(jet, alt_before)
+            self._apply_pitch_coupled_altitude(jet)
 
     def _jet_release_attitude_reason(
         self, jet: JetAgent, weapon_type: str
@@ -2790,6 +2839,7 @@ class WraithNetModel(mesa.Model):
                 hp_required=t.hp_required,
                 hp_remaining=t.hp_remaining,
                 claimed=broker.is_claimed(t.target_id),
+                min_overflight_altitude=self._min_overflight_altitude(jet, t.position),
             )
             for t in self.targets.values()
             if math.dist(jet.pos, t.position) <= config.SENSOR_RADIUS
@@ -2818,6 +2868,9 @@ class WraithNetModel(mesa.Model):
                     hp_required=cv.hp_max,
                     hp_remaining=max(0, cv.hp),
                     claimed=broker.is_claimed(cv.unit_id),
+                    min_overflight_altitude=self._min_overflight_altitude(
+                        jet, tuple(cv.position)
+                    ),
                 )
             )
         # Phase 43: expose live tanks as GROUND_VEHICLE CNP/strike targets.
@@ -2841,6 +2894,9 @@ class WraithNetModel(mesa.Model):
                     hp_required=tank.hp_max,
                     hp_remaining=max(0, tank.hp),
                     claimed=broker.is_claimed(tank.unit_id),
+                    min_overflight_altitude=self._min_overflight_altitude(
+                        jet, tuple(tank.position)
+                    ),
                 )
             )
         observed_gun_threats = self._observed_aaa_threats_for(jet)
@@ -2898,6 +2954,7 @@ class WraithNetModel(mesa.Model):
             recovery_route_forecast=route_forecast,
             observed_gun_threats=observed_gun_threats,
             briefed_seek_positions=self._briefed_seek_positions(),
+            altitude_rules=self.altitude_rules,
             map_diagonal=config.max_grid_distance(
                 self._scenario.grid_width, self._scenario.grid_height
             ),

@@ -32,6 +32,7 @@ from wraithnet.bases import (
 )
 from wraithnet.config import JetFrameType, TargetType, WeaponType
 from wraithnet.generation_schemas import GenerationMetadata
+from wraithnet.schemas import AltitudeRules
 from wraithnet.naval import (
     CarrierSpec,
     CorvetteSpec,
@@ -192,6 +193,8 @@ class ScenarioConfig(BaseModel):
     # Informational reproducibility metadata from the random generator (Phase 30).
     # Simulation, bridge, and trace paths ignore this field.
     generation: GenerationMetadata | None = None
+    # Clearance, radar clutter floor and gun-ceiling margin for this mission.
+    altitude_rules: AltitudeRules = Field(default_factory=AltitudeRules)
 
     @model_validator(mode="after")
     def _validate(self) -> ScenarioConfig:

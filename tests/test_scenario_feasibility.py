@@ -464,3 +464,148 @@ def test_canonical_group_centers_override_mean_drift():
         group_centers={"G1": root, "G2": child},
     )
     assert not any(i.code == DISCOVERY_CHAIN_GAP for i in with_centers.issues)
+
+
+# --- Discovery observer altitude (low flight near SAM sites) ---------------
+
+_OBSERVER = (12.5, 52.5)
+_HIDDEN = (42.5, 52.5)
+
+
+def _city_wall_terrain():
+    """Plains 100×100 (5-unit cells) with one 8-tall city block between
+    ``_OBSERVER`` and ``_HIDDEN``: clear from cruise, blocking from low level."""
+    from wraithnet.terrain import TerrainCell, TerrainGrid
+
+    cells = [[TerrainCell() for _ in range(20)] for _ in range(20)]
+    cells[10][5] = TerrainCell(terrain_type="CITY", building_height=8.0)
+    return TerrainGrid(
+        world_width=100.0,
+        world_height=100.0,
+        cell_size=5.0,
+        columns=20,
+        rows=20,
+        cells=cells,
+    )
+
+
+def _wall_scenario(sam_positions=(), **overrides) -> ScenarioConfig:
+    return _scenario(
+        terrain=_city_wall_terrain(),
+        grid_width=100.0,
+        grid_height=100.0,
+        home_base=(6.5, 52.5),
+        jets=[
+            {
+                "agent_id": "Jet_1",
+                "position": (8.0, 52.5),
+                "payload": {"JDAM": 6},
+                "frame_type": "STRIKE_FIGHTER",
+            }
+        ],
+        targets=[
+            {
+                "target_id": "Hidden",
+                "position": _HIDDEN,
+                "hp_required": 1,
+                "target_type": "HARDENED_BUNKER",
+            }
+        ],
+        sam_sites=[
+            {
+                "target_id": f"SAM_{i}",
+                "position": pos,
+                "hp_required": 1,
+                "target_type": "SAM_SITE",
+            }
+            for i, pos in enumerate(sam_positions)
+        ],
+        **overrides,
+    )
+
+
+def test_discovery_blocked_by_city_only_when_flying_low_near_sam():
+    from wraithnet.scenario_feasibility import (
+        LOS_DISCOVERY_CHAIN_GAP,
+        has_discovery_los,
+        scenario_observer_altitude_at,
+    )
+
+    cruise = _wall_scenario()
+    z = scenario_observer_altitude_at(cruise)(_OBSERVER)
+    assert z == config.JET_FRAME_CATALOG["STRIKE_FIGHTER"].cruise_altitude
+    assert has_discovery_los(cruise.terrain, _OBSERVER, _HIDDEN, observer_z=z)
+
+    # SAM out of discovery-link reach of Hidden, but its low-level radius
+    # covers the launch approach → jets fly low there.
+    defended = _wall_scenario(sam_positions=[(12.5, 7.5)])
+    z_low = scenario_observer_altitude_at(defended)(_OBSERVER)
+    assert z_low == defended.altitude_rules.terrain_clearance  # plains floor
+    assert not has_discovery_los(
+        defended.terrain, _OBSERVER, _HIDDEN, observer_z=z_low
+    )
+
+    def gaps(sc):
+        return {
+            i.code for i in analyze_feasibility(sc).issues if "Hidden" in i.related_ids
+        }
+
+    assert LOS_DISCOVERY_CHAIN_GAP not in gaps(cruise)
+    assert LOS_DISCOVERY_CHAIN_GAP in gaps(defended)
+
+
+def test_terrain_clearance_sets_low_observer_altitude():
+    from wraithnet.scenario_feasibility import (
+        has_discovery_los,
+        scenario_observer_altitude_at,
+    )
+
+    sam = [(12.5, 7.5)]
+    low = _wall_scenario(sam, altitude_rules={"terrain_clearance": 3.0})
+    high = _wall_scenario(sam, altitude_rules={"terrain_clearance": 18.0})
+    assert scenario_observer_altitude_at(low)(_OBSERVER) == pytest.approx(3.0)
+    z_high = scenario_observer_altitude_at(high)(_OBSERVER)
+    assert z_high == pytest.approx(18.0)
+    assert has_discovery_los(high.terrain, _OBSERVER, _HIDDEN, observer_z=z_high)
+    # The floor sits on the obstacle top: over the 8-tall block, 8 + clearance.
+    assert scenario_observer_altitude_at(high)((27.5, 52.5)) == pytest.approx(26.0)
+
+
+def test_unknown_sam_layout_assumes_lowest_altitude():
+    # Generation checks discovery before SAMs exist: floor, capped at cruise.
+    from wraithnet.scenario_feasibility import discovery_observer_altitude
+    from wraithnet.schemas import AltitudeRules
+
+    terrain = _city_wall_terrain()
+    rules = AltitudeRules(terrain_clearance=3.0)
+    unknown = dict(sam_positions=None, rules=rules)
+    assert discovery_observer_altitude(terrain, _OBSERVER, **unknown) == 3.0
+    assert discovery_observer_altitude(terrain, (27.5, 52.5), **unknown) == 11.0
+    rules = AltitudeRules(terrain_clearance=30.0)
+    assert discovery_observer_altitude(
+        terrain, _OBSERVER, sam_positions=None, rules=rules
+    ) == config.JET_COMBAT_ALTITUDE
+
+
+def test_observer_altitude_defaults_to_legacy_combat_altitude():
+    from wraithnet.scenario_feasibility import (
+        discovery_link_clear,
+        discovery_observer_altitude,
+        has_discovery_los,
+        scenario_observer_altitude_at,
+    )
+
+    terrain = _city_wall_terrain()
+    # No SAMs, no jets, and a SAM well outside every frame's low-level radius.
+    assert discovery_observer_altitude(terrain, _OBSERVER) == config.JET_COMBAT_ALTITUDE
+    far_sam = _wall_scenario(sam_positions=[(97.5, 97.5)])
+    for sc in (_scenario(), _wall_scenario(), far_sam):
+        z_at = scenario_observer_altitude_at(sc)
+        for xy in (_OBSERVER, (50.0, 50.0), (2.0, 2.0)):
+            assert z_at(xy) == config.JET_COMBAT_ALTITUDE
+            assert has_discovery_los(sc.terrain, xy, _HIDDEN) == has_discovery_los(
+                sc.terrain, xy, _HIDDEN, observer_z=z_at(xy)
+            )
+            assert discovery_link_clear(sc.terrain, xy, _HIDDEN) == discovery_link_clear(
+                sc.terrain, xy, _HIDDEN, observer_z_at=z_at
+            )

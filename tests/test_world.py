@@ -5,6 +5,7 @@ import math
 import pytest
 
 from wraithnet import config
+from wraithnet.altitude_tactics import climb_rate
 from wraithnet.broker import MessageBroker
 from wraithnet.scenario_schema import (
     JetSpec,
@@ -264,6 +265,7 @@ def test_strike_coasts_forward_instead_of_hovering():
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
     jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
+    jet.desired_altitude = 10.0  # hold it, so the run stays level (full ground speed)
     jet.heading = 90.0  # +x
     release = tuple(jet.pos)
     intent = ActionIntent(
@@ -1230,45 +1232,49 @@ def test_altitude_climb_clamped_by_max_climb_per_tick():
     jet = model.jets["Jet_1"]
     frame = config.JET_FRAME_CATALOG[jet.frame_type]
     assert jet.altitude == pytest.approx(frame.cruise_altitude)
-    jet.desired_altitude = jet.altitude + frame.max_climb_per_tick * 3
-    start = jet.pos
-    model.step(
-        {
-            "Jet_1": ActionIntent(
-                agent_id="Jet_1",
-                tick=0,
-                action_type="MOVE",
-                target_position=(start[0] + 0.1, start[1]),
-                desired_altitude=jet.desired_altitude,
-            )
-        }
-    )
-    assert jet.altitude == pytest.approx(
-        frame.cruise_altitude + frame.max_climb_per_tick
-    )
+    target = jet.altitude + frame.max_climb_per_tick * 3
+    # Climbs are flown with the nose: never faster than the pitch-limited rate.
+    for tick in range(40):
+        before = jet.altitude
+        model.step(
+            {
+                "Jet_1": ActionIntent(
+                    agent_id="Jet_1",
+                    tick=tick,
+                    action_type="IDLE",
+                    desired_pitch_deg=0.0,
+                    desired_altitude=target,
+                )
+            }
+        )
+        assert jet.altitude - before <= climb_rate(frame) + 1e-9
+        if tick == 0:
+            assert jet.pitch_deg > 0.0
+    assert jet.altitude == pytest.approx(target, abs=0.5)
 
 
 def test_altitude_descent_clamped_to_min_combat_unless_landing():
     model = WraithNetModel()
     jet = model.jets["Jet_1"]
     frame = config.JET_FRAME_CATALOG[jet.frame_type]
-    start = jet.pos
-    model.step(
-        {
-            "Jet_1": ActionIntent(
-                agent_id="Jet_1",
-                tick=0,
-                action_type="MOVE",
-                target_position=(start[0] + 0.1, start[1]),
-                desired_altitude=0.0,
-            )
-        }
-    )
-    # Far from base / not RTB: cannot go below min_combat_altitude.
-    assert jet.altitude >= frame.min_combat_altitude
-    assert jet.altitude == pytest.approx(
-        frame.cruise_altitude - frame.max_climb_per_tick
-    )
+    for tick in range(40):
+        before = jet.altitude
+        model.step(
+            {
+                "Jet_1": ActionIntent(
+                    agent_id="Jet_1",
+                    tick=tick,
+                    action_type="IDLE",
+                    desired_pitch_deg=0.0,
+                    desired_altitude=0.0,
+                )
+            }
+        )
+        assert before - jet.altitude <= climb_rate(frame) + 1e-9
+        # Far from base / not RTB: never below min combat or terrain clearance.
+        assert jet.altitude >= frame.min_combat_altitude
+        assert model.relative_altitude(jet) >= config.TERRAIN_CLEARANCE - 1e-9
+    assert jet.altitude == pytest.approx(config.TERRAIN_CLEARANCE, abs=0.5)
 
 
 def test_stage_guard_rejects_duplicate_and_out_of_order():

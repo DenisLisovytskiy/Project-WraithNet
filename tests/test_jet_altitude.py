@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime, transit_altitude
+from wraithnet.altitude_tactics import climb_rate
 from wraithnet.broker import MessageBroker
 from wraithnet.missiles import LaunchRequest
 from wraithnet.scenario_schema import JetSpec, TargetSpec, new_scenario_data, scenario_from_data
@@ -28,6 +31,7 @@ def _model(
     forest_cells=(),
     building_height=25.0,
     frame_type="STRIKE_FIGHTER",
+    altitude_rules=None,
 ) -> WraithNetModel:
     terrain = all_plains_terrain(100.0, 100.0)
     for col, row in city_cells:
@@ -56,16 +60,21 @@ def _model(
                     target_type="HARDENED_BUNKER",
                 )
             ],
+            **({"altitude_rules": altitude_rules} if altitude_rules else {}),
         )
     )
     return WraithNetModel(scenario=scenario)
 
 
-def _fly_low(model: WraithNetModel, ticks: int) -> list[float]:
-    """Command 'as low as allowed' due east; return relative altitude per tick."""
+def _fly_low(model: WraithNetModel, ticks: int, track=None) -> list[float]:
+    """Command 'as low as allowed' due east; return relative altitude per tick.
+
+    ``track`` (optional list) collects ``(altitude_change, pitch_deg)`` per tick.
+    """
     jet = model.jets["Jet_A"]
     agl = []
     for tick in range(ticks):
+        alt_before = jet.altitude
         model.step(
             {
                 "Jet_A": ActionIntent(
@@ -81,6 +90,8 @@ def _fly_low(model: WraithNetModel, ticks: int) -> list[float]:
         if "Jet_A" not in model.jets:
             break
         agl.append(model.relative_altitude(jet))
+        if track is not None:
+            track.append((jet.altitude - alt_before, jet.pitch_deg))
     return agl
 
 
@@ -95,21 +106,31 @@ def test_relative_altitude_is_height_above_roof_or_treetops():
     )
 
 
-def test_level_flight_eases_to_commanded_altitude():
-    """Pitch-0 intents with desired_altitude actually change height."""
+def test_level_command_descends_nose_down_at_flown_rate():
+    """desired_altitude is flown with the nose: pitch down, dz = speed*sin(pitch)."""
     model = _model()
     jet = model.jets["Jet_A"]
     frame = config.JET_FRAME_CATALOG[jet.frame_type]
-    start = jet.altitude
-    _fly_low(model, 1)
-    assert jet.altitude == pytest.approx(start - frame.max_climb_per_tick)
+    track = []
+    _fly_low(model, 12, track)
+    assert all(pitch < 0.0 for dz, pitch in track[:3])
+    for dz, pitch in track:
+        assert abs(dz) <= climb_rate(frame) + 1e-9
+        assert dz == pytest.approx(frame.max_speed * math.sin(math.radians(pitch)), abs=1e-6)
+    assert jet.altitude < 20.0 - 5.0
 
 
 def test_low_flier_climbs_over_tallest_building_without_crashing():
     # A wall of 25-tall buildings across the jet's eastbound track.
     wall = [(12, row) for row in range(20)]
     model = _model(city_cells=wall)
-    agl = _fly_low(model, 30)
+    frame = config.JET_FRAME_CATALOG["STRIKE_FIGHTER"]
+    track = []
+    agl = _fly_low(model, 30, track)
+    # The climb is flown: nose up, never faster than the pitch allows.
+    assert max(pitch for _, pitch in track) > 10.0
+    for dz, pitch in track:
+        assert dz == pytest.approx(frame.max_speed * math.sin(math.radians(pitch)), abs=1e-6)
     assert model.crash_log == []
     assert "Jet_A" in model.jets
     assert min(agl) >= config.TERRAIN_CLEARANCE - 1e-9
@@ -228,3 +249,74 @@ def test_agent_descends_for_jdam_run_in_and_stays_high_far_out():
     assert far.decide_intent().desired_altitude == pytest.approx(
         config.JET_FRAME_CATALOG["STRIKE_FIGHTER"].cruise_altitude
     )
+
+
+@pytest.mark.parametrize("frame_type", ["INTERCEPTOR", "STRIKE_FIGHTER", "HEAVY_BOMBER"])
+def test_every_frame_flies_over_a_25_tall_wall(frame_type):
+    """Slowest climber (bomber, ~1/tick) still clears the tallest roofs."""
+    wall = [(14, row) for row in range(20)]
+    model = _model(city_cells=wall, frame_type=frame_type)
+    frame = config.JET_FRAME_CATALOG[frame_type]
+    track = []
+    agl = _fly_low(model, 40, track)
+    assert model.crash_log == []
+    assert min(agl) >= config.TERRAIN_CLEARANCE - 1e-9
+    for dz, pitch in track:
+        assert dz == pytest.approx(frame.max_speed * math.sin(math.radians(pitch)), abs=1e-6)
+
+
+def test_altitude_rules_are_per_scenario():
+    rules = {
+        "terrain_clearance": 6.0,
+        "sam_radar_min_engagement_agl": 9.0,
+        "gun_ceiling_margin": 5.0,
+    }
+    model = _model(forest_cells=[(c, 10) for c in range(20)], altitude_rules=rules)
+    agl = _fly_low(model, 15)
+    assert min(agl) >= 6.0 - 1e-9
+    obs = _obs(model)
+    assert obs.altitude_rules.gun_ceiling_margin == 5.0
+    gun = ObservedGunThreat(
+        threat_id="AAA_1", position=(30.0, 30.0), engagement_range=5.0, altitude_ceiling=18.0
+    )
+    guns = obs.model_copy(update={"observed_gun_threats": [gun]})
+    assert transit_altitude(guns, []) == pytest.approx(23.0)
+    jet = model.jets["Jet_A"]
+    jet.altitude = FOREST_CANOPY_HEIGHT + 8.0  # 8 AGL: above default floor, below 9
+    req = LaunchRequest(
+        shooter_id="SAM_X",
+        target_id="Jet_A",
+        weapon_type="SAM_RADAR",
+        shooter_position=(50.0, 50.0, 0.0),
+        target_position=(jet.pos[0], jet.pos[1], jet.altitude),
+        shooter_faction="ENEMY",
+        target_faction="FRIENDLY",
+        target_class="AIRCRAFT",
+        target_signature=config.JET_FRAME_CATALOG["STRIKE_FIGHTER"].signature,
+        ammo_available=1,
+    )
+    assert model._radar_clutter_reason(req) == "below_radar_clutter_floor"
+
+
+def test_unguided_weapon_not_offered_where_terrain_keeps_jet_too_high():
+    """Gun pod (release <= 10) can't be flown low enough beside 25-tall roofs."""
+    from wraithnet.agents import compute_bid_proposals
+    from wraithnet.weapons_release import release_reachable
+
+    model = _model(position=(70.0, 20.0), city_cells=[(17, 1)])
+    obs = _obs(model)
+    near_city = model._min_overflight_altitude(model.jets["Jet_A"], (90.0, 10.0))
+    assert near_city > config.WEAPON_CATALOG["GUN_POD"].max_release_altitude
+    assert not release_reachable(config.WEAPON_CATALOG["GUN_POD"], near_city)
+    target = TargetInfo(
+        target_id="Bunker",
+        position=(90.0, 10.0),
+        target_type="HARDENED_BUNKER",
+        hp_required=1,
+        hp_remaining=1,
+        min_overflight_altitude=near_city,
+    )
+    gun_only = obs.model_copy(update={"payload": {"GUN_POD": 1}})
+    assert compute_bid_proposals(gun_only, target) == []
+    open_ground = target.model_copy(update={"min_overflight_altitude": 6.0})
+    assert [p.weapon_type for p in compute_bid_proposals(gun_only, open_ground)] == ["GUN_POD"]

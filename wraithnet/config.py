@@ -990,10 +990,15 @@ RTB_FUEL_SAFETY_MARGIN: float = 1.2
 
 RTB_LANDING_RADIUS: float = 2.0
 
+# Defaults for schemas.AltitudeRules (each scenario can override them).
 # Minimum height above the obstacle under a jet (building roof, treetops,
 # ground). The world enforces it with a look-ahead climb; dipping below the
 # obstacle itself is a crash.
 TERRAIN_CLEARANCE: float = 3.0
+
+# Altitude-hold autopilot: fraction of the altitude error flown per tick
+# (lower = smoother capture, less overshoot from pitch-rate lag).
+ALTITUDE_HOLD_GAIN: float = 0.5
 
 # Surface-launched radar missiles lose jets below this relative altitude in
 # ground clutter: flying low beats radar SAMs, flying high beats guns.
