@@ -127,6 +127,7 @@ def summarize(model) -> dict:
         "total_targets": len(model.targets),
         "jets_destroyed": jets_destroyed,
         "jets_returned_to_base": jets_returned_to_base,
+        "jets_crashed": len(getattr(model, "crash_log", [])),
         "jets_still_flying": len(model.jets),
         "total_distance_traveled": total_distance,
         "total_missiles_fired": len(model.strike_log),

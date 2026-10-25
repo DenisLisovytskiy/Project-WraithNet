@@ -16,6 +16,9 @@ MovementDomain = Literal["AIR", "GROUND", "SURFACE"]
 
 CITY_HEIGHT_MIN: float = 4.0
 CITY_HEIGHT_MAX: float = 25.0
+#: Treetop height for collision/clearance (viewer trees are ~1.35 tall).
+#: Forest stays transparent for line of sight.
+FOREST_CANOPY_HEIGHT: float = 3.0
 
 _PASSABLE: dict[tuple[TerrainType, MovementDomain], bool] = {
     ("WATER", "AIR"): True,
@@ -213,6 +216,63 @@ def validate_position_for_domain(
             f"position {position} is on {cell.terrain_type} which is "
             f"impassable for domain {domain}"
         )
+
+
+def cell_obstacle_height(cell: TerrainCell) -> float:
+    """Height of whatever stands on a cell (ground itself is flat at z=0)."""
+    if cell.terrain_type == "CITY":
+        assert cell.building_height is not None
+        return float(cell.building_height)
+    if cell.terrain_type == "FOREST":
+        return FOREST_CANOPY_HEIGHT
+    return 0.0
+
+
+def obstacle_height_at(terrain: TerrainGrid, position: tuple[float, float]) -> float:
+    """Obstacle top under ``position``; relative altitude = z minus this."""
+    col, row = world_to_cell(terrain, position[0], position[1])
+    return cell_obstacle_height(terrain.cells[row][col])
+
+
+def lookahead_required_altitude(
+    terrain: TerrainGrid,
+    center: tuple[float, float],
+    *,
+    reach_per_tick: float,
+    climb_per_tick: float,
+    clearance: float,
+) -> float:
+    """Lowest altitude from which a rate-limited climb still clears everything.
+
+    An obstacle ``d`` away needs at least ``floor(d / reach_per_tick)`` ticks
+    to reach, in which the jet climbs that many ``climb_per_tick``. Holding
+    altitude >= this value every tick therefore never meets a roof or
+    treetop below ``clearance``, whichever way the jet turns. Distance-based
+    (not heading-based) so far buildings and ones behind the jet barely
+    count, which leaves room to fly low.
+    """
+    reach = max(reach_per_tick, 1e-9)
+    ticks_to_clear = math.ceil((CITY_HEIGHT_MAX + clearance) / climb_per_tick)
+    radius = reach * (ticks_to_clear + 1)
+    x0 = min(max(center[0] - radius, 0.0), terrain.world_width)
+    y0 = min(max(center[1] - radius, 0.0), terrain.world_height)
+    x1 = min(max(center[0] + radius, 0.0), terrain.world_width)
+    y1 = min(max(center[1] + radius, 0.0), terrain.world_height)
+    c0, r0 = world_to_cell(terrain, x0, y0)
+    c1, r1 = world_to_cell(terrain, x1, y1)
+    need = 0.0
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            height = cell_obstacle_height(terrain.cells[r][c])
+            if height <= 0.0:
+                continue
+            bx0, by0, bx1, by1 = _cell_bounds(terrain, c, r)
+            # Nearest point of the cell, so entering its edge counts.
+            dx = max(bx0 - center[0], 0.0, center[0] - bx1)
+            dy = max(by0 - center[1], 0.0, center[1] - by1)
+            ticks = math.floor(math.hypot(dx, dy) / reach)
+            need = max(need, height + clearance - climb_per_tick * ticks)
+    return need
 
 
 def segment_supercover_cells(

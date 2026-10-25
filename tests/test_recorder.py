@@ -63,6 +63,7 @@ async def test_strikes_are_per_tick_not_cumulative(tmp_path):
         jet = bridge.model.jets["Jet_1"]
         target = bridge.model.targets["Target_A"]
         bridge.model.space.move_agent(jet, target.position)
+        jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
         intent = ActionIntent(
             agent_id="Jet_1",
             tick=0,

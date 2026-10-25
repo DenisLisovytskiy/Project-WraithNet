@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from itertools import product
 
 from wraithnet import config
+from wraithnet.weapons_release import attack_altitude
 from wraithnet.bid_schemas import (
     AttackPlanSummary,
     AwardContext,
@@ -206,6 +207,8 @@ def legacy_compatible_utility(
 
 def exposure_from_threat_contacts(
     contacts: Sequence[ThreatContact] | Sequence[object],
+    *,
+    planned_altitude: float | None = None,
 ) -> tuple[float, float, float]:
     ir = 0.0
     radar = 0.0
@@ -220,6 +223,10 @@ def exposure_from_threat_contacts(
         elif kind in ("RADAR_MISSILE", "SAM_SITE") or "RADAR" in kind:
             radar = max(radar, weight)
         elif kind in ("GUN_AAA", "GUN_CIWS") or "GUN" in kind:
+            # Guns cannot reach a flight altitude above their ceiling (None = no ceiling).
+            ceiling = getattr(c, "altitude_ceiling", None)
+            if planned_altitude is not None and ceiling is not None and planned_altitude > float(ceiling):
+                continue
             gun = max(gun, weight)
     return ir, radar, gun
 
@@ -295,6 +302,7 @@ def build_bid_proposals(
     context_hash: str,
     committed_payload: int = 0,
     map_diagonal: float | None = None,
+    planned_altitude: float | None = None,
 ) -> list[BidProposal]:
     _ = target_id
     _ = committed_payload
@@ -304,30 +312,36 @@ def build_bid_proposals(
         else config.MAX_GRID_DISTANCE
     )
     ask = max(1, int(hp_needed))
-    ir_exp, radar_exp, gun_exp = exposure_from_threat_contacts(threat_contacts)
-    flare_ready = flare_readiness(
-        flares_remaining=flares_remaining,
-        flare_capacity=flare_capacity,
-        flare_cooldown_remaining=flare_cooldown_remaining,
-        ticks_to_first_ir_encounter=2.0 if ir_exp > 0 else None,
-        frame_flare_cooldown_ticks=frame_flare_cooldown_ticks,
-    )
     notch_ready = notch_readiness(
         has_rwr=has_rwr,
         notch_hold_progress=notch_hold_progress,
         notch_hold_ticks=notch_hold_ticks,
     )
     hp_frac = clamp01(hp / max(1, hp_max))
-    risk = estimate_threat_exposure(
-        known_ir_exposure=ir_exp,
-        known_radar_exposure=radar_exp,
-        known_gun_exposure=gun_exp,
-        flare_ready=flare_ready,
-        notch_ready=notch_ready,
-        hp_fraction=hp_frac,
-        evasion_bonus=0.0,
-    )
-    zero_threat = ir_exp <= 0.0 and radar_exp <= 0.0 and gun_exp <= 0.0
+
+    def _risk_at(alt: float | None) -> tuple[BidRiskBreakdown, bool]:
+        # None keeps the altitude-blind exposure; otherwise gun ceilings apply.
+        ir_exp, radar_exp, gun_exp = exposure_from_threat_contacts(
+            threat_contacts, planned_altitude=alt
+        )
+        flare_ready = flare_readiness(
+            flares_remaining=flares_remaining,
+            flare_capacity=flare_capacity,
+            flare_cooldown_remaining=flare_cooldown_remaining,
+            ticks_to_first_ir_encounter=2.0 if ir_exp > 0 else None,
+            frame_flare_cooldown_ticks=frame_flare_cooldown_ticks,
+        )
+        risk = estimate_threat_exposure(
+            known_ir_exposure=ir_exp,
+            known_radar_exposure=radar_exp,
+            known_gun_exposure=gun_exp,
+            flare_ready=flare_ready,
+            notch_ready=notch_ready,
+            hp_fraction=hp_frac,
+            evasion_bonus=0.0,
+        )
+        return risk, ir_exp <= 0.0 and radar_exp <= 0.0 and gun_exp <= 0.0
+
     # Stable sorted contact set for identical proposal JSON across insertion orders.
     stable_contacts = merge_threat_contacts(list(threat_contacts))
 
@@ -347,6 +361,15 @@ def build_bid_proposals(
             )
         if suitability <= 0.0:
             continue
+        # Unguided weapons must descend to release, so they bid at that altitude.
+        flight_altitude = (
+            altitude
+            if planned_altitude is None
+            else attack_altitude(catalog, float(planned_altitude))
+        )
+        risk, zero_threat = _risk_at(
+            None if planned_altitude is None else flight_altitude
+        )
         payload_offered = min(int(count), ask)
         payload_score = min(1.0, int(count) / ask)
         distance = math.dist(position, target_position)
@@ -375,7 +398,7 @@ def build_bid_proposals(
             bidder_id=bidder_id,
             weapon_type=weapon_type,
             position=position,
-            altitude=altitude,
+            altitude=flight_altitude,
             target_position=target_position,
         )
         if plan is None:

@@ -327,6 +327,7 @@ def test_destruction_and_objectives():
         frame_type="AAA_LIGHT",
     )
     model.targets["AAA_1"].hp_remaining = 1
+    model.jets["Jet_1"].altitude = 10.0  # JDAM releases at or below max_release_altitude
     from wraithnet.schemas import ActionIntent
 
     intent = ActionIntent(

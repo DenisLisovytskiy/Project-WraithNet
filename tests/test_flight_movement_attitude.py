@@ -99,8 +99,10 @@ def test_negative_pitch_descends_but_not_below_min_combat():
             }
         )
     assert jet.pitch_deg < 0.0
+    # Floor is the higher of min combat altitude and obstacle + clearance.
+    floor = max(frame.min_combat_altitude, config.TERRAIN_CLEARANCE)
     assert jet.altitude >= frame.min_combat_altitude
-    assert jet.altitude == pytest.approx(frame.min_combat_altitude)
+    assert jet.altitude == pytest.approx(floor)
 
 
 def test_pitch_rate_interceptor_faster_than_bomber():

@@ -423,7 +423,9 @@ def test_decide_intent_strike_when_in_range_decrements_committed_payload():
     jet = JetAgentRuntime("Jet_1", broker)
     target = _target_a()
     _set_obs(jet, 
-        _observation("Jet_1", target.position, {"JDAM": 1, "AIM9X": 0}, [target])
+        _observation(
+            "Jet_1", target.position, {"JDAM": 1, "AIM9X": 0}, [target]
+        ).model_copy(update={"current_altitude": 8.0})  # JDAM releases at or below max_release_altitude
     )
     jet._commit("Target_A", 2, "JDAM")
     intent = jet.decide_intent()

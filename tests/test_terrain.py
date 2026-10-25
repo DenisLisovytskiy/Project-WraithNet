@@ -572,6 +572,7 @@ def test_default_scenario_still_all_plains_compatible():
     # Injected in-range strike still works on plains.
     jet = model.jets["Jet_1"]
     model.space.move_agent(jet, (75.0, 75.0))
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     before = jet.payload["JDAM"]
     model._apply_strike(jet, "Target_A", "JDAM")
     assert jet.payload["JDAM"] == before - 1

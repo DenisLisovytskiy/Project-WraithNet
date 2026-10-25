@@ -74,6 +74,7 @@ def test_upright_jdam_strike_succeeds_after_inverted_reject():
     jet = model.jets["Jet_2"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     jet.roll_deg = 170.0
     before = jet.payload["JDAM"]
     hp = target.hp_remaining
@@ -110,6 +111,7 @@ def test_aim9x_attitude_unconstrained_vs_jdam_at_high_roll():
     jet.payload = {"AIM9X": 1, "JDAM": 1, "AGM65": 0}
     jet.roll_deg = 120.0
     jet.pitch_deg = 0.0
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
 
     assert model._jet_release_attitude_reason(jet, "JDAM") == (
         "jet_inverted_release_forbidden"
@@ -135,6 +137,7 @@ def test_wings_level_jdam_still_works_via_step():
     jet = model.jets["Jet_2"]
     target = model.targets["Target_A"]
     model.space.move_agent(jet, target.position)
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     jet.roll_deg = 0.0
     jet.pitch_deg = 0.0
     before = jet.payload["JDAM"]
