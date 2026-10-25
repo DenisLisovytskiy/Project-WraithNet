@@ -782,11 +782,11 @@ class WraithNetModel(mesa.Model):
                 destination = self._forward_flight_destination(jet)
             elif intent.action_type == "MOVE":
                 destination = intent.target_position
-            elif intent.action_type in ("STRIKE", "LAUNCH"):
-                # Attack runs keep airspeed — jets cannot hover to pickle munitions.
-                destination = self._forward_flight_destination(jet)
             else:
-                destination = None
+                # STRIKE/LAUNCH/IDLE: aircraft cannot hover — keep airspeed along
+                # the nose while turning to bear, fixing release attitude, or
+                # loitering without tasking.
+                destination = self._forward_flight_destination(jet)
             # Carrier RTB: retarget to live recovery geometry each tick.
             if jet.is_rtb and not jet.recovery_abort:
                 destination = self._recovery_destination(jet)
@@ -2478,9 +2478,19 @@ class WraithNetModel(mesa.Model):
         eps = 1e-6
         x_max = float(self._scenario.grid_width) - eps
         y_max = float(self._scenario.grid_height) - eps
+
+        def _bounce(v: float, hi: float) -> float:
+            # Reflect off the edge instead of only clamping: a nose-on wall hit
+            # would otherwise zero the displacement and freeze the jet in the air.
+            if v < 0.0:
+                v = -v
+            elif v > hi:
+                v = 2.0 * hi - v
+            return min(max(v, 0.0), hi)
+
         new_pos = (
-            min(max(float(new_pos[0]), 0.0), x_max),
-            min(max(float(new_pos[1]), 0.0), y_max),
+            _bounce(float(new_pos[0]), x_max),
+            _bounce(float(new_pos[1]), y_max),
         )
         moved = math.dist(pos, new_pos)
         if moved > 1e-9:

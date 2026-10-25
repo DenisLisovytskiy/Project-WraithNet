@@ -306,6 +306,21 @@ def test_map_edge_clamp_stays_in_bounds():
     assert 0.0 <= jet.pos[1] <= model._scenario.grid_height - eps
 
 
+def test_nose_on_map_edge_never_freezes_jet():
+    """Flying straight into the wall must not zero airspeed (no hovering)."""
+    model = _single_jet_model(
+        "STRIKE_FIGHTER", position=(1.0, 10.0), heading=270.0
+    )
+    jet = model.jets["Jet_A"]
+    for _ in range(5):
+        before = tuple(jet.pos)
+        model.step(
+            {"Jet_A": ActionIntent(agent_id="Jet_A", tick=0, action_type="IDLE")}
+        )
+        assert math.dist(before, tuple(jet.pos)) > 0.5
+        assert 0.0 <= jet.pos[0] < model._scenario.grid_width
+
+
 def test_recovery_eases_altitude_and_levels_pitch():
     model = _single_jet_model("STRIKE_FIGHTER", position=(10.0, 10.0))
     jet = model.jets["Jet_A"]

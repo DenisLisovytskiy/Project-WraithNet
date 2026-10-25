@@ -376,17 +376,19 @@ def test_strike_on_destroyed_target_clamps_hp_but_consumes_payload():
     assert model.strike_log[0]["weapon_type"] == "AGM65"
 
 
-def test_idle_intent_changes_nothing():
+def test_idle_intent_coasts_forward_without_striking():
+    """IDLE is not a hover: the jet keeps airspeed along its nose."""
     model = WraithNetModel()
     jet = model.jets["Jet_1"]
-    pos_before = jet.pos
+    pos_before = tuple(jet.pos)
     payload_before = dict(jet.payload)
     hp_before = {tid: t.hp_remaining for tid, t in model.targets.items()}
     intent = ActionIntent(agent_id="Jet_1", tick=0, action_type="IDLE")
     model.step({"Jet_1": intent})
-    assert jet.pos == pos_before
+    speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
+    assert math.dist(pos_before, tuple(jet.pos)) == pytest.approx(speed)
     assert jet.payload == payload_before
-    assert jet.distance_traveled == 0.0
+    assert jet.distance_traveled == pytest.approx(speed)
     assert {tid: t.hp_remaining for tid, t in model.targets.items()} == hp_before
     assert model.strike_log == []
 
