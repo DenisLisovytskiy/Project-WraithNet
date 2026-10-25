@@ -274,7 +274,8 @@ def test_agents_and_world_agree_on_firing_arc_gate():
 
 def test_narrow_arc_weapon_rotates_into_arc_before_first_strike():
     """Acceptance: a GUN_POD jet starting 90° off its target turns over
-    several ticks and only then lands a strike — not immediately, not never."""
+    several ticks and only then lands a strike — not immediately, not never.
+    The jet cannot hover while turning, so it may re-close with MOVE."""
     jet_pos = (50.0, 50.0)
     target_pos = (50.3, 50.0)
     model = WraithNetModel(
@@ -301,7 +302,7 @@ def test_narrow_arc_weapon_rotates_into_arc_before_first_strike():
     runtime._commit("Bunker", 1, "GUN_POD")
     idle_ticks = 0
     struck = False
-    for _ in range(10):
+    for _ in range(60):
         world_jet = model.jets["Gunner"]
         obs = model.build_observation("Gunner", runtime.broker)
         runtime.set_observation(obs)
@@ -311,7 +312,7 @@ def test_narrow_arc_weapon_rotates_into_arc_before_first_strike():
             model.step({"Gunner": intent})
             struck = True
             break
-        assert intent.action_type == "IDLE"
+        assert intent.action_type in ("IDLE", "MOVE")
         assert intent.desired_heading is not None
         idle_ticks += 1
         model.step({"Gunner": intent})

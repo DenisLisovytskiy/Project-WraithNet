@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
+from wraithnet.geometry import bearing_to
 from wraithnet.schemas import ActionIntent, Observation, TargetInfo
 from wraithnet.weapons_release import (
     AttitudeCommand,
@@ -227,13 +230,31 @@ def test_inverted_world_integration_rolls_then_can_release():
     jdam_before = jet.payload["JDAM"]
     hp_before = target.hp_remaining
 
-    # Drive attitude via agent-style intents for several ticks.
-    for tick in range(40):
+    # Drive attitude via agent-style intents for several ticks. The jet keeps
+    # airspeed while rolling (no hover), so re-close on the target like
+    # decide_intent does before releasing inside JDAM range.
+    for tick in range(80):
         ok, _ = release_attitude_ok(
             config.WEAPON_CATALOG["JDAM"],
             pitch_deg=jet.pitch_deg,
             roll_deg=jet.roll_deg,
         )
+        dist = math.dist(tuple(jet.pos), target.position)
+        if ok and dist > config.WEAPON_CATALOG["JDAM"].range:
+            model.step(
+                {
+                    "Jet_2": ActionIntent(
+                        agent_id="Jet_2",
+                        tick=tick,
+                        action_type="MOVE",
+                        target_position=target.position,
+                        desired_heading=bearing_to(tuple(jet.pos), target.position),
+                        desired_pitch_deg=0.0,
+                        desired_roll_deg=0.0,
+                    )
+                }
+            )
+            continue
         if ok:
             model.step(
                 {
