@@ -241,19 +241,21 @@ def lookahead_required_altitude(
     reach_per_tick: float,
     climb_per_tick: float,
     clearance: float,
+    lag_ticks: int = 0,
 ) -> float:
     """Lowest altitude from which a rate-limited climb still clears everything.
 
     An obstacle ``d`` away needs at least ``floor(d / reach_per_tick)`` ticks
-    to reach, in which the jet climbs that many ``climb_per_tick``. Holding
-    altitude >= this value every tick therefore never meets a roof or
-    treetop below ``clearance``, whichever way the jet turns. Distance-based
-    (not heading-based) so far buildings and ones behind the jet barely
-    count, which leaves room to fly low.
+    to reach; the first ``lag_ticks`` of them go to pitching the nose up, the
+    rest climb ``climb_per_tick`` each. Holding altitude >= this value every
+    tick therefore never meets a roof or treetop below ``clearance``,
+    whichever way the jet turns. Distance-based (not heading-based) so far
+    buildings and ones behind the jet barely count, which leaves room to fly
+    low.
     """
     reach = max(reach_per_tick, 1e-9)
     ticks_to_clear = math.ceil((CITY_HEIGHT_MAX + clearance) / climb_per_tick)
-    radius = reach * (ticks_to_clear + 1)
+    radius = reach * (ticks_to_clear + lag_ticks + 1)
     x0 = min(max(center[0] - radius, 0.0), terrain.world_width)
     y0 = min(max(center[1] - radius, 0.0), terrain.world_height)
     x1 = min(max(center[0] + radius, 0.0), terrain.world_width)
@@ -270,7 +272,7 @@ def lookahead_required_altitude(
             # Nearest point of the cell, so entering its edge counts.
             dx = max(bx0 - center[0], 0.0, center[0] - bx1)
             dy = max(by0 - center[1], 0.0, center[1] - by1)
-            ticks = math.floor(math.hypot(dx, dy) / reach)
+            ticks = max(0, math.floor(math.hypot(dx, dy) / reach) - lag_ticks)
             need = max(need, height + clearance - climb_per_tick * ticks)
     return need
 

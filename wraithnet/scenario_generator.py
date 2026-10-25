@@ -47,6 +47,7 @@ from wraithnet.geometry import angular_distance, bearing_to
 from wraithnet.scenario_feasibility import (
     analyze_feasibility,
     discovery_link_clear,
+    discovery_observer_altitude,
     has_discovery_los,
     jet_can_reach_round_trip,
     land_cells,
@@ -594,6 +595,19 @@ def _distance_fraction_ok(
     )
 
 
+def _generation_observer_z(
+    terrain: TerrainGrid, xy: tuple[float, float]
+) -> float:
+    """Discovery eye height while SAMs and jets are not placed yet.
+
+    Any center may end up inside a SAM's low-level radius, so assume the
+    lowest altitude a jet of any frame may fly at ``xy``.
+    """
+    return discovery_observer_altitude(
+        terrain, xy, sam_positions=None, frame_types=tuple(config.JET_FRAME_CATALOG)
+    )
+
+
 def _center_candidate_ok(
     position: tuple[float, float],
     *,
@@ -623,7 +637,12 @@ def _center_candidate_ok(
         dist = distance_from_home(home_base, position)
         if dist + LAUNCH_RING_OUTER_RADIUS <= config.SENSOR_RADIUS:
             approach = _root_approach_point(home_base, position)
-            if not has_discovery_los(terrain, approach, position):
+            if not has_discovery_los(
+                terrain,
+                approach,
+                position,
+                observer_z=_generation_observer_z(terrain, approach),
+            ):
                 return False
     if not position_respects_separation(position, existing, min_pairwise):
         return False
@@ -949,7 +968,12 @@ def _place_group_centers(
                     )
                 else:
                     approach = _root_approach_point(home_base, cand)
-                    if has_discovery_los(terrain, approach, cand):
+                    if has_discovery_los(
+                        terrain,
+                        approach,
+                        cand,
+                        observer_z=_generation_observer_z(terrain, approach),
+                    ):
                         parent_index = min(
                             range(len(positions)),
                             key=lambda i: math.dist(cand, positions[i]),
@@ -1032,7 +1056,11 @@ def _nearest_linkable_parent(
     for i, pos in enumerate(positions):
         d = math.dist(cand, pos)
         if d <= link_max and d < best_d and discovery_link_clear(
-            terrain, cand, pos, link_max=link_max
+            terrain,
+            cand,
+            pos,
+            link_max=link_max,
+            observer_z_at=lambda xy: _generation_observer_z(terrain, xy),
         ):
             best_d = d
             best_i = i
@@ -1093,7 +1121,12 @@ def _grid_fallback_child(
                     )
                 else:
                     approach = _root_approach_point(home_base, cand)
-                    if has_discovery_los(terrain, approach, cand):
+                    if has_discovery_los(
+                        terrain,
+                        approach,
+                        cand,
+                        observer_z=_generation_observer_z(terrain, approach),
+                    ):
                         parent_index = min(
                             range(len(positions)),
                             key=lambda i: math.dist(cand, positions[i]),

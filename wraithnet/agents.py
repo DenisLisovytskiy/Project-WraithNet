@@ -28,13 +28,15 @@ from wraithnet.bid_utility import (
     proposal_damage_milli,
     select_winning_bids,
 )
+from wraithnet.altitude_tactics import climb_rate, pitch_lag_ticks, transit_altitude
 from wraithnet.broker import MessageBroker
 from wraithnet.config import BROADCAST_ID
-from wraithnet.geometry import bearing_to, is_in_firing_arc
+from wraithnet.geometry import angular_distance, bearing_to, is_in_firing_arc
 from wraithnet.weapons_release import (
     attack_altitude,
     needed_attitude_for_release,
     release_attitude_ok,
+    release_reachable,
     weapon_has_attitude_envelope,
 )
 from wraithnet.schemas import ActionIntent, InboundThreat, Message, Observation, TargetInfo
@@ -93,36 +95,6 @@ def _threat_contacts_from_observation(obs: Observation) -> list[ThreatContact]:
     return contacts
 
 
-def transit_altitude(obs: Observation, known_targets: list[TargetInfo]) -> float:
-    """Tactical altitude band for transit/egress from the known threat picture.
-
-    Known guns: climb over the highest ceiling (guns kill low). Approaching a
-    live SAM site: go low — the world floor holds terrain clearance and
-    surface radar loses jets below SAM_RADAR_MIN_ENGAGEMENT_AGL. Otherwise
-    cruise, where sensors see over buildings.
-    """
-    frame = config.JET_FRAME_CATALOG[obs.frame_type]
-    cruise = float(frame.cruise_altitude)
-    ceilings = [
-        float(g.altitude_ceiling)
-        for g in obs.observed_gun_threats
-        if g.altitude_ceiling is not None
-    ]
-    if ceilings:
-        return max(cruise, max(ceilings) + config.GUN_CEILING_MARGIN)
-    # Start the descent early enough to be under the clutter floor on entry.
-    descent_reach = frame.max_speed * math.ceil(cruise / frame.max_climb_per_tick)
-    low_radius = config.WEAPON_CATALOG["SAM_RADAR"].range + descent_reach
-    if any(
-        t.target_type == "SAM_SITE"
-        and t.hp_remaining > 0
-        and math.dist(obs.current_position, t.position) <= low_radius
-        for t in known_targets
-    ):
-        return 0.0
-    return cruise
-
-
 def compute_bid_proposals(
     observation: Observation,
     target: TargetInfo,
@@ -143,7 +115,13 @@ def compute_bid_proposals(
         altitude=float(observation.current_altitude),
         heading_deg=float(observation.current_heading),
         velocity=float(observation.current_speed),
-        payload={str(k): int(v) for k, v in observation.payload.items()},
+        # Unguided weapons whose release ceiling terrain keeps the jet above
+        # cannot be delivered here; never offer them.
+        payload={
+            str(k): int(v)
+            for k, v in observation.payload.items()
+            if release_reachable(config.WEAPON_CATALOG[k], target.min_overflight_altitude)
+        },
         target_id=target.target_id,
         target_type=str(target.target_type),
         target_position=tuple(target.position),
@@ -939,9 +917,10 @@ class JetAgentRuntime:
         if attack >= transit:
             return transit
         frame = config.JET_FRAME_CATALOG[obs.frame_type]
+        # Flown descent: nose over, then sink at the pitch-limited rate.
         descent_ticks = math.ceil(
-            max(0.0, obs.current_altitude - attack) / frame.max_climb_per_tick
-        )
+            max(0.0, obs.current_altitude - attack) / climb_rate(frame)
+        ) + pitch_lag_ticks(frame)
         start = weapon.range + frame.max_speed * (descent_ticks + 2)
         return attack if distance <= start else transit
 
@@ -1041,6 +1020,10 @@ class JetAgentRuntime:
             or target.hp_remaining <= 0
             or self.committed_payload <= 0
             or self.committed_weapon_type is None
+            or not release_reachable(
+                config.WEAPON_CATALOG[self.committed_weapon_type],
+                target.min_overflight_altitude,
+            )
         ):
             self.committed_target_id = None
             self.committed_weapon_type = None
@@ -1150,6 +1133,17 @@ class JetAgentRuntime:
             target.position[0] + ux * gate_standoff,
             target.position[1] + uy * gate_standoff,
         )
+        # A gate well off the nose and inside the turn circle can't be reached
+        # by turning — the jet would orbit it forever. Extend straight out to
+        # two turn radii, then come back around for a straight-in run.
+        frame = config.JET_FRAME_CATALOG[obs.frame_type]
+        turn_radius = frame.max_speed / math.radians(frame.turn_rate_deg_per_tick)
+        heading = bearing
+        if (
+            distance < 2.0 * turn_radius
+            and angular_distance(obs.current_heading, bearing) > 90.0
+        ):
+            heading = obs.current_heading
         # En route: level pitch + cruise altitude (Phase 51 wings-level ease).
         # Leave roll unset so bank-assist can help the turn toward the gate.
         intent = ActionIntent(
@@ -1157,7 +1151,7 @@ class JetAgentRuntime:
             tick=obs.tick,
             action_type="MOVE",
             target_position=gate,
-            desired_heading=bearing,
+            desired_heading=heading,
             desired_pitch_deg=0.0,
             desired_altitude=run_in_alt,
         )

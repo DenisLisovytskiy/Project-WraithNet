@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict, deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from wraithnet import config
+from wraithnet.altitude_tactics import sam_low_level_radius
 from wraithnet.config import JetFrameType, TargetType, WeaponType
 from wraithnet.generation_schemas import (
     FeasibilityIssue,
@@ -25,10 +26,12 @@ from wraithnet.generation_schemas import (
     ObjectiveFeasibility,
 )
 from wraithnet.scenario_schema import JetSpec, ScenarioConfig
+from wraithnet.schemas import AltitudeRules
 from wraithnet.terrain import (
     TerrainGrid,
     has_line_of_sight,
     is_passable,
+    obstacle_height_at,
     segment_supercover_cells,
 )
 
@@ -157,15 +160,73 @@ def discovery_link_max_distance() -> float:
     return config.SENSOR_RADIUS - max_weapon_range() - DISCOVERY_MARGIN
 
 
+def discovery_observer_altitude(
+    terrain: TerrainGrid,
+    observer_xy: tuple[float, float],
+    *,
+    sam_positions: Sequence[tuple[float, float]] | None = (),
+    frame_types: Iterable[JetFrameType] = (),
+    rules: AltitudeRules | None = None,
+) -> float:
+    """Lowest altitude a jet may fly at ``observer_xy`` (conservative sensor eye).
+
+    Inside the low-level radius of any SAM site jets hug the world floor
+    (obstacle top + terrain clearance); the largest radius among the frames
+    counts. Elsewhere the lowest frame cruise altitude. Gun-threat climbs only
+    raise the eye, so cruise stays conservative over guns. ``sam_positions``
+    None means the SAM layout is not known yet (generation): assume a SAM may
+    be anywhere and take the lower of floor and cruise.
+    """
+    frames = [config.JET_FRAME_CATALOG[f] for f in frame_types] or [
+        config.JET_FRAME_CATALOG["STRIKE_FIGHTER"]
+    ]
+    rules = rules if rules is not None else AltitudeRules()
+    cruise = min(f.cruise_altitude for f in frames)
+    floor = obstacle_height_at(terrain, observer_xy) + rules.terrain_clearance
+    if sam_positions is None:
+        return min(floor, cruise)
+    if sam_positions:
+        radius = max(sam_low_level_radius(f, rules) for f in frames)
+        if any(math.dist(observer_xy, p) <= radius for p in sam_positions):
+            return floor
+    return cruise
+
+
+def scenario_observer_altitude_at(
+    scenario: ScenarioConfig,
+) -> Callable[[tuple[float, float]], float]:
+    """``discovery_observer_altitude`` bound to a scenario's SAMs, jets and rules."""
+    sams = [s.position for s in scenario.sam_sites]
+    sams.extend(t.position for t in scenario.targets if t.target_type == "SAM_SITE")
+    frames = [j.frame_type for j in scenario.jets]
+
+    def at(xy: tuple[float, float]) -> float:
+        return discovery_observer_altitude(
+            scenario.terrain,
+            xy,
+            sam_positions=sams,
+            frame_types=frames,
+            rules=scenario.altitude_rules,
+        )
+
+    return at
+
+
 def has_discovery_los(
     terrain: TerrainGrid,
     observer_xy: tuple[float, float],
     target_xy: tuple[float, float],
+    *,
+    observer_z: float | None = None,
 ) -> bool:
-    """Jet-altitude observer → ground-height target through city columns."""
+    """Jet-altitude observer → ground-height target through city columns.
+
+    ``observer_z`` defaults to ``config.JET_COMBAT_ALTITUDE``.
+    """
+    z = config.JET_COMBAT_ALTITUDE if observer_z is None else observer_z
     return has_line_of_sight(
         terrain,
-        (observer_xy[0], observer_xy[1], config.JET_COMBAT_ALTITUDE),
+        (observer_xy[0], observer_xy[1], z),
         (target_xy[0], target_xy[1], config.GROUND_TARGET_HEIGHT),
     )
 
@@ -176,12 +237,21 @@ def discovery_link_clear(
     b: tuple[float, float],
     *,
     link_max: float | None = None,
+    observer_z_at: Callable[[tuple[float, float]], float] | None = None,
 ) -> bool:
-    """Distance + city-LOS gate for a conservative discovery edge."""
+    """Distance + city-LOS gate for a conservative discovery edge.
+
+    ``observer_z_at`` gives the observer altitude per endpoint (default:
+    ``config.JET_COMBAT_ALTITUDE``).
+    """
     max_d = discovery_link_max_distance() if link_max is None else link_max
     if math.dist(a, b) > max_d:
         return False
-    return has_discovery_los(terrain, a, b) or has_discovery_los(terrain, b, a)
+    za = None if observer_z_at is None else observer_z_at(a)
+    zb = None if observer_z_at is None else observer_z_at(b)
+    return has_discovery_los(terrain, a, b, observer_z=za) or has_discovery_los(
+        terrain, b, a, observer_z=zb
+    )
 
 
 def legal_los_firing_points(
@@ -533,6 +603,7 @@ def _groups_reachable_from_launch(
 
     link_max = discovery_link_max_distance()
     terrain = scenario.terrain
+    z_at = scenario_observer_altitude_at(scenario)
     home = scenario.home_base
     roots: list[str] = []
     for gid, center in group_centers.items():
@@ -552,7 +623,9 @@ def _groups_reachable_from_launch(
                 home[0] + (center[0] - home[0]) * t,
                 home[1] + (center[1] - home[1]) * t,
             )
-        if has_discovery_los(terrain, approach_xy, center):
+        if has_discovery_los(
+            terrain, approach_xy, center, observer_z=z_at(approach_xy)
+        ):
             roots.append(gid)
 
     if not roots:
@@ -563,7 +636,11 @@ def _groups_reachable_from_launch(
     for i, a in enumerate(ids):
         for b in ids[i + 1 :]:
             if discovery_link_clear(
-                terrain, group_centers[a], group_centers[b], link_max=link_max
+                terrain,
+                group_centers[a],
+                group_centers[b],
+                link_max=link_max,
+                observer_z_at=z_at,
             ):
                 adj[a].append(b)
                 adj[b].append(a)
@@ -1093,6 +1170,7 @@ def analyze_feasibility(
     # air fog-of-war chain rooted at the launch ring.
     reachable_groups = _groups_reachable_from_launch(scenario, centers)
     link_max = discovery_link_max_distance()
+    z_at = scenario_observer_altitude_at(scenario)
     for gid in sorted(centers):
         member_types = {
             item.target_type
@@ -1133,13 +1211,19 @@ def analyze_feasibility(
                         home[0] + (center[0] - home[0]) * t,
                         home[1] + (center[1] - home[1]) * t,
                     )
-                if not has_discovery_los(scenario.terrain, approach_xy, center):
+                if not has_discovery_los(
+                    scenario.terrain, approach_xy, center, observer_z=z_at(approach_xy)
+                ):
                     los_blocked = True
             for other_id, other in centers.items():
                 if other_id == gid:
                     continue
                 if math.dist(center, other) <= link_max and not discovery_link_clear(
-                    scenario.terrain, center, other, link_max=link_max
+                    scenario.terrain,
+                    center,
+                    other,
+                    link_max=link_max,
+                    observer_z_at=z_at,
                 ):
                     los_blocked = True
                     break

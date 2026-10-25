@@ -67,6 +67,19 @@ def attack_altitude(weapon: WeaponSpec, transit_altitude: float) -> float:
     return min(transit_altitude, weapon.max_release_altitude - RELEASE_ALTITUDE_MARGIN)
 
 
+def release_reachable(weapon: WeaponSpec, min_overflight_altitude: float) -> bool:
+    """Can a jet get low enough over the target to release this weapon?
+
+    Terrain (roofs/treetops around the target) can hold jets above an
+    unguided weapon's release ceiling; such attacks would orbit forever.
+    """
+    if weapon.max_release_altitude is None:
+        return True
+    # The run aims RELEASE_ALTITUDE_MARGIN under the ceiling but holds the
+    # terrain floor when that is higher; release only needs <= the ceiling.
+    return min_overflight_altitude <= weapon.max_release_altitude
+
+
 def weapon_has_attitude_envelope(weapon: WeaponSpec) -> bool:
     """True when the weapon gates release on roll and/or pitch."""
     return bool(

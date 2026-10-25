@@ -28,10 +28,11 @@ from typing import Literal, Optional
 
 
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 
+from wraithnet import config as _config
 from wraithnet.config import (
 
     BROADCAST_ID,
@@ -69,6 +70,10 @@ class TargetInfo(BaseModel):
     hp_remaining: int = Field(ge=0)
 
     claimed: bool = False
+
+    # Lowest altitude the observer's airframe can safely hold over the target
+    # (terrain look-ahead); unguided weapons capped below it cannot release.
+    min_overflight_altitude: float = Field(default=0.0, ge=0.0)
 
 
 
@@ -130,6 +135,21 @@ class ObservedGunThreat(BaseModel):
 
 
 
+
+
+class AltitudeRules(BaseModel):
+    """Per-scenario altitude safety and tactics knobs (defaults in config)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Minimum height above the roof/treetop/ground under a jet.
+    terrain_clearance: float = Field(default=_config.TERRAIN_CLEARANCE, gt=0.0)
+    # Surface radar missiles cannot engage a jet below this relative altitude.
+    sam_radar_min_engagement_agl: float = Field(
+        default=_config.SAM_RADAR_MIN_ENGAGEMENT_AGL, ge=0.0
+    )
+    # Transit this far above the highest known gun ceiling.
+    gun_ceiling_margin: float = Field(default=_config.GUN_CEILING_MARGIN, ge=0.0)
 
 
 class Observation(BaseModel):
@@ -223,6 +243,7 @@ class Observation(BaseModel):
 
     # Battlespace diagonal for CNP distance normalization (scenario-aware).
     map_diagonal: float = Field(default=MAX_GRID_DISTANCE, gt=0.0)
+    altitude_rules: AltitudeRules = Field(default_factory=AltitudeRules)
 
 
 
