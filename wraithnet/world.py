@@ -210,6 +210,7 @@ class JetAgent(mesa.Agent):
         #   roll_deg:      0 = wings level, + = roll right; stored in [-180, 180).
         self.heading: float = initial_heading % 360.0
         self.desired_heading: float | None = None
+        self.speed_fraction: float = 1.0
         self.pitch_deg: float = 0.0
         self.roll_deg: float = 0.0
         # Phase 51: None = hold current axis (same semantics as desired_heading).
@@ -723,6 +724,9 @@ class WraithNetModel(mesa.Model):
                     jet.defensive_state = "NONE"
                     jet.defensive_threat_id = None
                     jet.notch_hold_progress = 0
+            target_speed = 1.0 if jet.defensive_state == "NOTCH" else intent.speed_fraction
+            step = config.SPEED_FRACTION_STEP
+            jet.speed_fraction += max(-step, min(step, target_speed - jet.speed_fraction))
             if intent.desired_altitude is not None:
                 jet.desired_altitude = intent.desired_altitude
             # Recovery forces pitch toward level; combat takes pitch/roll intents.
@@ -2452,9 +2456,9 @@ class WraithNetModel(mesa.Model):
         return bool(jet.is_rtb and not jet.recovery_abort)
 
     def _ground_speed(self, jet: JetAgent) -> float:
-        """Option A: ground-track speed ≈ max_speed * cos(pitch)."""
+        """Option A: ground-track speed ≈ max_speed * speed_fraction * cos(pitch)."""
         max_speed = config.JET_FRAME_CATALOG[jet.frame_type].max_speed
-        return max_speed * math.cos(math.radians(jet.pitch_deg))
+        return max_speed * jet.speed_fraction * math.cos(math.radians(jet.pitch_deg))
 
     def _forward_flight_destination(self, jet: JetAgent) -> tuple[float, float]:
         """One tick of ground-track airspeed along heading (0=+y, 90=+x)."""

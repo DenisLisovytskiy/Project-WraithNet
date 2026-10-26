@@ -289,6 +289,9 @@ class ActionIntent(BaseModel):
 
     desired_roll_deg: Optional[float] = None
 
+    # Fraction of max_speed to fly at (holding orbit slows down); NOTCH forces 1.
+    speed_fraction: float = Field(default=1.0, gt=0.0, le=1.0)
+
     # Phase 39 — MobilityIntent / FastDefenseIntent fields (alongside primary).
 
     maneuver_defense: Literal["NONE", "NOTCH"] = "NONE"
