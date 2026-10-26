@@ -1029,6 +1029,17 @@ RECOVERY_APPROACH_STANDOFF: float = 6.0
 
 BANK_ASSIST_GAIN: float = 1.0
 
+# Untasked jets on station fly a wide holding orbit around their briefed
+# waypoint instead of re-diving at it every pass (which looped them at full
+# turn rate). Orbit radius is in full-speed turn radii; loiter speed is a
+# fraction of max_speed, eased in/out by SPEED_FRACTION_STEP per tick.
+
+LOITER_RADIUS_TURN_RADII: float = 3.0
+
+LOITER_SPEED_FRACTION: float = 0.6
+
+SPEED_FRACTION_STEP: float = 0.1
+
 # SW corner of the 100x100 PoC map: away from the fight (Target_A 75,75 /
 
 # Target_B 25,25 / SAM 40,85 / jammer 46,19) and not on a jet spawn. A quiet

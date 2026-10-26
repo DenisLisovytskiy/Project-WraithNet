@@ -463,6 +463,46 @@ def test_out_of_sensor_range_jet_moves_toward_briefed_bunker():
     assert math.dist(start, tuple(model.jets["Jet_1"].pos)) > 0.5
 
 
+def test_untasked_jet_on_station_flies_wide_slow_orbit():
+    """Regression: re-diving at the waypoint looped jets at full turn rate."""
+    waypoint = (50.0, 50.0)
+    model = WraithNetModel(
+        scenario=scenario_from_data(
+            new_scenario_data(
+                jets=[JetSpec(agent_id="Jet_1", position=(50.0, 25.0), payload={"JDAM": 2})],
+                targets=[
+                    TargetSpec(
+                        target_id="Target_1",
+                        position=(95.0, 95.0),
+                        hp_required=2,
+                        target_type="HARDENED_BUNKER",
+                    )
+                ],
+            )
+        )
+    )
+    jet = model.jets["Jet_1"]
+    frame = config.JET_FRAME_CATALOG[jet.frame_type]
+    orbit_r = config.LOITER_RADIUS_TURN_RADII * frame.max_speed / math.radians(
+        frame.turn_rate_deg_per_tick
+    )
+    broker = MessageBroker()
+    runtime = JetAgentRuntime("Jet_1", broker)
+    turns, radii, steps = [], [], []
+    for tick in range(120):
+        obs = model.build_observation("Jet_1", broker)
+        runtime.set_observation(obs.model_copy(update={"briefed_seek_positions": [waypoint]}))
+        before_h, before_p = jet.heading, tuple(jet.pos)
+        model.step({"Jet_1": runtime.decide_intent()})
+        if tick >= 30:
+            turns.append(abs((jet.heading - before_h + 180.0) % 360.0 - 180.0))
+            radii.append(math.dist(tuple(jet.pos), waypoint))
+            steps.append(math.dist(tuple(jet.pos), before_p))
+    assert max(turns) < frame.turn_rate_deg_per_tick / 2
+    assert 0.7 * orbit_r < min(radii) and max(radii) < 1.3 * orbit_r
+    assert max(steps) == pytest.approx(config.LOITER_SPEED_FRACTION * frame.max_speed, rel=0.05)
+
+
 @pytest.mark.asyncio
 async def test_rtb_jet_never_bids_on_cfp_or_becomes_manager():
     broker = MessageBroker()
