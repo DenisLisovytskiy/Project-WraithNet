@@ -13,7 +13,7 @@
 ![asyncio](https://img.shields.io/badge/concurrency-asyncio-0984e3)
 ![Tests](https://img.shields.io/badge/tests-775%20passing-success)
 
-<img src="docs/assets/readme/hero-chase.gif" alt="Chase camera following an interceptor through a city at night" width="900">
+<img src="docs/assets/readme/hero-chase.webp" alt="Chase camera following an interceptor through a city at night" width="900">
 
 <sub>Live replay, chase camera: an interceptor weaves between city blocks while the rest of the swarm works its contracts (radar, HUD and roster on the right).</sub>
 
@@ -59,7 +59,7 @@ Every behaviour you see in the viewer comes out of these negotiations. Nothing i
 | 🌍 **Procedural worlds** | Seeded terrain (cities, forests, water) and enemy layouts. Four difficulty presets. Same seed, same mission |
 | ✅ **Static feasibility analysis** | Before launch, a solver checks that every objective can be discovered (line of sight), reached and killed with the weapons on hand |
 | ⚔️ **Combined arms** | Radar and IR SAMs, AAA guns, jammers, tanks, corvettes, carriers, flares, missile notching, return-to-base and carrier recovery |
-| 🎥 **Smooth 3D replay** | Panda3D viewer with orbit and chase cameras, a radar minimap and a HUD. Discrete ticks are interpolated to 30–60 FPS |
+| 🎥 **Smooth 3D replay** | Panda3D viewer with orbit and chase cameras, a radar minimap and a HUD. Discrete ticks are interpolated to a steady 60 FPS |
 | 🧰 **Built-in scenario editor** | Generate, hand-edit, check feasibility, preview and launch, all from one app. Ships as a Windows `.exe` |
 
 ## See it in action
