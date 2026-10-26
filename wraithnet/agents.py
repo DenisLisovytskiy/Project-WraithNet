@@ -980,25 +980,43 @@ class JetAgentRuntime:
             return self._with_defense(intent, obs)
         if self.committed_target_id is None:
             # Mission brief: transit toward incomplete DESTROY subjects until
-            # sensors acquire them. Hold only when no brief remains or we are
-            # already on station at the nearest waypoint.
+            # sensors acquire them, then orbit on station. Hold only when no
+            # brief remains.
             waypoints = list(obs.briefed_seek_positions)
             if waypoints:
                 nearest = min(
                     waypoints, key=lambda p: math.dist(obs.current_position, p)
                 )
-                if math.dist(obs.current_position, nearest) > 1.0:
+                frame = config.JET_FRAME_CATALOG[obs.frame_type]
+                orbit_r = config.LOITER_RADIUS_TURN_RADII * frame.max_speed / math.radians(
+                    frame.turn_rate_deg_per_tick
+                )
+                distance = math.dist(obs.current_position, nearest)
+                if distance <= 1.5 * orbit_r:
+                    # On station: fly a wide orbit tangent to the circle,
+                    # biased inward/outward by the radial error.
+                    err = max(-1.0, min(1.0, (distance - orbit_r) / orbit_r))
                     bearing = bearing_to(obs.current_position, nearest)
                     intent = ActionIntent(
                         agent_id=self.agent_id,
                         tick=obs.tick,
-                        action_type="MOVE",
-                        target_position=nearest,
-                        desired_heading=bearing,
+                        action_type="IDLE",
+                        desired_heading=(bearing + 90.0 - 60.0 * err) % 360.0,
                         desired_pitch_deg=0.0,
                         desired_altitude=cruise_alt,
+                        speed_fraction=config.LOITER_SPEED_FRACTION,
                     )
                     return self._with_defense(intent, obs)
+                intent = ActionIntent(
+                    agent_id=self.agent_id,
+                    tick=obs.tick,
+                    action_type="MOVE",
+                    target_position=nearest,
+                    desired_heading=bearing_to(obs.current_position, nearest),
+                    desired_pitch_deg=0.0,
+                    desired_altitude=cruise_alt,
+                )
+                return self._with_defense(intent, obs)
             intent = ActionIntent(
                 agent_id=self.agent_id,
                 tick=obs.tick,
