@@ -1,6 +1,6 @@
-# Phase 65 — Documentation & Repository Hygiene Closeout
+# Phase 56 — Documentation & Repository Hygiene Closeout
 
-> **LLM implementation prompt:** This phase is independent of Phases 56–64 and can be done at any time; doing it first is reasonable. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §1. Every item below is a small, mechanical correction of something that is stale or untracked. Do not redesign anything and do not rewrite old phase documents: they are the historical record. Add status notes and new documents instead.
+> **LLM implementation prompt:** Assume Phases 0–54 are in the code and Phase 55 is unmerged. This phase depends on nothing after it and goes first, so that later phases build on a `main` whose documents are true. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §1. Every item below is a small, mechanical correction of something that is stale or untracked. Do not redesign anything and do not rewrite old phase documents: they are the historical record. Add status notes and new documents instead.
 
 ## Goal
 
@@ -23,12 +23,12 @@ Add one status line under the title of each design document, without touching th
 |---|---|---|
 | `21_Smooth_Live_Motion` | "Nothing in this document is implemented yet" | Phases 46–49 implemented (`viewer3d/motion.py`, `test_viewer3d_motion*.py`, `test_viewer3d_phase49.py`) |
 | `22_Authoritative_3D_Flight_Attitude` | "Nothing in this document is implemented yet" | Phases 50–55 implemented (after Part A) |
-| `20_Risk_Aware_CNP_Negotiation` | no status | Phase 45 partially implemented; link to Phase 61 for the remainder |
+| `20_Risk_Aware_CNP_Negotiation` | no status | Phase 45 partially implemented; link to Phase 63 for the remainder |
 | `12_Flight_Dynamics_and_Weapon_Effects`, `09_3D_Live_Visualization…` | altitude is cosmetic | superseded for altitude/attitude by doc 22 (part of the unmerged Phase 55 commit) |
 
 ## Part C — write down what was built without a phase
 
-These changes are in the code and have no phase document, and most have no design document. Add one retrospective document, `docs/27_Post_Phase_Changes_Record.md`, with a short section per item: what it does, where it lives, which commit, which tests cover it.
+These changes are in the code and have no phase document, and most have no design document. Add one retrospective document, `docs/24_Post_Phase_Changes_Record.md`, with a short section per item: what it does, where it lives, which commit, which tests cover it.
 
 | Change | Commit(s) | Main files |
 |---|---|---|
@@ -48,14 +48,14 @@ The altitude work is the largest of these and changes agent behaviour and feasib
 
 * Test count: badge and text say 775; the suite collects 1,012. Remove the hard-coded number or generate it.
 * "~36k lines of application code": `wraithnet` + `viewer` + `viewer3d` + `launcher` measure about 32.8k lines.
-* The sequence diagram shows a `DONE` message and "known threats" in the CFP. `DONE` does not exist in the protocol (see Phase 60); fix the diagram now and again when Phase 60 lands.
+* The sequence diagram shows a `DONE` message and "known threats" in the CFP. `DONE` does not exist in the protocol (see Phase 62); fix the diagram now and again when Phase 62 lands.
 * "100-seed regression matrix: every generated STANDARD mission must pass the feasibility check" is true and should stay, with one added sentence: feasibility is a static check, and the solve rate of the simulated mission is reported separately (link Phase 59 results once they exist).
 * The mission-debrief screenshot (CONTESTED seed 6) is the one CONTESTED seed out of eight sampled that the swarm currently solves. Keep it; do not present it as typical until Phase 59 is done.
 
 ## Part E — small repo items
 
-* `requirements.txt` lists `networkx`; nothing imports it. Remove it, or leave it for Phase 63 with a comment.
-* No `pyproject.toml`, no CI workflow (both arrive in Phase 56 Part D; do not duplicate here).
+* `requirements.txt` lists `networkx`; nothing imports it. Remove it, or leave it for Phase 65 with a comment.
+* No `pyproject.toml`, no CI workflow (both arrive in Phase 58 Part D; do not duplicate here).
 * `scenarios/custom.json` and `custom2.json` are ~40,000 lines each because terrain cells are stored expanded and pretty-printed. Either store terrain compactly (seed + parameters when the scenario is unmodified from generation) or stop committing generated scenarios. Decide and record the decision; do not silently change the schema.
 * Phase 15 names `tests/test_main_cli.py`; the tests live in `tests/test_main.py`. Phase 38 names `MissileTrackEvent`, which was never created. Note both in the record document.
 * `results/` retention is handled in Phase 57 Part E.
@@ -64,7 +64,7 @@ The altitude work is the largest of these and changes agent behaviour and feasib
 
 1. Phase 55 commit merged; `pytest tests/test_flight_attitude_track_acceptance.py` green on `main`.
 2. No design document claims "nothing implemented" for work that is in the code.
-3. `docs/27_Post_Phase_Changes_Record.md` covers every row of the Part C table.
+3. `docs/24_Post_Phase_Changes_Record.md` covers every row of the Part C table.
 4. Every number in the README can be reproduced with a stated command.
 
 ## Non-goals

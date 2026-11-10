@@ -1,6 +1,6 @@
-# Phase 61 — Shared Threat Picture & Phase 45 Completion
+# Phase 63 — Shared Threat Picture & Phase 45 Completion
 
-> **LLM implementation prompt:** Assume Phases 0–60 are complete. Read `docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md` completely, then `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §1.3, which lists what Phase 45 specified and the code does not do. This phase finishes that list. Nothing here is a new idea; it is the unbuilt remainder of an accepted design. Where the design document and this file disagree, the design document wins. Run the Phase 57 sweep before and after and attach both tables.
+> **LLM implementation prompt:** Assume Phases 0–62 are complete. Read `docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md` completely, then `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §1.3, which lists what Phase 45 specified and the code does not do. This phase finishes that list. Nothing here is a new idea; it is the unbuilt remainder of an accepted design. Where the design document and this file disagree, the design document wins. Run the Phase 57 sweep before and after and attach both tables.
 
 ## Goal
 
@@ -32,11 +32,11 @@ Bids are compared on the same information, targets are opened in priority order,
 
 Replace the position-blind maximum in `exposure_from_threat_contacts` with what the design asked for: sample the bidder's planned path (current position → release point → recovery base, at the planned altitude for each leg) at a fixed step, and for each threat kind accumulate the fraction of samples inside a known envelope and below its ceiling, weighted by readiness and confidence. Keep the result in `[0, 1]`.
 
-This is the change that makes the survival term differ between bidders. Until Phase 63 adds routing the path is the straight line the jet will actually fly, which is exactly what should be priced.
+This is the change that makes the survival term differ between bidders. Until Phase 65 adds routing the path is the straight line the jet will actually fly, which is exactly what should be priced.
 
 ## Part B — reservations in the auction
 
-1. The manager's CFP carries the rounds it has already accepted for this target and not yet seen resolved. With Phase 60 `REPORT`/`HEARTBEAT` messages the manager knows this from its contractors; without Phase 60, read the world's `unreserved_hp` through the observation (add the field to `TargetInfo`), never through the model handle.
+1. The manager's CFP carries the rounds it has already accepted for this target and not yet seen resolved. With Phase 62 `REPORT`/`HEARTBEAT` messages the manager knows this from its contractors; without Phase 62, read the world's `unreserved_hp` through the observation (add the field to `TargetInfo`), never through the model handle.
 2. `AwardContext.reserved_hp` and `unreserved_hp` are filled from it.
 3. On a contractor `REPORT` of a non-hit, the manager reduces the reservation and reopens the shortfall.
 
@@ -49,7 +49,7 @@ Implement doc 20 §2 steps 1–4 with the one-round bound:
 3. Manager forms the sorted union, broadcasts one `RISK_UPDATE` with the new context hash.
 4. Bidders reprice once and send final proposals; the manager rejects any proposal whose hash does not match.
 
-With Phase 60 latency above zero this costs extra ticks. Make the round skippable when no bidder returned a new contact.
+With Phase 62 latency above zero this costs extra ticks. Make the round skippable when no bidder returned a new contact.
 
 ## Part D — target ordering
 
@@ -78,4 +78,4 @@ Delete the scalar-bid branch in `_resolve_contract` and the fabricated snapshot.
 ## Non-goals
 
 * No new scoring factors and no weight retuning beyond what the before/after sweep forces.
-* No multi-task bidding (Phase 62).
+* No multi-task bidding (Phase 64).

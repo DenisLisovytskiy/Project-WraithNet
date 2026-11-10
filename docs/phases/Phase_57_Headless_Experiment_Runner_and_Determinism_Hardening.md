@@ -10,7 +10,7 @@ Make "run N seeded missions without a window and get a table of outcomes" a one-
 
 * GUI and simulation are already separate processes. The viewer only consumes a TCP tick stream, so there is no "GUI mode" inside the simulation to switch off.
 * Headless today is single-run only. It needs a scenario file that only the editor GUI can generate, always writes `trace.jsonl` plus two CSVs, prints the summary as text, and has a fixed 1000-tick cap.
-* Trace writing costs about 16% of run time. The simulation itself is the cost (Phase 58).
+* Trace writing costs about 16% of run time. The simulation itself is the cost (Phase 60).
 * Repeated in-process runs of the same scenario gave identical summaries (16 of 16 checked), but the tick loop still contains a wall-clock timeout (`MAX_TICK_WAIT_SECONDS` around the negotiation `gather`). On a slow or loaded machine that timeout can cut a negotiation short and change the outcome. A batch of parallel workers is exactly the situation that triggers it.
 
 ## Part A — single-run flags on `wraithnet.main`
@@ -50,7 +50,7 @@ Do not add plotting, a database, or a config-file format. `runs.jsonl` loads wit
 The tick must be a pure function of state.
 
 1. Replace the `asyncio.wait_for(..., timeout=config.MAX_TICK_WAIT_SECONDS)` guard with a bounded number of cooperative scheduling rounds. The bid window already counts yields (`_await_bid_window`); give the tick-level guard the same treatment.
-2. Remove the `BID_TIMEOUT_SECONDS` sleep path from production code. Seven test files monkeypatch it through a copy-pasted `fast_cnp` fixture; move those tests to the tick clock (`_tick_clock` already exists for this) and delete the fixture copies. Coordinate with Phase 56.
+2. Remove the `BID_TIMEOUT_SECONDS` sleep path from production code. Seven test files monkeypatch it through a copy-pasted `fast_cnp` fixture; move those tests to the tick clock (`_tick_clock` already exists for this) and delete the fixture copies. Phase 58 then consolidates the remaining shared test helpers.
 3. Fix every unseeded RNG warning. The test run prints Mesa's "no random number generator specified… can make models non-reproducible" warning from `mesa/space.py`.
 
 ## Part D — determinism test

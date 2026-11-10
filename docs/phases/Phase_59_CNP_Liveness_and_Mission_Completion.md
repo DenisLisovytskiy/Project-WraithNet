@@ -46,8 +46,8 @@ The analyser says the roster can cover every objective; the swarm runs dry anywa
 Then fix what the ledger shows. The candidates, in the order to check them:
 
 1. **Scarce weapons spent on targets that did not need them** (an AGM-65 on a bunker a JDAM would kill). If confirmed: add a scarcity term to the bid so a weapon that is the only answer to some known live target is priced higher for other targets.
-2. **Misses and intercepts not followed up**, leaving a target at 1 HP with the claim still held. Phase 60 Part A fixes the reporting; here make sure the contractor re-requests rather than silently going idle.
-3. **Overkill**: several jets releasing at a target the first hit already destroyed. The world keeps `damage_reservations` for in-flight rounds but the CFP always sends `reserved_hp=0`. Wiring that through is Phase 61 Part B; pull it forward if the ledger says this is the main loss.
+2. **Misses and intercepts not followed up**, leaving a target at 1 HP with the claim still held. Phase 62 Part A fixes the reporting; here make sure the contractor re-requests rather than silently going idle.
+3. **Overkill**: several jets releasing at a target the first hit already destroyed. The world keeps `damage_reservations` for in-flight rounds but the CFP always sends `reserved_hp=0`. Wiring that through is Phase 63 Part B; pull it forward if the ledger says this is the main loss.
 4. **Feasibility optimism**: the analyser counts nominal damage and ignores delivery probability. If the swarm really cannot do the mission with expected losses, the analyser is wrong, not the swarm: add an expected-damage check and report `feasible_nominal` and `feasible_expected` separately.
 
 ## Part D — finish when the job is done
@@ -56,7 +56,7 @@ Investigate the 12-of-12 run (NIGHTMARE seed 3): find which required objective w
 
 ## Part E — stuck contractor
 
-Some stalled runs hold jets in `CONTRACTOR` from tick 200 to tick 999. Add a progress watchdog: a contractor that has not closed distance to its release gate or released a weapon for `CONTRACT_PROGRESS_TTL_TICKS` drops the commitment and reports it (Phase 60 `REPORT ABORTED`; until then, close the claim). Find the root cause for at least one seed before relying on the watchdog.
+Some stalled runs hold jets in `CONTRACTOR` from tick 200 to tick 999. Add a progress watchdog: a contractor that has not closed distance to its release gate or released a weapon for `CONTRACT_PROGRESS_TTL_TICKS` drops the commitment and reports it (Phase 62 `REPORT ABORTED`; until then, close the claim). Find the root cause for at least one seed before relying on the watchdog.
 
 ## Tests
 
@@ -76,4 +76,4 @@ Some stalled runs hold jets in `CONTRACTOR` from tick 200 to tick 999. Add a pro
 ## Non-goals
 
 * No generator or preset retuning.
-* No new protocol messages (Phase 60) and no multi-task queues (Phase 62).
+* No new protocol messages (Phase 62) and no multi-task queues (Phase 64).

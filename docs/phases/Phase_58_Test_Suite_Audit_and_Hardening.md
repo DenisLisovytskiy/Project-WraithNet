@@ -1,6 +1,6 @@
-# Phase 56 — Test Suite Audit & Hardening
+# Phase 58 — Test Suite Audit & Hardening
 
-> **LLM implementation prompt:** Assume Phases 0–55 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §2 before touching a test; it holds the measurements this phase starts from. The job is to make the suite tell the truth about the product, not to raise the test count. Do not delete a test without recording what it covered and what covers that now. Do not change production code in this phase except where Part E says so. Every claim in the final report must come from a command you ran.
+> **LLM implementation prompt:** Assume Phases 0–57 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §2 before touching a test; it holds the measurements this phase starts from. The job is to make the suite tell the truth about the product, not to raise the test count. Do not delete a test without recording what it covered and what covers that now. Do not change production code in this phase except where Part E says so. Every claim in the final report must come from a command you ran.
 
 ## Goal
 
@@ -20,7 +20,7 @@ So the suspicion "the tests are weak" is half right. They are strong where a sin
 
 ## Part A — inventory and classification
 
-Produce `docs/24_Test_Suite_Audit_Report.md` with one row per test file: test count, runtime, what layer it exercises (pure function / world step / agent / bridge end-to-end / generator / viewer logic / viewer with window), and a verdict from this fixed list:
+Produce `docs/25_Test_Suite_Audit_Report.md` with one row per test file: test count, runtime, what layer it exercises (pure function / world step / agent / bridge end-to-end / generator / viewer logic / viewer with window), and a verdict from this fixed list:
 
 * **KEEP** — fails when the behaviour breaks.
 * **STRENGTHEN** — runs the right code but asserts too little.
@@ -71,7 +71,7 @@ Add a small set of end-to-end tests that assert on *results*, each on a fixed se
 
 ## Part D — structure
 
-* `tests/conftest.py` with the shared fixtures (`fast_cnp` once, common scenario and observation builders). Remove the copies.
+* `tests/conftest.py` with the shared fixtures (common scenario and observation builders). Remove the copies. Phase 57 Part C already removed the wall-clock bid timeout and with it the seven `fast_cnp` copies; if any survived, they go here once.
 * `pyproject.toml` pytest section: register markers `slow`, `gui`, `e2e`; `asyncio_mode`; `filterwarnings = error` for warnings raised from `wraithnet` itself (the unseeded-RNG warning from Mesa is a real reproducibility smell).
 * Default run excludes `slow` and `gui`. Target: default lane under 60 s. Full lane stays available with `-m ""`.
 * Replace wall-clock polling in viewer tests with stepping the task manager a fixed number of frames against a fake clock. A test that can fail because the machine was busy is a broken test.
@@ -91,7 +91,7 @@ Anything else found is written into the audit report and handed to the phase tha
 
 ## Acceptance criteria
 
-1. `docs/24_Test_Suite_Audit_Report.md` exists with a verdict for every test file, coverage numbers, and mutation scores for the scoped modules.
+1. `docs/25_Test_Suite_Audit_Report.md` exists with a verdict for every test file, coverage numbers, and mutation scores for the scoped modules.
 2. Default lane under 60 s, green on three consecutive runs on Windows.
 3. No test without an assertion; no test asserting on source text; no test with a wall-clock deadline.
 4. Both known surviving mutants are killed.

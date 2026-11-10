@@ -1,6 +1,6 @@
-# Phase 58 — Simulation Hot-Path Performance
+# Phase 60 — Simulation Hot-Path Performance
 
-> **LLM implementation prompt:** Assume Phases 0–57 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §4. Profile first with the Phase 57 runner and `cProfile`; change only what the profile names. Outcomes must stay byte-identical: every seed in the regression set must produce the same summary before and after. No new dependency, no numpy rewrite, no multithreading inside a run.
+> **LLM implementation prompt:** Assume Phases 0–59 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §4. The numbers below were taken before Phase 59, when most runs stalled for 1000 ticks; re-measure before starting, because shorter runs and fewer empty auctions change the totals (the terrain share should stay). Profile first with the Phase 57 runner and `cProfile`; change only what the profile names. Outcomes must stay byte-identical: every seed in the regression set must produce the same summary before and after. No new dependency, no numpy rewrite, no multithreading inside a run.
 
 ## Goal
 
@@ -45,7 +45,7 @@ Pick one. Do not do both speculatively.
 
 ## Part D — benchmark guard
 
-Add `tests/test_perf_budget.py` with one fixed generated scenario and a generous tick-rate floor (for example: must exceed 3× the pre-phase rate on the same machine class, asserted as ticks per second with wide margin). Mark it `slow` (Phase 56 introduces the marker) so it does not run in the default quick lane.
+Add `tests/test_perf_budget.py` with one fixed generated scenario and a generous tick-rate floor (for example: must exceed 3× the pre-phase rate on the same machine class, asserted as ticks per second with wide margin). Mark it `slow` (Phase 58 introduces the marker) so it does not run in the default quick lane.
 
 Record before/after numbers for the 16-mission set in the PR description.
 

@@ -1,6 +1,6 @@
-# Phase 64 — Baseline Allocators & Comparative Experiments
+# Phase 61 — Baseline Allocators & Comparative Experiments
 
-> **LLM implementation prompt:** Assume Phases 0–63 are complete (Phases 56–59 are the hard prerequisites; 60–63 only add more things to compare). Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §6. This phase adds no new swarm behaviour. It adds reference points and a fixed experiment, so that every claim about the negotiation ("risk-aware bidding helps", "it degrades gracefully under jamming") is a number from a reproducible command. Baselines live in their own module and never touch `agents.py` logic; they plug in at the single point where targets are assigned.
+> **LLM implementation prompt:** Assume Phases 0–60 are complete. This phase comes before the backbone changes on purpose: Phases 62–65 each rerun the matrix defined here and report against it. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §6. This phase adds no new swarm behaviour. It adds reference points and a fixed experiment, so that every claim about the negotiation ("risk-aware bidding helps", "it degrades gracefully under jamming") is a number from a reproducible command. Baselines live in their own module and never touch `agents.py` logic; they plug in at the single point where targets are assigned.
 
 ## Goal
 
@@ -38,7 +38,7 @@ Baselines ignore jamming by construction (they are not on the radio). State that
 
 ## Part C — the experiment
 
-A fixed, versioned matrix in `experiments/allocation_v1.json`: presets × ≥100 seeds × allocators, plus for `cnp` only a degradation sweep over jammer count and (after Phase 60) radio range, latency and loss.
+A fixed, versioned matrix in `experiments/allocation_v1.json`: presets × ≥100 seeds × allocators, plus for `cnp` only a degradation sweep over jammer count and (after Phase 62) radio range, latency and loss.
 
 Metrics per cell, all already in `summarize` or added by Phase 57: solve rate, outcome mix, median ticks to completion, jets lost, rounds expended per target HP destroyed, overkill, total distance, messages sent.
 
@@ -60,7 +60,7 @@ Using Phase 57 `--config-override`, vary each `bid_utility` weight one at a time
 
 * Each baseline on a 3-jet, 3-target hand-built scenario produces the expected assignment.
 * `central_oracle` total utility ≥ every other allocator's on small cases (it is the optimum by construction).
-* Allocator seam: with `cnp`, the Phase 58 equivalence fixture is unchanged.
+* Allocator seam: with `cnp`, the Phase 60 equivalence fixture is unchanged.
 * Statistics helper: bootstrap interval of a constant sample has zero width; paired difference of identical runs is zero.
 
 ## Acceptance criteria

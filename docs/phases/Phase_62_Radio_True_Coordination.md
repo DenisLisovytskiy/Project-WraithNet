@@ -1,6 +1,6 @@
-# Phase 60 — Radio-True Coordination (Remove the Omniscient Shortcuts)
+# Phase 62 — Radio-True Coordination (Remove the Omniscient Shortcuts)
 
-> **LLM implementation prompt:** Assume Phases 0–59 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §5 and the current `wraithnet/broker.py`, `wraithnet/bridge.py` and `wraithnet/agents.py` before coding. The README says there is no central commander and that jets coordinate only over a jammable radio. Four mechanisms currently bypass the radio. Replace each with a message-based equivalent, one part at a time, each behind a scenario/config switch so Phase 64 can compare old and new. Run the Phase 57 seed sweep after every part and record the outcome table in the PR.
+> **LLM implementation prompt:** Assume Phases 0–61 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §5 and the current `wraithnet/broker.py`, `wraithnet/bridge.py` and `wraithnet/agents.py` before coding. The README says there is no central commander and that jets coordinate only over a jammable radio. Four mechanisms currently bypass the radio. Replace each with a message-based equivalent, one part at a time, each behind a scenario/config switch so Phase 61 can compare old and new. Run the Phase 57 seed sweep after every part and record the outcome table in the PR.
 
 ## Goal
 
@@ -71,7 +71,7 @@ Replace `agent._model` with two narrow injections: a `tick_clock` callable (alre
 * Claims: two managers claim the same target on the same tick in two partitions; after reconnect exactly one contract survives and the loser's contractors are released.
 * Link model: out-of-range jet receives nothing; relay delivers across two hops; latency 2 delays a CFP by exactly 2 ticks; loss is reproducible for a fixed seed and differs across seeds.
 * Information boundary: Part E test.
-* Regression: with all new switches off, the Phase 58 equivalence fixture is unchanged.
+* Regression: with all new switches off, the Phase 60 equivalence fixture is unchanged.
 
 ## Acceptance criteria
 
@@ -83,4 +83,4 @@ Replace `agent._model` with two narrow injections: a `tick_clock` callable (alre
 ## Non-goals
 
 * No encryption, spoofing, or adversarial message injection.
-* No change to bid scoring (Phase 61) or to how many tasks a jet may hold (Phase 62).
+* No change to bid scoring (Phase 63) or to how many tasks a jet may hold (Phase 64).

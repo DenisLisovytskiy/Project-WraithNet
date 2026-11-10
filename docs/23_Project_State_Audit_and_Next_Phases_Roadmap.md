@@ -55,7 +55,7 @@ This is a presence check, not a re-run of every phase's acceptance criteria.
 | Targets opened in objective-priority order | Opened in the order they were first seen |
 | Scalar bid fields removed after migration | Legacy path remains, with a fabricated bidder snapshot |
 
-The typed schemas, the proposal list, the dynamic-programming award selection, the flare/notch readiness maths and the negotiation audit log are all there and well tested. What is missing is the information those mechanisms were meant to run on. Details and fixes: Phase 61.
+The typed schemas, the proposal list, the dynamic-programming award selection, the flare/notch readiness maths and the negotiation audit log are all there and well tested. What is missing is the information those mechanisms were meant to run on. Details and fixes: Phase 63.
 
 ### 1.4 Built without a phase
 
@@ -71,7 +71,7 @@ The typed schemas, the proposal list, the dynamic-programming award selection, t
 | Tactical altitude: per-scenario rules, terrain look-ahead, minimum overflight altitude, nose-flown climbs, crash log, feasibility altitude checks | `464add7`, `d5e1f2a` |
 | Holding orbit on station | `c7c2919` (not yet on `main`) |
 
-Phase 65 writes these down.
+Phase 56 writes these down.
 
 ## 2. Test suite
 
@@ -98,7 +98,7 @@ Limits: 18 hand-picked mutants, a subset of the suite. It is a sample, not a sco
 
 **What the suite does not cover.** Nothing fails when a generated mission stalls (§3). `summarize()["objective_outcomes"]` is always empty, because it reads `model.objective_states`, which nothing sets, and `metrics.py` reads every field through `getattr(..., default)`. The 25-seed and 100-seed matrices check that scenarios are *generated* feasible; they do not run them.
 
-Conclusion: unit-level protection is real. System-level protection is missing. Phase 56.
+Conclusion: unit-level protection is real. System-level protection is missing. Phase 58.
 
 ## 3. Mission outcomes
 
@@ -155,7 +155,7 @@ Profile of one 1000-tick CONTESTED run:
 
 **Determinism.** Each of the 16 scenarios was run three times in one process (twice bare, once with a trace recorder); summaries matched in all 16. Not tested: separate processes, different hash seeds, loaded machine. The tick loop contains a wall-clock timeout (`MAX_TICK_WAIT_SECONDS`) that can truncate a negotiation on a slow machine.
 
-Phases 57 and 58.
+Phases 57 and 60.
 
 ## 5. The agent backbone: what it is and where it is thin
 
@@ -166,38 +166,40 @@ Where it is thin:
 | Area | Today | Phase |
 |---|---|---|
 | Liveness | Empty auctions repeat every tick; no backoff; jets with no useful weapons never leave | 59 |
-| Decentralisation | Claims are a global lock in the broker, readable and writable while jammed; the bridge tells managers about losses and recalls everyone at mission end; agents hold a handle to the world model | 60 |
-| Protocol | No message from contractor to manager. A contractor that fails or gives up is silent; the target stays locked until TTL | 60 |
-| Radio | Infinite range, zero latency, no loss; jamming is all-or-nothing | 60 |
-| Information | Threats are not remembered or shared; risk is not geometric; reservations are not used (§1.3) | 61 |
-| Commitment | One task per jet, never given back, no ordering between targets, managing blocks bidding | 62 |
-| Behaviour | One 220-line decision method; straight-line movement; altitude is the only reaction to a threat | 63 |
-| Evidence | No baseline to compare the swarm against; weights tuned by eye | 64 |
+| Evidence | No baseline to compare the swarm against; weights tuned by eye | 61 |
+| Decentralisation | Claims are a global lock in the broker, readable and writable while jammed; the bridge tells managers about losses and recalls everyone at mission end; agents hold a handle to the world model | 62 |
+| Protocol | No message from contractor to manager. A contractor that fails or gives up is silent; the target stays locked until TTL | 62 |
+| Radio | Infinite range, zero latency, no loss; jamming is all-or-nothing | 62 |
+| Information | Threats are not remembered or shared; risk is not geometric; reservations are not used (§1.3) | 63 |
+| Commitment | One task per jet, never given back, no ordering between targets, managing blocks bidding | 64 |
+| Behaviour | One 220-line decision method; straight-line movement; altitude is the only reaction to a threat | 65 |
 
 ## 6. Roadmap
 
-| Phase | Title | Depends on | Why this order |
-|---|---|---|---|
-| 56 | Test suite audit and hardening | — | Makes later changes safe to judge |
-| 57 | Headless experiment runner and determinism | — | The measuring instrument for everything after |
-| 58 | Simulation hot-path performance | 57 | Makes sweeps cheap |
-| 59 | CNP liveness and mission completion | 57 | Fixes the largest visible defect |
-| 60 | Radio-true coordination | 59 | Makes the central claim true |
-| 61 | Shared threat picture and Phase 45 completion | 60 (partly) | Gives bids real information |
-| 62 | Multi-task commitment, decommitment, precedence | 60, 61 | Largest behaviour change; needs a design doc first |
-| 63 | Behaviour layer and threat-aware routing | 61 | Refactor first, then routing |
-| 64 | Baseline allocators and comparative experiments | 57–59 | Can start once 59 is done; rerun after each later phase |
-| 65 | Documentation and repository hygiene | — | Independent; cheap; can go first |
+Phase numbers are the order of work.
 
-Recommended first batch: 65, 57, 56, then 59. After that every further phase can be judged by a sweep table instead of a replay.
+| Phase | Title | Depends on | Why here |
+|---|---|---|---|
+| 56 | Documentation and repository hygiene | — | Independent and cheap; lands the unmerged Phase 55 before anything builds on `main` |
+| 57 | Headless experiment runner and determinism | — | The measuring instrument for everything after |
+| 58 | Test suite audit and hardening | 57 | The safety net before behaviour changes; reuses the runner for outcome tests |
+| 59 | CNP liveness and mission completion | 57, 58 | Fixes the largest visible defect |
+| 60 | Simulation hot-path performance | 57, 59 | Makes large sweeps cheap; profiled after the stalls are gone, because they distort where time goes |
+| 61 | Baseline allocators and comparative experiments | 57–60 | The yardstick has to exist before the backbone is changed; its matrix is rerun after each later phase |
+| 62 | Radio-true coordination | 59, 61 | Makes the central claim true |
+| 63 | Shared threat picture and Phase 45 completion | 62 | Gives bids real information; uses 62's contractor messages |
+| 64 | Multi-task commitment, decommitment, precedence | 62, 63 | Largest behaviour change; needs a design doc first |
+| 65 | Behaviour layer and threat-aware routing | 63, 64 | Refactor first, then routing and the two cooperative behaviours |
+
+Phases 56–59 are the first batch. From Phase 60 on, every phase is judged by a sweep table instead of a replay, and from Phase 62 on, against the Phase 61 baselines.
 
 ## 7. Considered and left out
 
-* **LLM-driven or learned agents.** The value of the project is an inspectable, deterministic protocol. A learned policy would need the experiment harness of Phase 64 first, and would replace the thing being studied.
-* **Bundle consensus (CBBA).** A natural step after Phase 62, deferred until Phase 64 shows that insertion bids leave real value unclaimed.
+* **LLM-driven or learned agents.** The value of the project is an inspectable, deterministic protocol. A learned policy would need the experiment harness of Phase 61 first, and would replace the thing being studied.
+* **Bundle consensus (CBBA).** A natural step after Phase 64, deferred until Phase 61 shows that insertion bids leave real value unclaimed.
 * **Reactive enemy agents** (SAMs that hold fire, relocate, or coordinate). Worth doing, but while the swarm stalls against a static enemy it would only hide the current problems.
 * **Enemy aircraft and air-to-air.** AIM-9X and AMRAAM are in the catalog with nothing to shoot at. Needs its own design document.
-* **Rewriting the simulation core for speed** (numpy, compiled code). One cache is expected to give most of the gain (Phase 58); measure before going further.
+* **Rewriting the simulation core for speed** (numpy, compiled code). One cache is expected to give most of the gain (Phase 60); measure before going further.
 
 ## 8. Reproducing the measurements
 
@@ -208,4 +210,4 @@ pytest -q --durations=25                                  # §2 counts and timin
 python -m wraithnet.main --scenario scenarios/default.json --output-dir <tmp>   # §4 single run
 ```
 
-The mission sweep (§3), the profile (§4) and the mutation check (§2) are what Phase 57 Part B, Phase 58 Part D and Phase 56 Part B turn into permanent, repeatable commands. Until then, the sweep is: for each preset and seed, `generate_scenario(parameters_for_preset(preset, seed=seed))`, `WraithNetBridge(scenario=…)`, `asyncio.run(bridge.run())`, `summarize(bridge.model)`.
+The mission sweep (§3), the profile (§4) and the mutation check (§2) are what Phase 57 Part B, Phase 60 Part D and Phase 58 Part B turn into permanent, repeatable commands. Until then, the sweep is: for each preset and seed, `generate_scenario(parameters_for_preset(preset, seed=seed))`, `WraithNetBridge(scenario=…)`, `asyncio.run(bridge.run())`, `summarize(bridge.model)`.
