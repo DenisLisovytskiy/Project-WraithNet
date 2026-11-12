@@ -1,5 +1,9 @@
 # Phase 57 — Headless Experiment Runner & Determinism Hardening
 
+> **Status: DONE (2026-11-12).** `python -m wraithnet.main` takes `--generate/--seed`, `--max-ticks`, `--no-trace` and `--summary-json`; `python -m wraithnet.experiment` runs a batch of seeds into `runs.jsonl`. The tick has no wall-clock wait left (`BID_TIMEOUT_SECONDS` and `MAX_TICK_WAIT_SECONDS` are removed; the guard is `MAX_TICK_NEGOTIATION_YIELDS`). A 32-mission sweep (4 presets, seeds 0–7) gave identical rows before and after that change, and it reproduces the doc 23 §3 table. GUI run folders are pruned to the newest 20.
+>
+> **Found while doing it, handed to Phase 62 Part C:** the outcome of a mission depends on how many scheduling rounds pass between the end of negotiation and the collection of intents. A message still in a mailbox at that moment (for example an `ACCEPT`) takes effect one tick later. It is deterministic, so it is not a reproducibility bug, but the delivery point is an accident of scheduling, not a rule. The per-tick delivery queue in Phase 62 Part C should make it explicit.
+
 > **LLM implementation prompt:** Assume Phases 0–56 are complete. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §4 (headless findings) before coding. A single headless run already exists (`python -m wraithnet.main`, `python -m launcher --headless`) and the GUI already launches the simulation as exactly that worker subprocess. Do **not** build a second simulation mode. Build the missing layer on top: generate-from-seed on the command line, a batch runner over seeds, and a machine-readable result per run. Reuse `generate_scenario`, `parameters_for_preset`, `WraithNetBridge`, and `metrics.summarize`; add no new dependency.
 
 ## Goal
