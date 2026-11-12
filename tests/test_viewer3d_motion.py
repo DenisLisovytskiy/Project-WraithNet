@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -56,16 +55,6 @@ def _tick(tick: int, jets: list[JetFrame], **overrides) -> TraceTick:
     }
     data.update(overrides)
     return TraceTick(**data)
-
-
-def test_motion_module_has_no_rendering_imports():
-    source = Path("viewer3d/motion.py").read_text(encoding="utf-8")
-    lowered = source.lower()
-    assert "import panda3d" not in lowered
-    assert "from panda3d" not in lowered
-    assert "from direct" not in lowered
-    assert "import pygame" not in lowered
-    assert "from pygame" not in lowered
 
 
 def test_importing_motion_does_not_require_panda3d():

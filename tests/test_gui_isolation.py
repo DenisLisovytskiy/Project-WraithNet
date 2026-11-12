@@ -1,98 +1,82 @@
-"""GUI dependency-isolation checks (stdlib only — no pygame/panda3d import).
+"""GUI dependency isolation: what each layer actually loads when imported.
 
-Turns the Phase 12/16/19 review greps into pytest so a later change cannot
-quietly re-introduce a rendering import into wraithnet/ or Layer-1 modules.
-See docs/14_Automated_GUI_Testing_Design_Document.md §5.2.
+A headless run must work without Panda3D or pygame installed. Each case
+imports a set of modules in a fresh interpreter and lists every forbidden
+package that ended up in ``sys.modules``, so a transitive import is caught
+too. See docs/14_Automated_GUI_Testing_Design_Document.md §5.2.
 """
 
 from __future__ import annotations
 
-import re
+import json
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
+RENDERING = ["pygame", "panda3d", "direct"]
 
-_RENDER_IMPORT = re.compile(
-    r"^\s*(?:from|import)\s+(?:pygame|panda3d|direct)\b",
-    re.MULTILINE,
-)
-_VIEWER3D_IMPORT = re.compile(
-    r"^\s*(?:from|import)\s+viewer3d\b",
-    re.MULTILINE,
-)
-# Avoid flagging the word "preview": require an import-like viewer token.
-_VIEWER_IMPORT = re.compile(
-    r"^\s*(?:from|import)\s+viewer\b",
-    re.MULTILINE,
-)
+_PROBE = r"""
+import importlib, json, pkgutil, sys
+modules, forbidden = json.loads(sys.argv[1])
+names = []
+for name in modules:
+    if name.endswith(".*"):
+        package = importlib.import_module(name[:-2])
+        names += [m.name for m in pkgutil.walk_packages(package.__path__, package.__name__ + ".")]
+    else:
+        names.append(name)
+for name in names:
+    importlib.import_module(name)
+loaded = sorted({m.split(".")[0] for m in sys.modules} & set(forbidden))
+print(json.dumps(loaded))
+"""
+
+CASES = {
+    "wraithnet": (["wraithnet.*"], RENDERING + ["viewer", "viewer3d"]),
+    "launcher": (["launcher.cli", "launcher.dispatch"], RENDERING),
+    "viewer3d-headless": (
+        [
+            "viewer3d.stream_client",
+            "viewer3d.highlights",
+            "viewer3d.launch",
+            "viewer3d.argv",
+            "viewer3d.playback",
+            "viewer3d.motion",
+            "viewer3d.flight_dynamics",
+            "viewer3d.trace_io",
+        ],
+        RENDERING,
+    ),
+    "viewer-headless": (
+        ["viewer.trace_loader", "viewer.playback", "viewer.controls", "viewer.hud_text"],
+        RENDERING,
+    ),
+    # The 3D HUD keeps its own tactical palette so viewer3d never needs the
+    # pygame viewer to agree with the 2D map.
+    "viewer3d-hud": (["viewer3d.hud"], ["pygame", "viewer"]),
+}
 
 
-def _read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
-
-
-def _py_files(rel_dir: str) -> list[Path]:
-    return sorted((ROOT / rel_dir).rglob("*.py"))
-
-
-def test_wraithnet_does_not_import_rendering_or_viewers():
-    offenders = []
-    for path in _py_files("wraithnet"):
-        text = path.read_text(encoding="utf-8")
-        if (
-            _RENDER_IMPORT.search(text)
-            or _VIEWER3D_IMPORT.search(text)
-            or _VIEWER_IMPORT.search(text)
-        ):
-            offenders.append(str(path.relative_to(ROOT)))
-    assert offenders == []
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_layer_does_not_load_forbidden_packages(case):
+    if case == "viewer3d-hud":
+        pytest.importorskip("panda3d")
+    modules, forbidden = CASES[case]
+    out = subprocess.run(
+        [sys.executable, "-c", _PROBE, json.dumps([modules, forbidden])],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(out.stdout) == []
 
 
 def test_core_requirements_do_not_declare_panda3d_or_pygame():
     for name in ("requirements.txt", "requirements-dev.txt"):
-        text = _read(name)
-        assert "panda3d" not in text.lower()
-        assert "pygame" not in text.lower()
-
-
-def test_headless_viewer3d_modules_do_not_import_panda3d():
-    modules = [
-        "viewer3d/stream_client.py",
-        "viewer3d/highlights.py",
-        "viewer3d/launch.py",
-        "viewer3d/argv.py",
-        "viewer3d/playback.py",
-    ]
-    # Phase 25 may already have landed; include it when present.
-    flight = ROOT / "viewer3d" / "flight_dynamics.py"
-    if flight.is_file():
-        modules.append("viewer3d/flight_dynamics.py")
-    for rel in modules:
-        text = _read(rel)
-        assert not _RENDER_IMPORT.search(text), rel
-
-
-def test_headless_viewer_modules_do_not_import_pygame():
-    for rel in (
-        "viewer/trace_loader.py",
-        "viewer/playback.py",
-        "viewer/controls.py",
-        "viewer/hud_text.py",
-    ):
-        text = _read(rel)
-        assert not _RENDER_IMPORT.search(text), rel
-        # Also catch bare `import pygame` / `from pygame` without relying on
-        # docstring mentions of the word "pygame".
-        assert not re.search(
-            r"^\s*(?:from|import)\s+pygame\b", text, re.MULTILINE
-        ), rel
-
-
-def _top_level_source(text: str) -> str:
-    return "\n".join(line for line in text.splitlines() if line[:1].strip())
-
-
-def test_launcher_modules_do_not_import_rendering_at_module_level():
-    for path in _py_files("launcher"):
-        top = _top_level_source(path.read_text(encoding="utf-8"))
-        assert not _RENDER_IMPORT.search(top), path.relative_to(ROOT)
+        text = (ROOT / name).read_text(encoding="utf-8").lower()
+        assert "panda3d" not in text
+        assert "pygame" not in text

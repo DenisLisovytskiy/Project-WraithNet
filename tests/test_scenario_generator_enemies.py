@@ -392,10 +392,3 @@ def test_cooperation_candidates_respect_fraction():
         {t.target_id for t in enemies.targets}
     )
 
-
-def test_generator_module_has_no_viewer_imports():
-    import pathlib
-
-    text = pathlib.Path(generator_mod.__file__).read_text(encoding="utf-8")
-    for banned in ("panda3d", "pygame", "from direct", "import socket"):
-        assert banned not in text

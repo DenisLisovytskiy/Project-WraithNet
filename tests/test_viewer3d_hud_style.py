@@ -492,13 +492,20 @@ def test_set_visible_hides_and_restores_the_whole_hud(hud):
 
 
 def test_chrome_colors_come_from_ui_chrome_but_tactical_colors_stay_local():
-    source = (ROOT / "viewer3d" / "hud.py").read_text(encoding="utf-8")
-    # Chrome tokens must not be redefined here anymore.
-    for name in ("PANEL_BG", "MUTED", "WHITE", "GREEN", "RED", "CYAN"):
-        assert not re.search(rf"^{name}\s*=", source, re.MULTILINE), name
-    assert "from viewer3d.ui_chrome import" in source
-    # ...while the deliberately duplicated tactical palette stays local, so
-    # viewer3d never has to import viewer/ (Pygame) to agree with the 2D map.
+    import viewer3d.hud as hud
+    import viewer3d.ui_chrome as chrome
+
+    # A chrome color hud uses is ui_chrome's own object, never a local copy.
+    colors = [
+        n for n in dir(chrome)
+        if n.isupper() and isinstance(getattr(chrome, n), tuple) and len(getattr(chrome, n)) == 4
+    ]
+    shared = [n for n in colors if hasattr(hud, n)]
+    assert shared
+    for name in shared:
+        assert getattr(hud, name) is getattr(chrome, name), name
+    # The tactical palette is deliberately hud's own (it mirrors the 2D map
+    # without importing the pygame viewer; test_gui_isolation checks that).
     for name in ("ROLE_RING_COLOR", "JET_PALETTE", "TARGET_DOT", "JAMMER_DOT"):
-        assert re.search(rf"^{name}\s*[:=]", source, re.MULTILINE), name
-    assert not re.search(r"^\s*(?:from|import)\s+(?:pygame|viewer)\b", source, re.MULTILINE)
+        assert hasattr(hud, name), name
+        assert not hasattr(chrome, name), name

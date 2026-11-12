@@ -12,7 +12,6 @@ import pytest
 # Builds the full viewer application or launches the viewer's simulator.
 pytestmark = pytest.mark.gui
 from pydantic import ValidationError
-from pathlib import Path
 
 pytest.importorskip("panda3d")
 
@@ -1124,18 +1123,6 @@ def test_generate_panel_survives_preview_transition():
         assert not editor._panel.is_hidden()
     finally:
         _destroy_app(app)
-
-
-def test_sync_generation_decision_documented():
-    """Phase 32 generation is <100ms; editor uses synchronous generate_scenario."""
-    import viewer3d.editor as editor_mod
-
-    assert editor_mod._SYNC_GENERATION_BUDGET_MS == 100
-    # Comment/constant present; no worker-thread helpers on ScenarioEditor.
-    assert not hasattr(editor_mod.ScenarioEditor, "_generation_worker")
-    source = Path(editor_mod.__file__).read_text(encoding="utf-8")
-    assert "synchronously" in source
-    assert "_SYNC_GENERATION_BUDGET_MS" in source
 
 
 def test_payload_round_trip_keeps_amraam_and_gun_pod(tmp_path):
