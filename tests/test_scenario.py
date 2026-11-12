@@ -9,15 +9,8 @@ from wraithnet.bridge import WraithNetBridge
 from wraithnet.metrics import export_results, summarize
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    """Keep wall-clock short under pytest; CNP logic is unchanged."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 @pytest.mark.asyncio
-async def test_scenario_fully_resolves(fast_cnp):
+async def test_scenario_fully_resolves():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
     summary = summarize(bridge.model)
@@ -29,7 +22,7 @@ async def test_scenario_fully_resolves(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_target_a_required_genuine_cooperation(fast_cnp):
+async def test_target_a_required_genuine_cooperation():
     """Target_A (HARDENED_BUNKER, hp=5) needs ≥2 JDAM-carrying contributors."""
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
@@ -43,7 +36,7 @@ async def test_target_a_required_genuine_cooperation(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_target_b_does_not_require_unnecessary_cooperation(fast_cnp):
+async def test_target_b_does_not_require_unnecessary_cooperation():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
     summary = summarize(bridge.model)
@@ -56,7 +49,7 @@ async def test_target_b_does_not_require_unnecessary_cooperation(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_sam_site_destroyed_with_jdam(fast_cnp):
+async def test_sam_site_destroyed_with_jdam():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
 
@@ -69,7 +62,7 @@ async def test_sam_site_destroyed_with_jdam(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_total_missiles_fired_covers_all_targets(fast_cnp):
+async def test_total_missiles_fired_covers_all_targets():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
     summary = summarize(bridge.model)
@@ -80,7 +73,7 @@ async def test_total_missiles_fired_covers_all_targets(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_total_distance_traveled_is_sane(fast_cnp):
+async def test_total_distance_traveled_is_sane():
     """Loose runaway-loop guard for the fixed PoC (strike + mandatory RTB).
 
     Heading-cruise return of all three jets lands near ~1100 on current
@@ -95,7 +88,7 @@ async def test_total_distance_traveled_is_sane(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_distant_jets_received_datalink_from_jet1(fast_cnp):
+async def test_distant_jets_received_datalink_from_jet1():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
 
@@ -111,7 +104,7 @@ async def test_distant_jets_received_datalink_from_jet1(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_scenario_exercises_jamming_and_still_resolves(fast_cnp):
+async def test_scenario_exercises_jamming_and_still_resolves():
     """Prove EW_Jammer_1 actually jammed someone, and Target_B still falls."""
     bridge = WraithNetBridge()
     jammed_ticks: dict[str, int] = {}

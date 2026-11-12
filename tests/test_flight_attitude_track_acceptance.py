@@ -23,12 +23,6 @@ from wraithnet.weapons_release import release_attitude_ok
 from wraithnet.world import WraithNetModel
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 def _single_jet_model(
     frame_type: config.JetFrameType,
     *,
@@ -277,7 +271,7 @@ def test_acceptance_trace_builder_to_motion_preserves_attitude():
 
 
 @pytest.mark.asyncio
-async def test_acceptance_poc_wings_level_mission_still_solves(fast_cnp):
+async def test_acceptance_poc_wings_level_mission_still_solves():
     """Phase 55: fixed PoC remains solvable under attitude defaults.
 
     No summarize golden drift refresh was required — wings-level cruise

@@ -14,14 +14,8 @@ from wraithnet.scenario_generator import generate_scenario
 from wraithnet.scenario_schema import ScenarioConfig
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 @pytest.mark.asyncio
-async def test_generation_result_runs_through_bridge_without_special_casing(fast_cnp):
+async def test_generation_result_runs_through_bridge_without_special_casing():
     # Compact map keeps transit short so 400 ticks remain meaningful in CI.
     result = generate_scenario(
         parameters_for_preset(
@@ -42,10 +36,10 @@ async def test_generation_result_runs_through_bridge_without_special_casing(fast
 
 
 @pytest.mark.asyncio
-async def test_dynamic_calibration_sample_no_exceptions(fast_cnp):
+async def test_dynamic_calibration_sample_no_exceptions():
     """Documented dynamic sample through the real bridge.
 
-    Full calibration notes (BID_TIMEOUT_SECONDS=0.05, MAX_TICK_WAIT_SECONDS=1.0).
+    Full calibration notes.
     Observed on a 10-seed local sample (solved / mission_aborted / swarm_wiped_out):
 
         TRAINING:  solved=10 / aborted=0 / wiped=0   (n=10)
@@ -100,7 +94,7 @@ async def test_dynamic_calibration_sample_no_exceptions(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_auto_balanced_training_often_progresses(fast_cnp):
+async def test_auto_balanced_training_often_progresses():
     result = generate_scenario(
         parameters_for_preset(
             "TRAINING",

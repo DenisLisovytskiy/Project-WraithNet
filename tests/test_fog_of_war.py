@@ -128,7 +128,6 @@ async def test_share_new_contacts_broadcasts_only_changed():
 @pytest.mark.asyncio
 async def test_helper_bids_from_datalink_contact_only(monkeypatch):
     """Helper never directly senses the target; bids purely from Jet_1's contact."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     helper = JetAgentRuntime("Helper", broker)

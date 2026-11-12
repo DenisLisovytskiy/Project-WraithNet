@@ -192,7 +192,6 @@ def test_compute_bid_mobile_radar_requires_agm65():
 
 @pytest.mark.asyncio
 async def test_manager_election_no_duplicate_contracts(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     jet_a = JetAgentRuntime("Jet_A", broker)
     jet_b = JetAgentRuntime("Jet_B", broker)
@@ -238,7 +237,6 @@ async def test_manager_election_no_duplicate_contracts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_multi_winner_partial_fulfillment_for_target_a(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     jet1 = JetAgentRuntime("Jet_1", broker)
     jet2 = JetAgentRuntime("Jet_2", broker)
@@ -284,7 +282,6 @@ async def test_multi_round_renegotiation_accepts_late_bidder(monkeypatch):
     """Force a round-1 shortfall: helper only gets an Observation after the
     first CFP window closes, so round 2 must pick them up. Regression for
     docs/02_Code_Review_Phases_3-5.md §1."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     helper = JetAgentRuntime("Helper", broker)
@@ -303,7 +300,8 @@ async def test_multi_round_renegotiation_accepts_late_bidder(monkeypatch):
     )
 
     async def late_helper_observation() -> None:
-        await asyncio.sleep(0.02)  # mid round-1 bid window
+        for _ in range(3):  # mid round-1 bid window (the window is 6 yields)
+            await asyncio.sleep(0)
         _set_obs(helper, 
             _observation("Helper", (0.0, 0.0), {"JDAM": 9, "AIM9X": 0}, [target])
         )
@@ -336,7 +334,6 @@ async def test_multi_round_renegotiation_accepts_late_bidder(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tie_break_prefers_lexicographically_smaller_agent_id(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     for _ in range(3):  # deterministic across repeated runs
         broker = MessageBroker()
         manager = JetAgentRuntime("Manager", broker)

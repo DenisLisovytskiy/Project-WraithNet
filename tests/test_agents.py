@@ -564,7 +564,6 @@ def test_stable_id_same_inputs_same_output():
 
 @pytest.mark.asyncio
 async def test_contract_ids_deterministic_for_same_seq(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     target = TargetInfo(
         target_id="Target_A",
         position=(75.0, 75.0),

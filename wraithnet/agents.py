@@ -177,9 +177,8 @@ class JetAgentRuntime:
         self._task: asyncio.Task | None = None
         # Phase 37: per-source sequence for deterministic message/contract IDs.
         self._msg_seq: int = 0
-        # When set (bridge), bid windows use logical ticks; else wall-clock shim.
+        # Set by the bridge: logical tick source and negotiation log mirror.
         self._model: WraithNetModel | None = None
-        self._use_tick_bid_timeout: bool = False
         self._bid_deadline_tick: int | None = None
         # Optional override clock for tests (returns current logical tick).
         self._tick_clock: Callable[[], int] | None = None
@@ -240,13 +239,10 @@ class JetAgentRuntime:
     async def _await_bid_window(self) -> bool:
         """Wait for the CFP bid collection window.
 
-        Bridge path (``_use_tick_bid_timeout``): poll/yield until the logical
-        clock reaches ``deadline_tick = current_tick + BID_TIMEOUT_TICKS``, or
-        until ``BID_TIMEOUT_TICKS`` cooperative yields elapse while the world
-        tick is frozen mid-negotiation (in-tick CNP).
-
-        Compat shim (unit tests): ``await asyncio.sleep(BID_TIMEOUT_SECONDS)``
-        so existing monkeypatches keep working.
+        Yield until the logical clock reaches ``deadline_tick = current_tick +
+        BID_TIMEOUT_TICKS``, or until a fixed number of cooperative yields has
+        passed while the world tick is frozen mid-negotiation (in-tick CNP).
+        There is no wall-clock wait: the window is the same on any machine.
 
         Returns False if cancelled mid-wait (claim already aborted).
         """
@@ -256,18 +252,15 @@ class JetAgentRuntime:
         deadline_tick = start_tick + config.BID_TIMEOUT_TICKS
         self._bid_deadline_tick = deadline_tick
         try:
-            if self._use_tick_bid_timeout:
-                yields = 0
-                # Extra yields beyond BID_TIMEOUT_TICKS give mailbox drain room
-                # when multiple IDLE agents finish scan_and_negotiate concurrently.
-                yield_budget = max(config.BID_TIMEOUT_TICKS, 3) * 2
-                while self._current_logical_tick() < deadline_tick:
-                    await asyncio.sleep(0)
-                    yields += 1
-                    if yields >= yield_budget:
-                        break
-                return True
-            await asyncio.sleep(config.BID_TIMEOUT_SECONDS)
+            yields = 0
+            # Extra yields beyond BID_TIMEOUT_TICKS give mailbox drain room
+            # when multiple IDLE agents finish scan_and_negotiate concurrently.
+            yield_budget = max(config.BID_TIMEOUT_TICKS, 3) * 2
+            while self._current_logical_tick() < deadline_tick:
+                await asyncio.sleep(0)
+                yields += 1
+                if yields >= yield_budget:
+                    break
             return True
         except asyncio.CancelledError:
             self._abort_open_management()

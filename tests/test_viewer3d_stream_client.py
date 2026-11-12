@@ -25,12 +25,6 @@ from viewer3d.stream_client import (
 )
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 def _tiny_scenario() -> ScenarioConfig:
     return scenario_from_data(new_scenario_data(
         jets=[
@@ -75,7 +69,7 @@ def _free_port() -> int:
 
 
 @pytest.mark.asyncio
-async def test_stream_client_receives_header_then_ticks(fast_cnp):
+async def test_stream_client_receives_header_then_ticks():
     server = LiveStreamServer(port=0)
     await server.start()
     client = None
@@ -103,7 +97,7 @@ async def test_stream_client_receives_header_then_ticks(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_stream_client_retries_until_server_starts(fast_cnp):
+async def test_stream_client_retries_until_server_starts():
     port = _free_port()
     client = StreamClient(
         "127.0.0.1", port, connect_retries=20, retry_delay_s=0.15

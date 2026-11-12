@@ -38,7 +38,6 @@ class WraithNetBridge:
         }
         for agent in self.agents.values():
             agent._model = self.model
-            agent._use_tick_bid_timeout = True
         self._tasks: list[asyncio.Task] = []
         self.sinks: list[TraceSink] = sinks or []
         for sink in self.sinks:
@@ -121,16 +120,11 @@ class WraithNetBridge:
                     self.model.jets[agent_id].is_rtb = True
                 began_rtb_this_tick.add(agent_id)
 
-        # 2. Negotiate (idle agents only), bounded by MAX_TICK_WAIT_SECONDS
+        # 2. Negotiate (idle agents only), bounded by a count of scheduling
+        # rounds, never by seconds: a slow machine must get the same tick.
         idle_agents = [a for a in self._agents_in_id_order() if a.role == "IDLE"]
         if idle_agents:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*(a.scan_and_negotiate() for a in idle_agents)),
-                    timeout=config.MAX_TICK_WAIT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                pass  # any agent still IDLE will just decide_intent() -> IDLE below
+            await self._negotiate(idle_agents)
 
         # 3. Collect intents (pull, synchronous) in stable agent-id order
         intents = {
@@ -164,6 +158,32 @@ class WraithNetBridge:
         self.broker.expire_stale_contracts(self.model.tick)
         for sink in self.sinks:
             sink.record_tick(self)
+
+    async def _negotiate(self, idle_agents: list[JetAgentRuntime]) -> None:
+        """Run this tick's negotiation, cut off after a fixed number of yields.
+
+        The cut-off is a count of scheduling rounds, so it falls at the same
+        point on any machine. A cancelled manager releases its claim; an agent
+        that is still IDLE afterwards simply decides an IDLE intent.
+        """
+        negotiation = asyncio.gather(*(a.scan_and_negotiate() for a in idle_agents))
+        cut_off = False
+
+        async def watchdog() -> None:
+            nonlocal cut_off
+            for _ in range(config.MAX_TICK_NEGOTIATION_YIELDS):
+                await asyncio.sleep(0)
+            cut_off = True
+            negotiation.cancel()
+
+        guard = asyncio.ensure_future(watchdog())
+        try:
+            await negotiation
+        except asyncio.CancelledError:
+            if not cut_off:
+                raise  # the tick itself was cancelled from outside
+        finally:
+            guard.cancel()
 
     async def _notify_managers_of_losses(self, destroyed_agent_ids: set[str]) -> None:
         # Only surviving managers may re-open bidding. A manager destroyed this

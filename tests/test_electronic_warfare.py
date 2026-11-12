@@ -52,8 +52,6 @@ def _set_obs(jet: JetAgentRuntime, obs: Observation) -> None:
 async def test_jammed_manager_eventually_releases_claim(monkeypatch):
     """Existing MAX_CFP_ROUNDS / BID_TIMEOUT machinery frees a jammed Manager —
     no jamming-specific branching in negotiation methods required."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.02)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 2.0)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     bidder = JetAgentRuntime("Bidder", broker)
@@ -86,7 +84,6 @@ async def test_jammed_manager_eventually_releases_claim(monkeypatch):
 @pytest.mark.asyncio
 async def test_bidder_self_heals_via_pending_ttl_when_accept_jammed(monkeypatch):
     """ACCEPT dropped because bidder is jammed → CONTRACTOR_PENDING TTL reverts to IDLE."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(config, "CONTRACTOR_PENDING_TTL_TICKS", 3)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
