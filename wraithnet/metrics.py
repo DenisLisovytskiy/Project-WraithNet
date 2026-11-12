@@ -1,7 +1,12 @@
 """Post-run metrics summary and CSV export for the WraithNet PoC."""
 
+import hashlib
+import subprocess
 from collections import Counter
 from pathlib import Path
+
+from wraithnet.generation_rng import GENERATOR_VERSION
+from wraithnet.scenario_feasibility import analyze_feasibility
 
 
 def summarize(model) -> dict:
@@ -211,6 +216,74 @@ def summarize(model) -> dict:
         "per_jet_total_payload_remaining": {
             aid: sum(p.values()) for aid, (_, p) in all_stats.items()
         },
+    }
+
+
+def classify_outcome(model) -> str:
+    """Exactly one of SOLVED, ABORTED, WIPED, TICK_CAP.
+
+    A model that is still running when the caller stopped ticking it hit the
+    tick cap; that is not the same thing as a mission that ended unsolved.
+    """
+    if model.running:
+        return "TICK_CAP"
+    if model.mission_solved:
+        return "SOLVED"
+    if model.swarm_wiped_out:
+        return "WIPED"
+    return "ABORTED"
+
+
+def git_commit() -> str | None:
+    """Short hash of the checkout this code runs from, or None outside git."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
+def build_run_record(
+    model,
+    *,
+    max_ticks: int,
+    wall_time_s: float,
+    preset: str | None = None,
+    generation_seed: int | None = None,
+    feasible: bool | None = None,
+    commit: str | None = None,
+) -> dict:
+    """``summarize(model)`` plus run metadata, flat and JSON-serialisable.
+
+    ``wall_time_s`` is the only field that differs between two runs of the
+    same scenario on the same code.
+    """
+    scenario = model._scenario
+    if feasible is None:
+        feasible = analyze_feasibility(scenario).feasible
+    return {
+        "outcome": classify_outcome(model),
+        "tick_cap_hit": bool(model.running),
+        "max_ticks": int(max_ticks),
+        "preset": preset,
+        "generation_seed": generation_seed,
+        "combat_seed": int(model.combat_seed),
+        "generator_version": GENERATOR_VERSION,
+        "scenario_hash": hashlib.sha256(
+            scenario.model_dump_json().encode("utf-8")
+        ).hexdigest()[:16],
+        "feasible": bool(feasible),
+        "git_commit": commit if commit is not None else git_commit(),
+        "wall_time_s": round(float(wall_time_s), 3),
+        **summarize(model),
     }
 
 
