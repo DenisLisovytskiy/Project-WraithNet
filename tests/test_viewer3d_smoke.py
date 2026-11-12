@@ -13,6 +13,9 @@ import time
 
 import pytest
 
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
+
 pytest.importorskip("panda3d")
 
 from panda3d.core import NodePath, RenderModeAttrib, loadPrcFileData
@@ -26,7 +29,7 @@ loadPrcFileData("", "notify-level error")
 
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
+from wraithnet.trace_builders import build_trace_header, build_trace_tick
 from wraithnet.trace_schemas import JetFrame, JetOutcomeEvent, StrikeEvent, TargetFrame, TraceHeader, TraceTick
 from viewer3d.scene import (
     SceneHandles,
@@ -35,33 +38,10 @@ from viewer3d.scene import (
     build_static_scene,
     update_tick,
 )
-from viewer3d.flight_dynamics import (
-    CRUISE_ALTITUDE,
-    GROUND_ALTITUDE,
-    POST_STRIKE_CLIMB_BOOST_ALTITUDE,
-    TAKEOFF_CLIMB_SECONDS,
-)
+from viewer3d.flight_dynamics import CRUISE_ALTITUDE, GROUND_ALTITUDE, TAKEOFF_CLIMB_SECONDS
 from viewer3d.stream_client import DisconnectedEvent, EndEvent, HeaderEvent, TickEvent
-
-
-def _tiny_scenario() -> ScenarioConfig:
-    return scenario_from_data(new_scenario_data(
-        jets=[
-            JetSpec(
-                agent_id="Solo_Jet",
-                position=(20.0, 20.0),
-                payload={"JDAM": 1, "AIM9X": 0},
-            )
-        ],
-        targets=[
-            TargetSpec(
-                target_id="Near_Bunker",
-                position=(20.5, 20.0),
-                hp_required=1,
-                target_type="HARDENED_BUNKER",
-            )
-        ],
-    ))
+from viewer3d.stream_client import StreamClient
+from tests.conftest import HANG_GUARD_S, tiny_scenario as _tiny_scenario
 
 
 def _sample_header() -> TraceHeader:
@@ -257,121 +237,129 @@ def test_jet_orientation_follows_authoritative_pitch_roll():
     assert handles.desired_pitch_deg["Jet_1"] == pytest.approx(20.0)
 
 
-def test_viewer_app_drains_live_stream_without_raising():
-    from viewer3d.app import WraithNetViewer3D
+def _record_live_stream(ticks: int) -> list:
+    """Run the tiny mission behind a real LiveStreamServer and read it back.
 
+    The mission plays ``ticks`` ticks, then a real StreamClient connects and
+    gets the server backlog over the socket. Events are taken with a blocking
+    queue get, in arrival order; HANG_GUARD_S only stops a hang.
+    """
     loop = asyncio.new_event_loop()
     ready = threading.Event()
-    port_box: dict = {}
-    error_box: dict = {}
+    box: dict = {}
 
     async def _run_sim() -> None:
+        box["release"] = asyncio.Event()
         server = LiveStreamServer(port=0)
         await server.start()
-        port_box["server"] = server
-        port_box["port"] = server.port
-        ready.set()
+        box["port"] = server.port
         bridge = WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
         bridge.start_agent_loops()
         try:
-            for _ in range(3):
+            for _ in range(ticks):
                 await bridge._tick()
-            await asyncio.sleep(1.5)
+            ready.set()
+            await box["release"].wait()
         finally:
             await bridge.stop_agent_loops()
             await server.close()
 
     def _thread() -> None:
-        asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(_run_sim())
         except Exception as exc:  # pragma: no cover
-            error_box["err"] = exc
+            box["err"] = exc
 
     thread = threading.Thread(target=_thread, daemon=True)
     thread.start()
-    assert ready.wait(timeout=10.0)
-    port = port_box["port"]
-
-    app = WraithNetViewer3D("127.0.0.1", port)
+    assert ready.wait(timeout=HANG_GUARD_S)
+    client = StreamClient("127.0.0.1", box["port"])
+    client.start()
+    events: list = []
     try:
-        deadline = time.monotonic() + 8.0
-        while time.monotonic() < deadline:
-            app.task_mgr.step()
-            if app._handles is not None and app._latest_tick is not None:
-                break
-            time.sleep(0.05)
-        assert app._header is not None
-        assert app._handles is not None
-        assert app._header.jet_ids == ["Solo_Jet"]
-        assert "Solo_Jet" in app._handles.jets
-        assert app.view_mode in ("live", "finished")
+        # Tick 0 (bridge construction) plus one per bridge tick.
+        while sum(isinstance(e, TickEvent) for e in events) < ticks + 1:
+            event = client.events.get(timeout=HANG_GUARD_S)
+            assert not isinstance(event, DisconnectedEvent), event.reason
+            events.append(event)
     finally:
-        app._client.stop()
-        try:
-            app.destroy()
-        except Exception:
-            pass
-        thread.join(timeout=10.0)
-    assert "err" not in error_box
+        client.stop()
+        loop.call_soon_threadsafe(box["release"].set)
+        thread.join(timeout=HANG_GUARD_S)
+    assert "err" not in box
+    return events
 
 
-def test_live_jet_altitude_eases_over_wall_clock_time():
-    """Phase 25: rendered altitude must change over real elapsed time, not stay fixed."""
+def test_viewer_app_drains_live_stream_without_raising():
     from viewer3d.app import WraithNetViewer3D
 
-    loop = asyncio.new_event_loop()
-    ready = threading.Event()
-    port_box: dict = {}
+    events = _record_live_stream(ticks=3)
+    assert isinstance(events[0], HeaderEvent)
 
-    async def _run_sim() -> None:
-        server = LiveStreamServer(port=0)
-        await server.start()
-        port_box["port"] = server.port
-        ready.set()
-        bridge = WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
-        bridge.start_agent_loops()
-        try:
-            for _ in range(6):
-                await bridge._tick()
-            await asyncio.sleep(2.0)
-        finally:
-            await bridge.stop_agent_loops()
-            await server.close()
-
-    def _thread() -> None:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_run_sim())
-
-    thread = threading.Thread(target=_thread, daemon=True)
-    thread.start()
-    assert ready.wait(timeout=10.0)
-
-    app = WraithNetViewer3D("127.0.0.1", port_box["port"])
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
+        for event in events:
+            app._client.events.put(event)
+        app.task_mgr.step()
+        assert app.header is not None
+        assert app.scene is not None
+        assert app.header.jet_ids == ["Solo_Jet"]
+        assert "Solo_Jet" in app.scene.jets
+        assert app.latest_tick is not None and app.latest_tick.tick == 3
+        assert app.view_mode == "live"
+    finally:
+        _destroy_app(app)
+
+
+def test_live_jet_altitude_eases_over_presentation_time(panda_fake_clock):
+    """Phase 25: rendered altitude changes as presentation time passes.
+
+    Time is the fake clock, so the same frames always give the same samples.
+    """
+    from viewer3d.app import WraithNetViewer3D
+
+    events = _record_live_stream(ticks=6)
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
+    try:
+        for event in events:
+            app._client.events.put(event)
         samples: list[float] = []
-        deadline = time.monotonic() + 8.0
-        while time.monotonic() < deadline:
+        for _ in range(int(3 * panda_fake_clock)):
             app.task_mgr.step()
-            time.sleep(0.08)
-            if app._handles is None or "Solo_Jet" not in app._handles.jets:
-                continue
-            z = app._handles.rendered_altitude.get("Solo_Jet")
+            z = app.scene.rendered_altitude.get("Solo_Jet")
             if z is not None:
                 samples.append(z)
-            if len(samples) >= 3 and max(samples) - min(samples) > 0.05:
-                break
-        assert samples, "expected rendered altitude samples from the live viewer"
+        assert len(samples) >= 3
         assert max(samples) - min(samples) > 0.05
         assert min(samples) >= GROUND_ALTITUDE - 0.01
-        assert max(samples) <= CRUISE_ALTITUDE + POST_STRIKE_CLIMB_BOOST_ALTITUDE + 0.5
+        # Easing never overshoots the highest altitude the simulator sent.
+        sent = [
+            frame.altitude
+            for e in events
+            if isinstance(e, TickEvent)
+            for frame in e.tick.jets
+        ]
+        assert max(samples) <= max(sent) + 0.01
     finally:
-        app._client.stop()
-        try:
-            app.destroy()
-        except Exception:
-            pass
-        thread.join(timeout=10.0)
+        _destroy_app(app)
+
+
+def _step_until(app, done, hang_guard_s: float = HANG_GUARD_S) -> list[str]:
+    """Step frames until ``done()``; for flows that wait on a launched process.
+
+    The simulator runs in its own OS process, so the viewer must keep
+    stepping while it works. The bound is a hang guard: the assertions after
+    this call decide the result. Returns the view modes seen, in order.
+    """
+    modes: list[str] = []
+    end = time.monotonic() + hang_guard_s
+    while not done():
+        assert time.monotonic() < end, f"hang guard hit; modes seen: {modes}"
+        app.task_mgr.step()
+        if not modes or modes[-1] != app.view_mode:
+            modes.append(app.view_mode)
+        time.sleep(0.01)
+    return modes
 
 
 def _destroy_app(app) -> None:
@@ -408,9 +396,9 @@ def test_view_mode_connecting_brief_live_finished():
         app.task_mgr.step()
         assert app.view_mode == "brief"
         assert app.camera_mode == "brief"
-        assert app._header is not None
-        assert app._handles is not None
-        assert app._latest_tick is None
+        assert app.header is not None
+        assert app.scene is not None
+        assert app.latest_tick is None
 
         tick0 = _tick(
             0,
@@ -421,7 +409,7 @@ def test_view_mode_connecting_brief_live_finished():
         app.task_mgr.step()
         assert app.view_mode == "live"
         assert app.camera_mode == "orbit"
-        assert app._latest_tick is tick0
+        assert app.latest_tick is tick0
 
         # Stream end alone must not finish while presentation is mid-run.
         app._client.events.put(EndEvent())
@@ -508,7 +496,7 @@ def test_hud_update_across_modes_panels_and_disconnect_reason():
 
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
-        hud = app._hud
+        hud = app.hud
         connecting_mission = hud.mission_info_text
         assert connecting_mission
         hud.update(
@@ -610,7 +598,7 @@ def test_editor_launch_transitions_editor_brief_live_finished(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         assert app.view_mode == "editor"
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
@@ -622,22 +610,14 @@ def test_editor_launch_transitions_editor_brief_live_finished(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        assert app._sim_handle is not None
+        assert app.sim_handle is not None
 
-        seen_live = False
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            app.task_mgr.step()
-            if app.view_mode == "live":
-                seen_live = True
-            if app.view_mode == "finished":
-                break
-            time.sleep(0.05)
-        assert seen_live or app.view_mode == "finished"
+        modes = _step_until(app, lambda: app.view_mode == "finished")
+        assert "live" in modes
         assert app.view_mode == "finished"
-        assert app._latest_tick is not None
-        assert app._header is not None
-        assert app._header.jet_ids == ["Jet_1"]
+        assert app.latest_tick is not None
+        assert app.header is not None
+        assert app.header.jet_ids == ["Jet_1"]
     finally:
         _destroy_app(app)
 
@@ -652,14 +632,9 @@ def test_malformed_scenario_launch_sets_launch_failed(tmp_path):
         bad.write_text("{not-json", encoding="utf-8")
         handle = launch_scenario(str(bad))
         app._attach_sim(handle)
-        deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline:
-            app.task_mgr.step()
-            if app.view_mode == "launch_failed":
-                break
-            time.sleep(0.05)
+        _step_until(app, lambda: app.view_mode == "launch_failed")
         assert app.view_mode == "launch_failed"
-        assert "LAUNCH FAILED" in app._hud.mission_info_text
+        assert "LAUNCH FAILED" in app.hud.mission_info_text
     finally:
         _destroy_app(app)
 
@@ -673,7 +648,7 @@ def test_cancel_launch_terminates_sim_and_returns_to_editor(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -684,21 +659,19 @@ def test_cancel_launch_terminates_sim_and_returns_to_editor(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
         assert handle.is_running()
 
         app.cancel_launch()
 
         assert app.view_mode == "editor"
-        assert app._sim_handle is None
-        assert app._header is None
-        assert app._editor is editor
+        assert app.sim_handle is None
+        assert app.header is None
+        assert app.editor is editor
         assert editor._panel is not None and not editor._panel.is_hidden()
 
-        deadline = time.monotonic() + 8.0
-        while time.monotonic() < deadline and handle.is_running():
-            time.sleep(0.05)
+        handle.process.wait(timeout=HANG_GUARD_S)
         assert handle.is_running() is False
     finally:
         _destroy_app(app)
@@ -713,7 +686,7 @@ def test_escape_during_preview_cancels_launch_via_on_escape(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -724,16 +697,14 @@ def test_escape_during_preview_cancels_launch_via_on_escape(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
 
         app._on_escape()
 
         assert app.view_mode == "editor"
-        assert app._sim_handle is None
-        deadline = time.monotonic() + 8.0
-        while time.monotonic() < deadline and handle.is_running():
-            time.sleep(0.05)
+        assert app.sim_handle is None
+        handle.process.wait(timeout=HANG_GUARD_S)
         assert handle.is_running() is False
     finally:
         _destroy_app(app)
@@ -747,19 +718,19 @@ def test_preview_without_sim_exits_back_to_editor(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((15.0, 15.0))
         editor.begin_placement("target")
         editor.on_ground_clicked((60.0, 60.0))
         assert editor.preview() is None
         assert app.view_mode == "brief"
-        assert app._sim_handle is None
+        assert app.sim_handle is None
 
         app.exit_preview()
 
         assert app.view_mode == "editor"
-        assert app._header is None
+        assert app.header is None
         assert editor._panel is not None and not editor._panel.is_hidden()
         assert editor._handles is not None
         assert set(editor._handles.jets) == {"Jet_1"}
@@ -838,23 +809,23 @@ def test_hud_force_status_counts_and_minimap_dots():
                 TargetFrame(target_id="SAM_Site_1", hp_remaining=1, claimed=False),
             ],
         )
-        app._hud.update(
+        app.hud.update(
             mode="live",
             header=header,
             latest_tick=tick0,
             camera_mode="orbit",
             selected_jet_id="Jet_1",
         )
-        force = app._hud.force_status_text
+        force = app.hud.force_status_text
         assert "BUNKER" in force
         assert "0 / 1" in force
         assert "SAM" in force
         assert "1 / 1" in force
         assert "ALIVE   1 / 2" in force
         assert "MANAGER" in force
-        shown = [d for d in app._hud._minimap_dots if not d.is_hidden()]
+        shown = [d for d in app.hud._minimap_dots if not d.is_hidden()]
         assert shown, "minimap should place at least one dot for jammer/targets/jets"
-        assert "ORBIT" in app._hud.controls_text
+        assert "ORBIT" in app.hud.controls_text
     finally:
         _destroy_app(app)
 
@@ -871,8 +842,8 @@ def test_disconnected_event_surfaces_on_hud():
         app.task_mgr.step()
         assert app._disconnect_reason == "could not connect after retries"
         assert app.view_mode == "connecting"
-        assert "DISCONNECTED" in app._hud.mission_info_text
-        assert "could not connect after retries" in app._hud.mission_info_text
+        assert "DISCONNECTED" in app.hud.mission_info_text
+        assert "could not connect after retries" in app.hud.mission_info_text
     finally:
         _destroy_app(app)
 
@@ -882,7 +853,7 @@ def test_escape_cancels_editor_placement_without_quitting():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         assert editor._placement_kind == "jet"
         app._on_escape()
@@ -897,19 +868,19 @@ def test_editor_zoom_keybindings_change_ortho_zoom():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        start = app._editor.camera.zoom
+        start = app.editor.camera.zoom
         app.messenger.send("wheel_up")
-        assert app._editor.camera.zoom > start
-        zoomed = app._editor.camera.zoom
+        assert app.editor.camera.zoom > start
+        zoomed = app.editor.camera.zoom
         app.messenger.send("wheel_down")
-        assert app._editor.camera.zoom < zoomed
+        assert app.editor.camera.zoom < zoomed
         app.messenger.send("+")
-        assert app._editor.camera.zoom > start
+        assert app.editor.camera.zoom > start
         app.messenger.send("-")
-        assert app._editor.camera.zoom == pytest.approx(start)
+        assert app.editor.camera.zoom == pytest.approx(start)
         app._editor_pan(4.0, -2.0)
-        assert app._editor.camera.center_x == pytest.approx(54.0)
-        assert app._editor.camera.center_y == pytest.approx(48.0)
+        assert app.editor.camera.center_x == pytest.approx(54.0)
+        assert app.editor.camera.center_y == pytest.approx(48.0)
     finally:
         _destroy_app(app)
 
@@ -919,8 +890,8 @@ def test_hud_hidden_in_editor_mode():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        assert app._hud._visible is False
-        assert app._hud._mission_frame.is_hidden()
+        assert app.hud._visible is False
+        assert app.hud._mission_frame.is_hidden()
     finally:
         _destroy_app(app)
 
@@ -931,7 +902,7 @@ def test_window_close_terminates_launched_sim(tmp_path):
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     handle = None
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -940,14 +911,12 @@ def test_window_close_terminates_launched_sim(tmp_path):
         editor._path = str(dest)
         editor._path_entry.enterText(str(dest))
         app.on_launch_clicked()
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
         assert handle.is_running()
         app.on_window_close()
-        assert app._sim_handle is None
-        deadline = time.monotonic() + 8.0
-        while time.monotonic() < deadline and handle.is_running():
-            time.sleep(0.05)
+        assert app.sim_handle is None
+        handle.process.wait(timeout=HANG_GUARD_S)
         assert handle.is_running() is False
     finally:
         _destroy_app(app)
@@ -957,15 +926,17 @@ def _fx_child_names(root) -> set[str]:
     return {child.get_name() for child in root.get_children()}
 
 
-def _advance_intervals(app, seconds: float, step_s: float = 0.05) -> None:
-    """Intervals are wall-clock driven; step the task mgr while sleeping."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+def _advance_intervals(app, seconds: float) -> None:
+    """Step exactly ``seconds`` of frames on the fake clock (panda_fake_clock)."""
+    from panda3d.core import ClockObject
+
+    clock = ClockObject.get_global_clock()
+    assert clock.get_mode() == ClockObject.M_non_real_time, "use panda_fake_clock"
+    for _ in range(math.ceil(seconds / clock.get_dt()) + 1):
         app.task_mgr.step()
-        time.sleep(step_s)
 
 
-def test_weapon_effects_spawn_and_self_cleanup():
+def test_weapon_effects_spawn_and_self_cleanup(panda_fake_clock):
     """Phase 26: each spawn_* attaches a node, then cleans it up after its duration."""
     from viewer3d import effects
     from viewer3d.app import WraithNetViewer3D
@@ -1010,39 +981,40 @@ def test_weapon_effects_spawn_and_self_cleanup():
         _destroy_app(app)
 
 
-def test_live_stream_strike_triggers_spawn_strike_effect():
-    """Phase 26 end-to-end: a real tiny scenario produces at least one strike effect."""
+class _CollectTrace:
+    """Trace sink that keeps the header and ticks the live stream would send."""
+
+    def __init__(self) -> None:
+        self.header = None
+        self.ticks: list = []
+        self._seen: set[str] = set()
+
+    def record_header(self, bridge) -> None:
+        self.header = build_trace_header(bridge)
+
+    def record_tick(self, bridge) -> None:
+        self.ticks.append(build_trace_tick(bridge, seen_outcome_ids=self._seen))
+
+
+def test_real_sim_strike_triggers_spawn_strike_effect():
+    """Phase 26 end-to-end: a real tiny mission produces a strike effect.
+
+    The mission runs to completion first (it releases at tick 19, after the
+    descent to release altitude). Its ticks are then fed to the viewer one per
+    frame, so the result does not depend on socket timing or the wall clock.
+    The socket path itself is covered by test_live_stream.py and
+    test_viewer3d_stream_client.py.
+    """
     from viewer3d import effects
     from viewer3d.app import WraithNetViewer3D
 
-    loop = asyncio.new_event_loop()
-    ready = threading.Event()
-    port_box: dict = {}
-    error_box: dict = {}
+    sink = _CollectTrace()
+    bridge = WraithNetBridge(sinks=[sink], scenario=_tiny_scenario())
+    asyncio.run(bridge.run(max_ticks=50))
+    assert bridge.model.mission_solved
+    assert any(tick.strikes for tick in sink.ticks)
+
     strike_calls: list = []
-
-    async def _run_sim() -> None:
-        server = LiveStreamServer(port=0)
-        await server.start()
-        port_box["port"] = server.port
-        ready.set()
-        bridge = WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
-        bridge.start_agent_loops()
-        try:
-            for _ in range(12):
-                await bridge._tick()
-            await asyncio.sleep(1.0)
-        finally:
-            await bridge.stop_agent_loops()
-            await server.close()
-
-    def _thread() -> None:
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_run_sim())
-        except Exception as exc:  # pragma: no cover
-            error_box["err"] = exc
-
     orig = effects.spawn_strike_effect
 
     def _spy(*args, **kwargs):
@@ -1050,38 +1022,22 @@ def test_live_stream_strike_triggers_spawn_strike_effect():
         return orig(*args, **kwargs)
 
     effects.spawn_strike_effect = _spy  # type: ignore[assignment]
-    thread = threading.Thread(target=_thread, daemon=True)
-    thread.start()
-    assert ready.wait(timeout=10.0)
-
-    app = WraithNetViewer3D("127.0.0.1", port_box["port"])
+    app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
-        deadline = time.monotonic() + 12.0
-        while time.monotonic() < deadline:
+        app._client.events.put(HeaderEvent(header=sink.header))
+        app.task_mgr.step()
+        for tick in sink.ticks:
+            app._client.events.put(TickEvent(tick=tick))
             app.task_mgr.step()
-            if strike_calls:
-                break
-            if app.view_mode == "finished" and app._latest_tick is not None:
-                # Presentation delay may still hold the strike tick; flush so
-                # discrete combat VFX commit without waiting on wall-clock.
-                app._flush_presentation()
-                for _ in range(5):
-                    app.task_mgr.step()
-                break
-            time.sleep(0.05)
-        assert strike_calls, "expected at least one spawn_strike_effect call from a live strike"
+            app._flush_presentation()
+        assert len(strike_calls) == 1
+        assert app.view_mode == "finished"
     finally:
         effects.spawn_strike_effect = orig  # type: ignore[assignment]
-        app._client.stop()
-        try:
-            app.destroy()
-        except Exception:
-            pass
-        thread.join(timeout=10.0)
-    assert "err" not in error_box
+        _destroy_app(app)
 
 
-def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
+def test_destroyed_jet_removal_is_deferred_until_wreck_completes(panda_fake_clock):
     """Phase 26: jet node stays in handles.jets until the wreck effect finishes."""
     from viewer3d.app import WraithNetViewer3D
 
@@ -1097,7 +1053,7 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
         app._client.events.put(TickEvent(tick=tick0))
         app.task_mgr.step()
         app._flush_presentation()
-        assert "Jet_1" in app._handles.jets
+        assert "Jet_1" in app.scene.jets
 
         # Force-destroy Jet_1 by omitting it from the next tick (same as recorder pattern).
         tick1 = _tick(
@@ -1109,14 +1065,14 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes():
         app.task_mgr.step()
         app._flush_presentation()
 
-        assert "Jet_1" in app._handles.jets, "jet must still be present during wreck"
-        assert "Jet_1" in app._handles.pending_jet_removal
-        jet_node = app._handles.jets["Jet_1"]
+        assert "Jet_1" in app.scene.jets, "jet must still be present during wreck"
+        assert "Jet_1" in app.scene.pending_jet_removal
+        jet_node = app.scene.jets["Jet_1"]
         assert not jet_node.is_empty()
 
         _advance_intervals(app, 1.5)
-        assert "Jet_1" not in app._handles.jets
-        assert "Jet_1" not in app._handles.pending_jet_removal
+        assert "Jet_1" not in app.scene.jets
+        assert "Jet_1" not in app.scene.pending_jet_removal
         assert jet_node.is_empty()
     finally:
         _destroy_app(app)
@@ -1135,13 +1091,13 @@ def test_current_scenario_path_default_uses_user_data_dir(tmp_path, monkeypatch)
     monkeypatch.setattr("viewer3d.app.user_data_dir", fake_user_data_dir)
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
-        assert app._editor is None
+        assert app.editor is None
         assert app._current_scenario_path() == str(tmp_path / "scenarios" / "custom.json")
     finally:
         _destroy_app(app)
 
 
-def test_takeoff_continues_after_burst_tick_drain():
+def test_takeoff_continues_after_burst_tick_drain(panda_fake_clock):
     """Queued ticks sharing one drain timestamp must not freeze takeoff."""
     from viewer3d.app import WraithNetViewer3D
 
@@ -1158,11 +1114,11 @@ def test_takeoff_continues_after_burst_tick_drain():
             )
         app.task_mgr.step()
         app._flush_presentation()
-        z_burst = app._handles.rendered_altitude["Jet_1"]
+        z_burst = app.scene.rendered_altitude["Jet_1"]
         assert z_burst < 1.5
 
         _advance_intervals(app, TAKEOFF_CLIMB_SECONDS + 1.6)
-        z_later = app._handles.rendered_altitude["Jet_1"]
+        z_later = app.scene.rendered_altitude["Jet_1"]
         assert z_later >= CRUISE_ALTITUDE - 0.6
     finally:
         _destroy_app(app)
@@ -1218,7 +1174,7 @@ def test_strike_on_same_tick_as_destruction_still_spawns_effect():
         _destroy_app(app)
 
 
-def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
+def test_wreck_cleanup_does_not_remove_replacement_scene_jet(panda_fake_clock):
     from viewer3d.app import WraithNetViewer3D
 
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
@@ -1243,7 +1199,7 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
         )
         app.task_mgr.step()
         app._flush_presentation()
-        assert "Jet_1" in app._handles.pending_jet_removal
+        assert "Jet_1" in app.scene.pending_jet_removal
 
         app._client.events.put(HeaderEvent(header=header))
         app._client.events.put(
@@ -1257,11 +1213,11 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet():
         )
         app.task_mgr.step()
         app._flush_presentation()
-        replacement = app._handles.jets["Jet_1"]
+        replacement = app.scene.jets["Jet_1"]
         assert not replacement.is_empty()
         _advance_intervals(app, 1.5)
-        assert "Jet_1" in app._handles.jets
-        assert not app._handles.jets["Jet_1"].is_empty()
+        assert "Jet_1" in app.scene.jets
+        assert not app.scene.jets["Jet_1"].is_empty()
     finally:
         _destroy_app(app)
 
@@ -1279,7 +1235,7 @@ def test_bomb_waypoints_stay_above_ground():
         assert z >= impact[2] - 1e-9
 
 
-def test_missile_trail_spawns_and_cleans_independently_of_glyph():
+def test_missile_trail_spawns_and_cleans_independently_of_glyph(panda_fake_clock):
     from viewer3d import effects
     from viewer3d.app import WraithNetViewer3D
 
@@ -1301,7 +1257,7 @@ def test_missile_trail_spawns_and_cleans_independently_of_glyph():
         _destroy_app(app)
 
 
-def test_unknown_weapon_falls_back_to_missile_with_trail():
+def test_unknown_weapon_falls_back_to_missile_with_trail(panda_fake_clock):
     from viewer3d import effects
     from viewer3d.app import WraithNetViewer3D
 

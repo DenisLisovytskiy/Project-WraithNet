@@ -216,6 +216,52 @@ def test_notch_clears_extreme_roll_command():
     assert intent.action_type != "STRIKE"
 
 
+@pytest.mark.parametrize("threat_bearing", [0.0, 45.0, 135.0, 270.0, 350.0])
+def test_notch_heading_is_perpendicular_to_the_threat_bearing(threat_bearing):
+    """NOTCH flies across the missile's line of sight, never down it.
+
+    The world only credits a notch when the velocity is within
+    ``notch_angle_window_deg`` of 90 degrees to the line of sight, so the
+    commanded heading must already sit inside that window.
+    """
+    from wraithnet.countermeasures import notch_geometry_ok
+    from wraithnet.schemas import InboundThreat
+
+    jet = JetAgentRuntime("Bomber", MessageBroker())
+    obs = _obs(
+        position=(50.0, 50.0),
+        heading=90.0,
+        payload={"JDAM": 1},
+        targets=[_bunker()],
+        frame_type="HEAVY_BOMBER",
+    ).model_copy(
+        update={
+            "inbound_threats": [
+                InboundThreat(
+                    missile_id="M-rad",
+                    guidance="RADAR",
+                    estimated_bearing=threat_bearing,
+                    estimated_time_to_impact=1.0,
+                )
+            ],
+            "radar_warning_receiver": True,
+        }
+    )
+    jet.set_observation(obs)
+    jet.refresh_world_view()
+    intent = jet.decide_intent()
+
+    assert intent.maneuver_defense == "NOTCH"
+    heading = math.radians(intent.desired_heading)
+    velocity = (math.sin(heading) * 5.0, math.cos(heading) * 5.0)
+    assert notch_geometry_ok(
+        velocity_xy=velocity,
+        los_bearing_deg=threat_bearing,
+        angle_window_deg=obs.notch_angle_window_deg,
+        min_speed=1.0,
+    )
+
+
 def test_inverted_world_integration_rolls_then_can_release():
     """Deterministic: inverted jet near target rolls upright then STRIKE lands."""
     model = WraithNetModel()

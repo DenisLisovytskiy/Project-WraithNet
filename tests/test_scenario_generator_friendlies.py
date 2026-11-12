@@ -121,6 +121,7 @@ _CAPACITY_ERROR_CODES = frozenset(
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_feasible_over_seed_matrix(preset):
     # Broad matrix on the cheap PoC map. Cramming NIGHTMARE's 10 objectives,
@@ -153,6 +154,7 @@ def test_auto_balanced_feasible_over_seed_matrix(preset):
     assert len(exhausted) <= 5, (preset, exhausted)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_generates_on_the_default_map_size(preset):
     """The *shipped* battlespace must generate reliably, not just the PoC one.
@@ -173,6 +175,7 @@ def test_auto_balanced_generates_on_the_default_map_size(preset):
         )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_roster_within_bounds_and_joint_allocation(preset):
     for seed in range(20):
@@ -256,6 +259,7 @@ def test_cooperation_marked_objectives_satisfy_inequality():
     assert found, "expected at least one deliberate cooperative objective in sample"
 
 
+@pytest.mark.slow
 def test_random_legal_validates_and_can_be_infeasible():
     feasible = False
     infeasible = False
@@ -459,6 +463,7 @@ def test_place_jets_on_launch_ring_rejects_unplaceable_count():
     assert exc_info.value.code == "PLACEMENT_EXHAUSTED"
 
 
+@pytest.mark.slow
 def test_generation_performance_standard_and_max():
     # STANDARD median under a CI-friendly ceiling; Nightmare under a generous cap.
     standard_times: list[float] = []

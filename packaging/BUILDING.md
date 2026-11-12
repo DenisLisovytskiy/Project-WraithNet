@@ -270,7 +270,7 @@ Verified green on this checkout:
   (TRAINING/STANDARD/CONTESTED/NIGHTMARE) with Contested/Nightmare non-zero
   tank/naval counts.
 * `test_standard_100_seed_matrix` — **100 STANDARD** terrain/placement.
-* Contested combined-arms smoke in `tests/test_phase44_combined_arms.py`
+* Contested combined-arms smoke in `tests/test_combined_arms.py`
   (≥25 seeds expecting tanks or naval when counts draw >0).
 
 Rebuild the frozen tree with `python packaging/build.py` before treating

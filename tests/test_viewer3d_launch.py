@@ -5,18 +5,20 @@ This file must not import panda3d or direct.
 
 from __future__ import annotations
 
-import queue
 import sys
-import time
 from pathlib import Path
 
 import pytest
+
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
 
 from viewer3d.launch import build_sim_worker_argv, launch_scenario
 from viewer3d.stream_client import HeaderEvent, StreamClient
 from wraithnet.scenario_io import save_scenario
 from wraithnet.scenario_schema import ScenarioConfig, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import TraceHeader, TraceTick
+from tests.conftest import HANG_GUARD_S
 
 DEFAULT_SCENARIO = Path(__file__).resolve().parent.parent / "scenarios" / "default.json"
 
@@ -53,16 +55,11 @@ def test_build_sim_worker_argv_includes_output_dir():
     assert argv[argv.index("--output-dir") + 1] == "C:/runs/a"
 
 
-def _wait_for_header(client: StreamClient, timeout: float = 15.0) -> HeaderEvent:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            event = client.events.get(timeout=0.25)
-        except queue.Empty:
-            continue
-        if isinstance(event, HeaderEvent):
-            return event
-    raise AssertionError("timed out waiting for HeaderEvent from launched sim")
+def _wait_for_header(client: StreamClient) -> HeaderEvent:
+    """First event from the launched simulator must be its header."""
+    event = client.events.get(timeout=HANG_GUARD_S)
+    assert isinstance(event, HeaderEvent), event
+    return event
 
 
 def test_launch_scenario_default_json_is_connectable():
@@ -77,16 +74,14 @@ def test_launch_scenario_default_json_is_connectable():
     finally:
         client.stop()
         handle.terminate()
-    deadline = time.monotonic() + 8.0
-    while time.monotonic() < deadline and handle.is_running():
-        time.sleep(0.05)
+    handle.process.wait(timeout=HANG_GUARD_S)
     assert handle.is_running() is False
 
 
 def test_launch_nonexistent_scenario_exits_nonzero():
     handle = launch_scenario("this/path/does/not/exist.json")
     try:
-        handle.process.wait(timeout=20)
+        handle.process.wait(timeout=HANG_GUARD_S)
     finally:
         handle.terminate()
     assert handle.process.returncode not in (0, None)
@@ -158,15 +153,15 @@ def test_concurrent_launches_write_distinct_result_dirs(tmp_path):
     second = launch_scenario(str(scenario))
     try:
         assert first.output_dir != second.output_dir
-        first.process.wait(timeout=60)
-        second.process.wait(timeout=60)
+        first.process.wait(timeout=HANG_GUARD_S)
+        second.process.wait(timeout=HANG_GUARD_S)
         assert first.process.returncode == 0
         assert second.process.returncode == 0
         h1, t1, csv1 = _load_run_outputs(first)
         h2, t2, csv2 = _load_run_outputs(second)
         assert h1.jet_ids == h2.jet_ids == ["Solo_Jet"]
-        assert t1[-1].running is False or t1[-1].tick >= 0
-        assert t2[-1].running is False or t2[-1].tick >= 0
+        assert t1[-1].running is False
+        assert t2[-1].running is False
         assert "TotalDistanceTraveled" in csv1
         assert "TotalDistanceTraveled" in csv2
     finally:

@@ -597,6 +597,42 @@ class WraithNetViewer3D(ShowBase):
     def _toggle_presentation_debug(self) -> None:
         self._show_presentation_debug = not self._show_presentation_debug
 
+    # Read-only views of viewer state, for callers and tests that observe
+    # behaviour. Changing state still goes through the viewer's methods.
+    @property
+    def editor(self):
+        """The scenario editor, or None outside editor mode."""
+        return self._editor
+
+    @property
+    def scene(self):
+        """SceneHandles of the current mission scene, or None before a header."""
+        return self._handles
+
+    @property
+    def header(self):
+        """TraceHeader of the current mission, or None."""
+        return self._header
+
+    @property
+    def hud(self):
+        return self._hud
+
+    @property
+    def latest_tick(self):
+        """Newest tick received; may be ahead of what is presented."""
+        return self._latest_tick
+
+    @property
+    def presented_tick(self):
+        """Tick the HUD and discrete effects currently show."""
+        return self._presented_tick
+
+    @property
+    def sim_handle(self):
+        """SimLaunchHandle of the launched simulator, or None."""
+        return self._sim_handle
+
     def _load_offline_replay(self, path: str) -> None:
         """Load a recorded trace into the same TickBuffer used for live view."""
         header, ticks = load_trace(path)

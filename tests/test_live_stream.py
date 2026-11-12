@@ -7,33 +7,12 @@ import json
 
 import pytest
 
-from wraithnet import config
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
 from wraithnet.metrics import summarize
 from wraithnet.recorder import TraceRecorder
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from wraithnet.trace_schemas import TraceHeader, TraceTick
-
-
-def _tiny_scenario() -> ScenarioConfig:
-    return scenario_from_data(new_scenario_data(
-        jets=[
-            JetSpec(
-                agent_id="Solo_Jet",
-                position=(20.0, 20.0),
-                payload={"JDAM": 1, "AIM9X": 0},
-            )
-        ],
-        targets=[
-            TargetSpec(
-                target_id="Near_Bunker",
-                position=(20.5, 20.0),
-                hp_required=1,
-                target_type="HARDENED_BUNKER",
-            )
-        ],
-    ))
+from tests.conftest import HANG_GUARD_S, tiny_scenario as _tiny_scenario
 
 
 async def _read_stream_messages(host: str, port: int, count: int) -> list[dict]:
@@ -43,7 +22,7 @@ async def _read_stream_messages(host: str, port: int, count: int) -> list[dict]:
     messages = []
     try:
         for _ in range(count):
-            line = await asyncio.wait_for(reader.readline(), timeout=5.0)
+            line = await asyncio.wait_for(reader.readline(), timeout=HANG_GUARD_S)
             if not line:
                 break
             messages.append(json.loads(line))
@@ -61,7 +40,7 @@ async def _read_until_end(host: str, port: int) -> list[dict]:
     messages = []
     try:
         while True:
-            line = await asyncio.wait_for(reader.readline(), timeout=10.0)
+            line = await asyncio.wait_for(reader.readline(), timeout=HANG_GUARD_S)
             if not line:
                 break
             msg = json.loads(line)
@@ -245,7 +224,7 @@ async def test_sinks_have_zero_effect_on_summarize(tmp_path):
 
     async def _run_with(sinks) -> dict:
         bridge = WraithNetBridge(sinks=sinks, scenario=scenario)
-        await asyncio.wait_for(bridge.run(max_ticks=50), timeout=15.0)
+        await bridge.run(max_ticks=50)
         return summarize(bridge.model)
 
     summary_none = await _run_with([])

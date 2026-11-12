@@ -9,50 +9,14 @@ from tests.async_helpers import settle
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.bridge import WraithNetBridge
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
-from wraithnet.schemas import Observation, TargetInfo
-
-
-def _target(**overrides) -> TargetInfo:
-    data = {
-        "target_id": "Target_A",
-        "position": (75.0, 75.0),
-        "target_type": "HARDENED_BUNKER",
-        "hp_required": 5,
-        "hp_remaining": 5,
-        "claimed": False,
-    }
-    data.update(overrides)
-    return TargetInfo(**data)
-
-
-def _obs(
-    agent_id: str,
-    position: tuple[float, float],
-    payload: dict[str, int],
-    targets: list[TargetInfo],
-    tick: int = 0,
-) -> Observation:
-    return Observation(
-        agent_id=agent_id,
-        tick=tick,
-        current_position=position,
-        sensor_radius=config.SENSOR_RADIUS,
-        payload=payload,
-        known_targets=targets,
-        comms_jammed=False,
-    )
-
-
-def _set_obs(jet: JetAgentRuntime, obs: Observation) -> None:
-    jet.set_observation(obs)
-    jet.refresh_world_view()
+from wraithnet.scenario_schema import JetSpec, TargetSpec, new_scenario_data, scenario_from_data
+from tests.conftest import target_info as _target, observation as _obs, set_observation as _set_obs
 
 
 @pytest.mark.asyncio
 async def test_bridge_runs_scenario_to_completion():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60.0)
+    await bridge.run(max_ticks=500)
 
     assert bridge.model.running is False
     assert bridge.model.swarm_wiped_out is False
@@ -226,7 +190,7 @@ async def test_bridge_runs_custom_scenario_to_completion():
         ],
     ))
     bridge = WraithNetBridge(scenario=scenario)
-    await asyncio.wait_for(bridge.run(max_ticks=50), timeout=15.0)
+    await bridge.run(max_ticks=50)
 
     assert bridge.model.running is False
     assert bridge.model.swarm_wiped_out is False
@@ -370,13 +334,23 @@ async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes():
         ],
         combat_seed=42,
     ))
-    bridge = WraithNetBridge(scenario=scenario)
+    recorded = []
+
+    class _Sink:
+        def record_header(self, b):
+            pass
+
+        def record_tick(self, b):
+            recorded.append(b.model.tick)
+
+    bridge = WraithNetBridge(sinks=[_Sink()], scenario=scenario)
     assert bridge.agents == {}
     assert bridge.model.combat_seed == 42
     tick_before = bridge.model.tick
     await bridge._tick()
     assert bridge.model.tick == tick_before + 1
     assert bridge.agents == {}
+    assert recorded[-1] == tick_before + 1  # sinks still see a jetless tick
 
 
 @pytest.mark.asyncio
@@ -463,3 +437,63 @@ async def test_negotiation_completes_inside_the_default_yield_budget(monkeypatch
     )
     assert bridge.broker.is_claimed("Bunker") is True
     assert {a.role for a in bridge.agents.values()} == {"CONTRACTOR"}
+
+
+@pytest.mark.asyncio
+async def test_contractor_shot_down_mid_contract_is_replaced_through_tick():
+    """The bridge's own tick must tell the manager its contractor died.
+
+    A zero-payload coordinator manages the bunker and awards the closer
+    striker. The striker is shot down before it releases. Within two ticks the
+    reserve jet must hold the contract. Without the loss notification in
+    ``_tick`` the claim would sit until the claim TTL expires, far later.
+    """
+    scenario = scenario_from_data(new_scenario_data(
+        jets=[
+            JetSpec(agent_id="A_Coordinator", position=(40.0, 40.0), payload={"JDAM": 0, "AIM9X": 0}),
+            JetSpec(agent_id="B_Striker", position=(45.0, 40.0), payload={"JDAM": 1, "AIM9X": 0}),
+            JetSpec(agent_id="C_Reserve", position=(35.0, 40.0), payload={"JDAM": 1, "AIM9X": 0}),
+        ],
+        targets=[
+            TargetSpec(target_id="Bunker", position=(60.0, 40.0), hp_required=1, target_type="HARDENED_BUNKER"),
+        ],
+    ))
+    bridge = WraithNetBridge(scenario=scenario)
+    assert bridge.broker.claim_ttl_ticks > 10
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+        assert bridge.agents["B_Striker"].committed_target_id == "Bunker"
+        assert bridge.agents["C_Reserve"].role == "IDLE"
+        assert bridge.agents["A_Coordinator"].managed_contracts["Bunker"] == {"B_Striker"}
+
+        bridge.model.jets["B_Striker"].hp = 0
+        for _ in range(2):
+            await bridge._tick()
+            if bridge.agents["C_Reserve"].role == "CONTRACTOR":
+                break
+
+        assert "B_Striker" not in bridge.agents
+        assert bridge.model.strike_log == []
+        reserve = bridge.agents["C_Reserve"]
+        assert reserve.role == "CONTRACTOR"
+        assert reserve.committed_target_id == "Bunker"
+        assert bridge.agents["A_Coordinator"].managed_contracts["Bunker"] == {"C_Reserve"}
+    finally:
+        await bridge.stop_agent_loops()
+
+
+@pytest.mark.asyncio
+async def test_one_jet_at_bingo_does_not_stop_the_end_of_mission_recall_of_the_others():
+    """When the required objectives are done, every jet heads home, also the
+    ones sorted after a jet that went bingo on the same tick."""
+    bridge = WraithNetBridge()
+    first = sorted(bridge.agents)[0]
+    bridge.model.required_destroy_objectives_complete = lambda: True
+    bridge.agents[first].bingo_fuel_reached = lambda: True
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+    finally:
+        await bridge.stop_agent_loops()
+    assert {aid: a.role for aid, a in bridge.agents.items()} == {aid: "RTB" for aid in bridge.agents}

@@ -1,0 +1,97 @@
+{
+  "aaa_ammo_remaining": 0,
+  "aaa_bursts": 0,
+  "aaa_damage": 0,
+  "aaa_hits": 0,
+  "aaa_kills": 0,
+  "aaa_rounds": 0,
+  "agm84_hit_rate": 0.0,
+  "agm84_hits": 0,
+  "agm84_launches": 0,
+  "aircraft_losses_to_aaa": 0,
+  "awards_by_flare_readiness": {
+    "high": 5
+  },
+  "carrier_count": 0,
+  "carrier_recoveries": 0,
+  "ciws_attempts": 0,
+  "ciws_intercepts": 0,
+  "contributors_by_target": {
+    "SAM_Site_1": [
+      "Jet_2"
+    ],
+    "Target_A": [
+      "Jet_1",
+      "Jet_2",
+      "Jet_3"
+    ],
+    "Target_B": [
+      "Jet_3"
+    ]
+  },
+  "corvette_count": 0,
+  "corvette_losses": 0,
+  "corvette_sam_launches": 0,
+  "deaths_by_guidance": {},
+  "deck_gun_hits": 0,
+  "flare_attempts": 0,
+  "flare_successes": 0,
+  "flares_remaining": {},
+  "jets_crashed": 0,
+  "jets_destroyed": 0,
+  "jets_returned_to_base": 3,
+  "jets_still_flying": 0,
+  "low_confidence_coverage_awards": 5,
+  "missile_decoyed": 0,
+  "missile_fuel_expired": 0,
+  "missile_hits": 2,
+  "missile_intercepted": 0,
+  "missile_launches": 2,
+  "missile_lost_lock": 0,
+  "missile_misses": 0,
+  "missile_outcomes_by_seeker": {
+    "AGM65": 1,
+    "SAM_RADAR": 1
+  },
+  "mission_aborted": false,
+  "negotiation_decline_reasons": {},
+  "negotiation_event_count": 350,
+  "notch_attempts": 0,
+  "notch_completions": 0,
+  "notch_lock_breaks": 0,
+  "objective_outcomes": {
+    "OBJ_DESTROY_ALL": "COMPLETE",
+    "OBJ_RETURN_ALL": "COMPLETE"
+  },
+  "per_jet_distance_traveled": {
+    "Jet_1": 305.6989925394254,
+    "Jet_2": 351.8927001775346,
+    "Jet_3": 323.2485489674525
+  },
+  "per_jet_total_payload_remaining": {
+    "Jet_1": 0,
+    "Jet_2": 1,
+    "Jet_3": 2
+  },
+  "per_weapon_type_missiles_fired": {
+    "AGM65": 1,
+    "JDAM": 6
+  },
+  "reservation_overkill_milli": 0,
+  "solved": true,
+  "swarm_wiped_out": false,
+  "tank_ammo_remaining": 0,
+  "tank_distance_traveled": 0,
+  "tank_hits": 0,
+  "tank_kills_enemy": 0,
+  "tank_kills_friendly": 0,
+  "tank_losses_enemy": 0,
+  "tank_losses_friendly": 0,
+  "tank_rounds": 0,
+  "targets_destroyed": 3,
+  "ticks_elapsed": 76,
+  "total_distance_traveled": 980.8402416844125,
+  "total_jammed_agent_ticks": 5,
+  "total_missiles_fired": 7,
+  "total_targets": 3
+}

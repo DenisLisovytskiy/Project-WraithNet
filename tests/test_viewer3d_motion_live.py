@@ -6,6 +6,9 @@ import time
 
 import pytest
 
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
+
 pytest.importorskip("panda3d")
 
 from panda3d.core import loadPrcFileData
@@ -98,16 +101,16 @@ def test_sampled_poses_move_gradually_between_ticks():
         app._tick_buffer.set_presentation_time(t0 + 0.25)
         app._pres_wall_last = time.monotonic()
         app._apply_presentation_state()
-        x1 = app._handles.jets["Jet_1"].get_pos().x
-        h1 = app._handles.jet_heading_deg["Jet_1"]
+        x1 = app.scene.jets["Jet_1"].get_pos().x
+        h1 = app.scene.jet_heading_deg["Jet_1"]
         assert x1 == pytest.approx(2.5)
         assert x1 < 10.0
         assert h1 == pytest.approx(22.5)
 
         app._tick_buffer.set_presentation_time(t0 + 0.75)
         app._apply_presentation_state()
-        x2 = app._handles.jets["Jet_1"].get_pos().x
-        h2 = app._handles.jet_heading_deg["Jet_1"]
+        x2 = app.scene.jets["Jet_1"].get_pos().x
+        h2 = app.scene.jet_heading_deg["Jet_1"]
         assert x2 == pytest.approx(7.5)
         assert x2 > x1
         assert h2 == pytest.approx(67.5)
@@ -126,14 +129,14 @@ def test_hud_uses_presented_tick_not_newest_buffered():
         app._client.events.put(TickEvent(tick=_tick(1, 10.0, 0.0)))
         app.task_mgr.step()
 
-        assert app._latest_tick is not None
-        assert app._latest_tick.tick == 1
+        assert app.latest_tick is not None
+        assert app.latest_tick.tick == 1
         # With default delay, a single step should not yet present tick 1.
-        assert app._presented_tick is None or app._presented_tick.tick < 1
+        assert app.presented_tick is None or app.presented_tick.tick < 1
 
         app._flush_presentation()
-        assert app._presented_tick is not None
-        assert app._presented_tick.tick == 1
+        assert app.presented_tick is not None
+        assert app.presented_tick.tick == 1
         app._refresh_hud()
     finally:
         _destroy_app(app)
@@ -143,8 +146,8 @@ def test_editor_mode_places_without_stream_ticks():
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
         assert app.view_mode == "editor"
-        assert app._editor is not None
-        editor = app._editor
+        assert app.editor is not None
+        editor = app.editor
         editor.begin_placement("jet")
         assert editor._placement_kind == "jet"
         # Motion buffer exists but is unused in editor; no stream required.
@@ -209,10 +212,10 @@ def test_snap_clears_pending_highlight_fx():
         from viewer3d.scene import _FxItem
 
         dummy = app.render.attach_new_node("fx-test-spam")
-        app._handles.highlight_fx.append(_FxItem(node=dummy, duration=10.0))
-        assert app._handles.highlight_fx
+        app.scene.highlight_fx.append(_FxItem(node=dummy, duration=10.0))
+        assert app.scene.highlight_fx
         app._clear_backlog_cosmetics()
-        assert app._handles.highlight_fx == []
+        assert app.scene.highlight_fx == []
         assert dummy.is_empty()
     finally:
         _destroy_app(app)
@@ -242,10 +245,10 @@ def test_offline_replay_uses_same_tick_buffer(tmp_path):
         assert app._offline_replay is True
         assert app._tick_buffer.backlog_len == 3
         assert app.view_mode == "live"
-        x0 = app._handles.jets["Jet_1"].get_pos().x
+        x0 = app.scene.jets["Jet_1"].get_pos().x
         for _ in range(30):
             app._advance_presentation(0.05)
-        x1 = app._handles.jets["Jet_1"].get_pos().x
+        x1 = app.scene.jets["Jet_1"].get_pos().x
         assert x1 > x0
     finally:
         _destroy_app(app)

@@ -12,3 +12,12 @@ async def settle(rounds: int = 64) -> None:
     """
     for _ in range(rounds):
         await asyncio.sleep(0)
+
+
+async def settle_until(predicate, rounds: int = 1024) -> None:
+    """Yield until ``predicate()`` is true; fail after ``rounds`` yields."""
+    for _ in range(rounds):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    assert predicate(), f"condition not reached in {rounds} scheduling rounds"

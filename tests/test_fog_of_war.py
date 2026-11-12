@@ -4,51 +4,12 @@ import asyncio
 
 import pytest
 
-from tests.async_helpers import settle
+from tests.async_helpers import settle, settle_until
 
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
-from wraithnet.schemas import Observation, TargetInfo
-
-
-def _target(**overrides) -> TargetInfo:
-    data = {
-        "target_id": "Target_A",
-        "position": (75.0, 75.0),
-        "target_type": "HARDENED_BUNKER",
-        "hp_required": 5,
-        "hp_remaining": 5,
-        "claimed": False,
-    }
-    data.update(overrides)
-    return TargetInfo(**data)
-
-
-def _obs(
-    agent_id: str,
-    position: tuple[float, float],
-    payload: dict[str, int],
-    targets: list[TargetInfo],
-    tick: int = 0,
-) -> Observation:
-    return Observation(
-        agent_id=agent_id,
-        tick=tick,
-        current_position=position,
-        sensor_radius=config.SENSOR_RADIUS,
-        payload=payload,
-        known_targets=targets,
-        comms_jammed=False,
-    )
-
-
-async def _wait_until(predicate, timeout: float = 0.5) -> None:
-    async def _poll() -> None:
-        while not predicate():
-            await settle()
-
-    await asyncio.wait_for(_poll(), timeout=timeout)
+from tests.conftest import target_info as _target, observation as _obs
 
 
 def test_refresh_world_view_populates_and_detects_changes():
@@ -106,7 +67,7 @@ async def test_share_new_contacts_broadcasts_only_changed():
             _obs("Jet_1", (70.0, 70.0), {"JDAM": 1, "AIM9X": 0}, [target], tick=0)
         )
         await jet1.share_new_contacts()
-        await _wait_until(
+        await settle_until(
             lambda: any(m.message_type == "DATALINK_CONTACT" for m in jet2.received_messages)
         )
         contacts = [m for m in jet2.received_messages if m.message_type == "DATALINK_CONTACT"]
@@ -147,7 +108,7 @@ async def test_helper_bids_from_datalink_contact_only(monkeypatch):
 
     try:
         await manager.share_new_contacts()
-        await _wait_until(lambda: "Target_A" in helper.world_view)
+        await settle_until(lambda: "Target_A" in helper.world_view)
         assert helper.latest_observation is not None
         assert helper.latest_observation.known_targets == []
         assert "Target_A" in helper.world_view

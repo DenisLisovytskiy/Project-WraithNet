@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest>=8.0
 pytest-asyncio>=0.24
+# Audit tools (docs/25_Test_Suite_Audit_Report.md); not used by a plain pytest run.
+pytest-cov>=5.0
+cosmic-ray>=8.9

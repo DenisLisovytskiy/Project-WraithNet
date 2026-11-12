@@ -32,6 +32,13 @@ def test_missing_directory_degrades(monkeypatch):
     assert texmod.textures_available() is False
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "SPRITE_FILES points at assets/textures/<name>.jpeg, but the sprite JPEGs "
+        "are committed under assets/textures/pics/; same bug as viewer3d/textures/loader.py"
+    ),
+)
 def test_pygame_sprite_corners_are_transparent():
     pytest.importorskip("pygame")
     import pygame
@@ -39,8 +46,7 @@ def test_pygame_sprite_corners_are_transparent():
     pygame.init()
     try:
         pygame.display.init()
-        if not texmod.textures_available():
-            pytest.skip("assets/textures not present")
+        assert texmod.textures_available()
         spr = texmod.load_sprite("HARDENED_BUNKER")
         assert spr is not None
         w, h = spr.get_size()

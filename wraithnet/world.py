@@ -416,6 +416,8 @@ class WraithNetModel(mesa.Model):
         self.swarm_wiped_out: bool = False
         self.mission_aborted: bool = False
         self.mission_solved: bool = False
+        # Objective id -> PENDING/COMPLETE/FAILED from the last evaluation.
+        self.objective_status: dict[str, str] = {}
         self.jet_outcomes: dict[str, JetOutcome] = {}
         self._home_base: tuple[float, float] = self._scenario.home_base
         self.terrain: TerrainGrid = self._scenario.terrain
@@ -1223,6 +1225,7 @@ class WraithNetModel(mesa.Model):
             self.mission_aborted = evaluation.mission_aborted or self.mission_aborted
             self.swarm_wiped_out = evaluation.swarm_wiped_out
             self.mission_solved = evaluation.solved
+            self.objective_status = dict(evaluation.objective_status)
             return
 
         # Legacy destroy-all / wipeout (v2 scenarios without mission_objectives).

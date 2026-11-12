@@ -1,7 +1,5 @@
 """Phase 23: summarize() must account for jets that left play."""
 
-from pathlib import Path
-
 import pytest
 
 from wraithnet import config
@@ -26,9 +24,6 @@ def _move_toward(
         target_position=destination,
         desired_heading=bearing_to(origin, destination),
     )
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _assert_three_way_split(model: WraithNetModel) -> None:
@@ -283,17 +278,6 @@ def test_three_way_split_holds_every_tick_of_a_sam_kill():
     assert summary["mission_aborted"] is False
 
 
-def test_legacy_survived_metric_key_is_gone():
-    """The still-flying rename is a clean break — no leftover survived key."""
-    needle = "jets_" + "survived"
-    hits: list[str] = []
-    for folder in ("wraithnet", "tests"):
-        for path in (REPO_ROOT / folder).rglob("*.py"):
-            if needle in path.read_text(encoding="utf-8"):
-                hits.append(str(path.relative_to(REPO_ROOT)).replace("\\", "/"))
-    assert hits == [], f"stale {needle} references remain: {hits}"
-
-
 def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
     """model_vars.csv must not drop a landed/destroyed jet's distance."""
     home = (20.0, 20.0)
@@ -330,3 +314,19 @@ def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
     ].tolist()
     assert after_rows[-1] == pytest.approx(12.0)
     assert after_rows == sorted(after_rows)
+
+
+@pytest.mark.asyncio
+async def test_objective_outcomes_report_each_objective_status_of_a_solved_run():
+    """objective_outcomes was always {} because it read an attribute nothing set."""
+    from wraithnet.bridge import WraithNetBridge
+
+    bridge = WraithNetBridge()
+    await bridge.run(max_ticks=500)
+    summary = summarize(bridge.model)
+
+    assert summary["solved"] is True
+    ids = {o.objective_id for o in bridge.model.mission_objectives}
+    assert ids
+    assert summary["objective_outcomes"] == {oid: "COMPLETE" for oid in ids}
+

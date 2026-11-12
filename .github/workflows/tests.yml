@@ -1,0 +1,43 @@
+# Default lane on every push and pull request; full lane every night.
+# Lanes are defined in pyproject.toml and docs/25_Test_Suite_Audit_Report.md.
+name: tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # pygame draws to an in-memory surface; Panda3D tests use window-type none.
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: pip install -r requirements-dev.txt -r requirements-3d.txt -r requirements-viz.txt
+      - name: Default lane
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: pytest
+      # The gui lane builds the 3D viewer and launches its simulator. It is
+      # only run on Windows, the packaging target; on Linux it would need a
+      # display server that this workflow does not set up.
+      - name: Full lane (Windows)
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && runner.os == 'Windows'
+        run: pytest -m ""
+      - name: Full lane without gui (Linux)
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && runner.os == 'Linux'
+        run: pytest -m "not gui"

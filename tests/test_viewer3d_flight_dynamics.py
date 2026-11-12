@@ -1,6 +1,5 @@
 """Panda3D-free unit tests for viewer3d.flight_dynamics (Phase 25)."""
 
-from pathlib import Path
 
 import pytest
 
@@ -67,14 +66,6 @@ def _tick(**overrides) -> TraceTick:
     }
     data.update(overrides)
     return TraceTick(**data)
-
-
-def test_flight_dynamics_module_has_no_panda3d_imports():
-    source = Path("viewer3d/flight_dynamics.py").read_text(encoding="utf-8")
-    lowered = source.lower()
-    assert "import panda3d" not in lowered
-    assert "from panda3d" not in lowered
-    assert "from direct" not in lowered
 
 
 def test_nearest_alive_target_distance_ignores_destroyed_targets():

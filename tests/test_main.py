@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from wraithnet.scenario_io import save_scenario
 from wraithnet.scenario_schema import ScenarioConfig, new_scenario_data, scenario_from_data
 
@@ -22,6 +24,7 @@ def _run_main(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.slow
 def test_main_with_default_json_matches_main_with_no_flags():
     without_flag = _run_main()
     with_flag = _run_main("--scenario", str(DEFAULT_SCENARIO_PATH))
@@ -29,6 +32,7 @@ def test_main_with_default_json_matches_main_with_no_flags():
     assert "Solved:" in without_flag.stdout
 
 
+@pytest.mark.slow
 def test_main_runs_a_custom_scenario_file(tmp_path):
     custom = scenario_from_data(new_scenario_data(
         jets=[
@@ -57,6 +61,7 @@ def test_main_runs_a_custom_scenario_file(tmp_path):
     assert "Target_A" not in result.stdout
 
 
+@pytest.mark.slow
 def test_main_live_completes_without_a_client(tmp_path):
     custom = scenario_from_data(new_scenario_data(
         jets=[

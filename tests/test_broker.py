@@ -179,3 +179,20 @@ def test_is_jammed_toggles():
     broker.set_jammed("Jet_1", True)
     broker.set_jammed("Jet_1", True)  # idempotent
     assert broker.is_jammed("Jet_1") is True
+
+
+def test_claim_expires_only_after_more_than_ttl_ticks():
+    broker = MessageBroker(claim_ttl_ticks=5)
+    broker.try_open_contract("Target_A", "c1", "Jet_1", tick=10)
+    assert broker.expire_stale_contracts(current_tick=15) == []
+    assert broker.expire_stale_contracts(current_tick=16) == ["Target_A"]
+
+
+@pytest.mark.asyncio
+async def test_direct_message_to_an_id_sorting_before_broadcast_is_not_broadcast():
+    broker = MessageBroker()
+    for agent_id in ("Alpha", "Jet_1", "Jet_2"):
+        broker.register(agent_id)
+    await broker.send(make_bid("Jet_1", "Alpha"))
+    assert broker.inbox_size("Alpha") == 1
+    assert broker.inbox_size("Jet_2") == 0

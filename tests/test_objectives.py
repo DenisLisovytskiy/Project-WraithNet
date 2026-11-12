@@ -211,3 +211,17 @@ def test_optional_objectives_do_not_gate_global_result():
     )
     assert result.result == "SUCCESS"
     assert result.objective_status["OBJ_OPT"] == "PENDING"
+
+
+def test_objective_defaults_and_single_tick_survive_are_valid():
+    obj = MissionObjective(objective_id="d", objective_type="DESTROY", subject_ids=["T"])
+    assert 0.0 <= obj.priority <= 1.0
+    MissionObjective(objective_id="s", objective_type="SURVIVE", subject_ids=["J"], until_tick=1)
+
+
+def test_wipeout_without_a_returned_jet_is_reported_as_wiped_out():
+    obj = MissionObjective(objective_id="d", objective_type="DESTROY", subject_ids=["T"])
+    ev = evaluate_mission([obj], tick=5, destroyed_ids=set(), no_friendly_platforms=True)
+    assert ev.result == "ABORTED"
+    assert ev.swarm_wiped_out is True
+    assert evaluate_mission([], tick=0, destroyed_ids=set()).swarm_wiped_out is False

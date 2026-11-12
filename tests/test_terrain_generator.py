@@ -184,6 +184,7 @@ def test_global_rng_unchanged_by_terrain_generation():
     assert random.getstate() == rng_state
 
 
+@pytest.mark.slow
 def test_generated_land_entities_are_passable():
     for preset in ("TRAINING", "STANDARD", "CONTESTED"):
         for seed in (0, 1, 2, 5, 9):
@@ -205,6 +206,7 @@ def test_generator_version_matches_the_rng_module():
     assert result.scenario.generation.resolved_parameters.terrain.water_fraction > 0.0
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_auto_balanced_seed_matrix_terrain_feasible(preset):
     # Phase 35 acceptance: every seed generates, and every scenario is
@@ -224,6 +226,7 @@ def test_auto_balanced_seed_matrix_terrain_feasible(preset):
         )
 
 
+@pytest.mark.slow
 def test_standard_100_seed_matrix():
     # Broad matrix on the cheap PoC map; the default map size gets its own
     # (smaller) matrix in test_auto_balanced_seed_matrix_terrain_feasible.
@@ -304,6 +307,7 @@ def test_entity_on_water_feasibility_error():
         scenario_from_data(data)
 
 
+@pytest.mark.slow
 def test_generation_performance_budget():
     """STANDARD generation stays interactive at both map sizes.
 
