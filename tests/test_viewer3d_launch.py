@@ -172,3 +172,31 @@ def test_concurrent_launches_write_distinct_result_dirs(tmp_path):
     finally:
         first.terminate()
         second.terminate()
+
+
+def test_allocating_a_run_dir_keeps_only_the_newest_gui_runs(tmp_path, monkeypatch):
+    import os
+
+    import viewer3d.launch as launch
+
+    results = tmp_path / "results"
+    results.mkdir()
+    monkeypatch.setattr(launch, "user_data_dir", lambda _subdir: results)
+    for index in range(25):
+        old = results / f"run-old{index:02d}"
+        old.mkdir()
+        (old / "trace.jsonl").write_text("{}", encoding="utf-8")
+        os.utime(old, (1_000_000 + index, 1_000_000 + index))
+    experiment = results / "exp-standard"
+    experiment.mkdir()
+    os.utime(experiment, (1, 1))
+    (results / "trace.jsonl").write_text("{}", encoding="utf-8")
+
+    new = launch.allocate_run_output_dir()
+
+    runs = sorted(p.name for p in results.glob("run-*"))
+    assert len(runs) == launch.GUI_RUN_RETENTION
+    assert new.name in runs
+    assert "run-old24" in runs and "run-old05" not in runs
+    assert experiment.is_dir()
+    assert (results / "trace.jsonl").is_file()

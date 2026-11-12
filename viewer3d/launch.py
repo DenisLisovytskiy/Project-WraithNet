@@ -20,6 +20,7 @@ is pointed at the project root so `python -m launcher` still resolves.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -40,10 +41,26 @@ def _ephemeral_port(host: str = "127.0.0.1") -> int:
         return int(sock.getsockname()[1])
 
 
+#: GUI launches keep this many ``run-*`` folders; older ones are deleted.
+GUI_RUN_RETENTION = 20
+
+
 def allocate_run_output_dir() -> Path:
-    """Unique writable folder for one simulation worker's trace/CSVs."""
-    path = user_data_dir("results") / f"run-{uuid.uuid4().hex[:12]}"
+    """Unique writable folder for one simulation worker's trace/CSVs.
+
+    Every GUI launch makes one, so the oldest are pruned here. Only ``run-*``
+    folders are touched: experiment output directories are never deleted.
+    """
+    results = user_data_dir("results")
+    path = results / f"run-{uuid.uuid4().hex[:12]}"
     path.mkdir(parents=True, exist_ok=True)
+    runs = sorted(
+        (p for p in results.glob("run-*") if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old in runs[GUI_RUN_RETENTION:]:
+        shutil.rmtree(old, ignore_errors=True)
     return path
 
 
