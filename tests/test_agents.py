@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from tests.async_helpers import settle
+from tests.async_helpers import settle, settle_until
 
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime, compute_bid
@@ -46,14 +46,6 @@ def make_cfp(sender_id, target_id="Target_A", tick=1):
     )
 
 
-async def _wait_until(predicate, timeout: float = 0.5) -> None:
-    async def _poll() -> None:
-        while not predicate():
-            await settle()
-
-    await asyncio.wait_for(_poll(), timeout=timeout)
-
-
 @pytest.mark.asyncio
 async def test_broadcast_cfp_received_by_other_runtimes():
     broker = MessageBroker()
@@ -64,7 +56,7 @@ async def test_broadcast_cfp_received_by_other_runtimes():
 
     try:
         await broker.send(make_cfp("Jet_1"))
-        await _wait_until(
+        await settle_until(
             lambda: len(jet2.received_messages) == 1 and len(jet3.received_messages) == 1
         )
         assert jet2.received_messages[0].message_type == "CFP"
@@ -88,7 +80,7 @@ async def test_direct_bid_recorded_only_by_receiver_runtime():
 
     try:
         await broker.send(make_bid("Jet_2", "Jet_1"))
-        await _wait_until(lambda: len(jet1.received_messages) == 1)
+        await settle_until(lambda: len(jet1.received_messages) == 1)
         assert jet1.received_messages[0].message_type == "BID"
         assert jet1.received_messages[0].sender_id == "Jet_2"
         assert jet3.received_messages == []

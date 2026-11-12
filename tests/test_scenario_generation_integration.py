@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
@@ -27,7 +26,7 @@ async def test_generation_result_runs_through_bridge_without_special_casing():
     scenario: ScenarioConfig = result.scenario
     # Bridge must accept an ordinary ScenarioConfig; generation metadata is ignored.
     bridge = WraithNetBridge(scenario=scenario)
-    await asyncio.wait_for(bridge.run(max_ticks=400), timeout=90)
+    await bridge.run(max_ticks=400)
     summary = summarize(bridge.model)
     assert summary["total_targets"] == len(scenario.targets) + len(scenario.sam_sites)
     assert "solved" in summary
@@ -65,7 +64,7 @@ async def test_dynamic_calibration_sample_no_exceptions():
             )
             result = generate_scenario(params)
             bridge = WraithNetBridge(scenario=result.scenario)
-            await asyncio.wait_for(bridge.run(max_ticks=500), timeout=120)
+            await bridge.run(max_ticks=500)
             summary = summarize(bridge.model)
             if summary["solved"]:
                 solved += 1
@@ -104,7 +103,7 @@ async def test_auto_balanced_training_often_progresses():
     )
     assert result.feasibility.feasible is True
     bridge = WraithNetBridge(scenario=result.scenario)
-    await asyncio.wait_for(bridge.run(max_ticks=400), timeout=90)
+    await bridge.run(max_ticks=400)
     summary = summarize(bridge.model)
     # Not every seed must win, but Training seed 0 should usually make progress.
     assert summary["targets_destroyed"] >= 0

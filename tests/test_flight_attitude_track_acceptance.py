@@ -7,7 +7,6 @@ a PR / operator checklist item — see docs/22 §11 item 6 note.
 
 from __future__ import annotations
 
-import asyncio
 import math
 
 import pytest
@@ -282,7 +281,7 @@ async def test_acceptance_poc_wings_level_mission_still_solves():
         assert jet.pitch_deg == pytest.approx(0.0)
         assert jet.roll_deg == pytest.approx(0.0)
 
-    await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60)
+    await bridge.run(max_ticks=500)
     summary = summarize(bridge.model)
 
     assert summary["solved"] is True

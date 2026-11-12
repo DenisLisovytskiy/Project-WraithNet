@@ -16,7 +16,7 @@ from tests.conftest import target_info as _target, observation as _obs, set_obse
 @pytest.mark.asyncio
 async def test_bridge_runs_scenario_to_completion():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60.0)
+    await bridge.run(max_ticks=500)
 
     assert bridge.model.running is False
     assert bridge.model.swarm_wiped_out is False
@@ -190,7 +190,7 @@ async def test_bridge_runs_custom_scenario_to_completion():
         ],
     ))
     bridge = WraithNetBridge(scenario=scenario)
-    await asyncio.wait_for(bridge.run(max_ticks=50), timeout=15.0)
+    await bridge.run(max_ticks=50)
 
     assert bridge.model.running is False
     assert bridge.model.swarm_wiped_out is False

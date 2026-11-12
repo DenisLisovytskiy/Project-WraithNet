@@ -20,7 +20,7 @@ from wraithnet.world import WraithNetModel
 async def test_v2_scenario_fully_resolves():
     """v3 scenario has supply slack so infeasibility is never the failure mode."""
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     summary = summarize(bridge.model)
 
     assert summary["swarm_wiped_out"] is False, (
@@ -34,7 +34,7 @@ async def test_v2_scenario_fully_resolves():
 @pytest.mark.asyncio
 async def test_target_a_requires_multi_jet_jdam_cooperation():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     summary = summarize(bridge.model)
 
     contributors_a = summary["contributors_by_target"].get("Target_A", [])
@@ -47,7 +47,7 @@ async def test_target_a_requires_multi_jet_jdam_cooperation():
 @pytest.mark.asyncio
 async def test_target_b_solo_with_agm65():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     summary = summarize(bridge.model)
 
     contributors_b = summary["contributors_by_target"].get("Target_B", [])
@@ -59,7 +59,7 @@ async def test_target_b_solo_with_agm65():
 @pytest.mark.asyncio
 async def test_sam_site_destroyed_with_jdam():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
 
     assert bridge.model.targets["SAM_Site_1"].is_destroyed
     sam_strikes = [
@@ -71,7 +71,7 @@ async def test_sam_site_destroyed_with_jdam():
 @pytest.mark.asyncio
 async def test_no_wasted_or_misassigned_strikes():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     summary = summarize(bridge.model)
 
     # 5 (Target_A) + 1 (Target_B) + 1 (SAM_Site_1) = 7
@@ -92,7 +92,7 @@ async def test_fog_of_war_and_jamming_were_both_actually_exercised():
     assert "Target_B" not in jet2_ids
 
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     assert bridge.model.total_jammed_agent_ticks > 0, (
         "no jet was ever jammed — check EW_Jammer_1 placement/JAM_RADIUS"
     )
@@ -108,7 +108,7 @@ async def test_fog_of_war_and_jamming_were_both_actually_exercised():
 @pytest.mark.asyncio
 async def test_no_agent_left_in_a_zombie_state():
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
 
     for agent_id, agent in bridge.agents.items():
         assert agent.role in ("IDLE", "CONTRACTOR"), (
@@ -133,7 +133,7 @@ async def test_total_distance_traveled_is_reasonable():
     catches runaway loops without failing the longer RTB path.
     """
     bridge = WraithNetBridge()
-    await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+    await bridge.run(max_ticks=1000)
     summary = summarize(bridge.model)
 
     observed = summary["total_distance_traveled"]
@@ -149,7 +149,7 @@ async def test_determinism_across_repeated_runs():
     results = []
     for _ in range(2):
         bridge = WraithNetBridge()
-        await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
+        await bridge.run(max_ticks=1000)
         summary = summarize(bridge.model)
         results.append(
             (

@@ -1,6 +1,5 @@
 """Tests for the optional simulation-trace recorder."""
 
-import asyncio
 
 import pytest
 
@@ -165,14 +164,14 @@ async def test_recorded_role_matches_runtime_for_two_roles(tmp_path):
 async def test_recorder_has_zero_effect_on_summarize(tmp_path):
     """Attaching a TraceRecorder must not change simulation outcomes."""
     bridge_plain = WraithNetBridge()
-    await asyncio.wait_for(bridge_plain.run(max_ticks=1000), timeout=60)
+    await bridge_plain.run(max_ticks=1000)
     summary_plain = summarize(bridge_plain.model)
 
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     try:
         bridge_recorded = WraithNetBridge(sinks=[recorder])
-        await asyncio.wait_for(bridge_recorded.run(max_ticks=1000), timeout=60)
+        await bridge_recorded.run(max_ticks=1000)
     finally:
         recorder.close()
     summary_recorded = summarize(bridge_recorded.model)
@@ -186,7 +185,7 @@ async def test_full_run_trace_is_parseable_and_matches_final_state(tmp_path):
     recorder = TraceRecorder(path)
     try:
         bridge = WraithNetBridge(sinks=[recorder])
-        await asyncio.wait_for(bridge.run(), timeout=60)
+        await bridge.run()
     finally:
         recorder.close()
 

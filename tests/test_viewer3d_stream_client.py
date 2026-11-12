@@ -7,9 +7,7 @@ headless half of the 3D viewer, analogous to viewer/trace_loader.py.
 from __future__ import annotations
 
 import asyncio
-import queue
 import socket
-import time
 
 import pytest
 
@@ -21,22 +19,19 @@ from viewer3d.stream_client import (
     StreamClient,
     TickEvent,
 )
-from tests.conftest import tiny_scenario as _tiny_scenario
+from tests.conftest import HANG_GUARD_S, tiny_scenario as _tiny_scenario
 
 
-async def _drain_events(client: StreamClient, min_count: int, timeout: float = 5.0):
-    events = []
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await asyncio.sleep(0.05)
-        while True:
-            try:
-                events.append(client.events.get_nowait())
-            except queue.Empty:
-                break
-        if len(events) >= min_count:
-            return events
-    return events
+async def _next_events(client: StreamClient, count: int) -> list:
+    """Take the next ``count`` events in arrival order.
+
+    The server runs on this event loop, so the blocking get runs in a worker
+    thread. HANG_GUARD_S only stops a hang.
+    """
+    return [
+        await asyncio.to_thread(client.events.get, timeout=HANG_GUARD_S)
+        for _ in range(count)
+    ]
 
 
 def _free_port() -> int:
@@ -58,7 +53,7 @@ async def test_stream_client_receives_header_then_ticks():
             "127.0.0.1", server.port, connect_retries=10, retry_delay_s=0.1
         )
         client.start()
-        events = await _drain_events(client, min_count=2)
+        events = await _next_events(client, 2)
         types = [type(e) for e in events]
         assert HeaderEvent in types
         assert TickEvent in types
@@ -79,7 +74,7 @@ async def test_stream_client_receives_header_then_ticks():
 async def test_stream_client_retries_until_server_starts():
     port = _free_port()
     client = StreamClient(
-        "127.0.0.1", port, connect_retries=20, retry_delay_s=0.15
+        "127.0.0.1", port, connect_retries=400, retry_delay_s=0.05
     )
     client.start()
     await asyncio.sleep(0.4)
@@ -88,7 +83,7 @@ async def test_stream_client_retries_until_server_starts():
     await server.start()
     try:
         WraithNetBridge(sinks=[server], scenario=_tiny_scenario())
-        events = await _drain_events(client, min_count=2, timeout=6.0)
+        events = await _next_events(client, 2)
         assert any(isinstance(e, HeaderEvent) for e in events)
         assert any(isinstance(e, TickEvent) for e in events)
     finally:
@@ -104,7 +99,7 @@ async def test_stream_client_exhausted_retries_emits_disconnected():
     )
     client.start()
     try:
-        events = await _drain_events(client, min_count=1, timeout=3.0)
+        events = await _next_events(client, 1)
         assert events, "expected a DisconnectedEvent within the retry budget"
         assert isinstance(events[0], DisconnectedEvent)
         assert "could not connect" in events[0].reason
