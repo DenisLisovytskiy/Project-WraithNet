@@ -6,6 +6,8 @@ import uuid
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime, compute_bid
 from wraithnet.broker import MessageBroker
@@ -47,7 +49,7 @@ def make_cfp(sender_id, target_id="Target_A", tick=1):
 async def _wait_until(predicate, timeout: float = 0.5) -> None:
     async def _poll() -> None:
         while not predicate():
-            await asyncio.sleep(0.01)
+            await settle()
 
     await asyncio.wait_for(_poll(), timeout=timeout)
 
@@ -536,7 +538,7 @@ async def test_rtb_jet_never_bids_on_cfp_or_becomes_manager():
             hp_remaining=5,
         )
         await broker.send(cfp)
-        await asyncio.sleep(0.05)
+        await settle()
         bids_from_rtb = [
             m
             for m in manager.received_messages

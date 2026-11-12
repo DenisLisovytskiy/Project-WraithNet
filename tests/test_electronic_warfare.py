@@ -4,8 +4,10 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
-from wraithnet.agents import JetAgentRuntime, MAX_CFP_ROUNDS
+from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
 from wraithnet.schemas import Observation, TargetInfo
 from wraithnet.world import WraithNetModel
@@ -70,7 +72,7 @@ async def test_jammed_manager_eventually_releases_claim(monkeypatch):
     try:
         await manager.scan_and_negotiate()
         # Allow any remaining timeout rounds to settle.
-        await asyncio.sleep(MAX_CFP_ROUNDS * 0.02 + 0.1)
+        await settle()
         assert manager.role == "IDLE"
         assert broker.is_claimed("Target_A") is False
         assert bidder.role == "IDLE"
@@ -110,7 +112,7 @@ async def test_bidder_self_heals_via_pending_ttl_when_accept_jammed(monkeypatch)
 
     try:
         await manager.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
         assert bidder.role == "CONTRACTOR_PENDING"
         assert bidder.pending_bid_since_tick is not None
 

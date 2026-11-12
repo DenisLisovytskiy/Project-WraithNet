@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.bridge import WraithNetBridge
@@ -181,7 +183,7 @@ async def test_notify_contractor_lost_skips_destroyed_manager():
 
         # Surviving Jet_1 must not be stranded in CONTRACTOR_PENDING.
         await jet1.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
         assert jet1.role != "CONTRACTOR_PENDING"
     finally:
         await bridge.stop_agent_loops()

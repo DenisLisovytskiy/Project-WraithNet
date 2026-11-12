@@ -5,6 +5,8 @@ import math
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime, compute_bid
 from wraithnet.broker import MessageBroker
@@ -256,7 +258,7 @@ async def test_multi_winner_partial_fulfillment_for_target_a(monkeypatch):
 
     try:
         await jet1.scan_and_negotiate()
-        await asyncio.sleep(0.15)  # let ACCEPT/REJECT delivery settle
+        await settle()  # let ACCEPT/REJECT delivery settle
 
         contractors = [
             j
@@ -308,7 +310,7 @@ async def test_multi_round_renegotiation_accepts_late_bidder(monkeypatch):
 
     try:
         await asyncio.gather(manager.scan_and_negotiate(), late_helper_observation())
-        await asyncio.sleep(0.1)
+        await settle()
 
         assert manager.role == "CONTRACTOR"
         assert manager.committed_target_id == "T"
@@ -367,7 +369,7 @@ async def test_tie_break_prefers_lexicographically_smaller_agent_id(monkeypatch)
 
         try:
             await manager.scan_and_negotiate()
-            await asyncio.sleep(0.1)
+            await settle()
             assert jet_b.role == "CONTRACTOR"
             assert jet_b.committed_target_id == "Target_Tie"
             assert jet_b.committed_weapon_type == "JDAM"
