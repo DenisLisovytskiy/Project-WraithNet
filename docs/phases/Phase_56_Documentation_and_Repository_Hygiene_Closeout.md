@@ -1,5 +1,7 @@
 # Phase 56 — Documentation & Repository Hygiene Closeout
 
+> **Status: DONE (2026-11-12).** Phase 55 is on `main` with its acceptance tests green; nine design documents have status banners; the unplanned work is recorded in `docs/24_Post_Phase_Changes_Record.md` and doc 22 §14; README numbers have their commands. Decisions taken: generated scenarios are no longer committed, `networkx` stays for Phase 65.
+
 > **LLM implementation prompt:** Assume Phases 0–54 are in the code and Phase 55 is unmerged. This phase depends on nothing after it and goes first, so that later phases build on a `main` whose documents are true. Read `docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md` §1. Every item below is a small, mechanical correction of something that is stale or untracked. Do not redesign anything and do not rewrite old phase documents: they are the historical record. Add status notes and new documents instead.
 
 ## Goal

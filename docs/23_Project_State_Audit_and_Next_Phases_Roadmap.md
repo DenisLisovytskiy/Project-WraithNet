@@ -1,6 +1,6 @@
 # Project State Audit & Next-Phases Roadmap (Phases 56–65)
 
-> **Status:** analysis and proposals only. Nothing in Phases 56–65 is implemented. This document records what was measured, on which code, and why each new phase exists. The phase files in `docs/phases/` are the work orders.
+> **Status:** the measurements below are a snapshot taken before Phase 56 and are not updated. Progress on Phases 56–65 is tracked in the Status column of the table in §6. This document records what was measured, on which code, and why each new phase exists. The phase files in `docs/phases/` are the work orders.
 >
 > **Measured on:** branch `fix/jets-loiter-orbit` at `c7c2919` (`main` at `fa930a5` plus the holding-orbit change), Windows 11, Python 3.14.3, Mesa 3.5.1, 2026-11-10. Numbers will differ on other machines; the ratios should not.
 
@@ -178,18 +178,18 @@ Where it is thin:
 
 Phase numbers are the order of work.
 
-| Phase | Title | Depends on | Why here |
-|---|---|---|---|
-| 56 | Documentation and repository hygiene | — | Independent and cheap; lands the unmerged Phase 55 before anything builds on `main` |
-| 57 | Headless experiment runner and determinism | — | The measuring instrument for everything after |
-| 58 | Test suite audit and hardening | 57 | The safety net before behaviour changes; reuses the runner for outcome tests |
-| 59 | CNP liveness and mission completion | 57, 58 | Fixes the largest visible defect |
-| 60 | Simulation hot-path performance | 57, 59 | Makes large sweeps cheap; profiled after the stalls are gone, because they distort where time goes |
-| 61 | Baseline allocators and comparative experiments | 57–60 | The yardstick has to exist before the backbone is changed; its matrix is rerun after each later phase |
-| 62 | Radio-true coordination | 59, 61 | Makes the central claim true |
-| 63 | Shared threat picture and Phase 45 completion | 62 | Gives bids real information; uses 62's contractor messages |
-| 64 | Multi-task commitment, decommitment, precedence | 62, 63 | Largest behaviour change; needs a design doc first |
-| 65 | Behaviour layer and threat-aware routing | 63, 64 | Refactor first, then routing and the two cooperative behaviours |
+| Phase | Title | Depends on | Why here | Status |
+|---|---|---|---|---|
+| 56 | Documentation and repository hygiene | — | Independent and cheap; lands the unmerged Phase 55 before anything builds on `main` | **Done** |
+| 57 | Headless experiment runner and determinism | — | The measuring instrument for everything after | Not started |
+| 58 | Test suite audit and hardening | 57 | The safety net before behaviour changes; reuses the runner for outcome tests | Not started |
+| 59 | CNP liveness and mission completion | 57, 58 | Fixes the largest visible defect | Not started |
+| 60 | Simulation hot-path performance | 57, 59 | Makes large sweeps cheap; profiled after the stalls are gone, because they distort where time goes | Not started |
+| 61 | Baseline allocators and comparative experiments | 57–60 | The yardstick has to exist before the backbone is changed; its matrix is rerun after each later phase | Not started |
+| 62 | Radio-true coordination | 59, 61 | Makes the central claim true | Not started |
+| 63 | Shared threat picture and Phase 45 completion | 62 | Gives bids real information; uses 62's contractor messages | Not started |
+| 64 | Multi-task commitment, decommitment, precedence | 62, 63 | Largest behaviour change; needs a design doc first | Not started |
+| 65 | Behaviour layer and threat-aware routing | 63, 64 | Refactor first, then routing and the two cooperative behaviours | Not started |
 
 Phases 56–59 are the first batch. From Phase 60 on, every phase is judged by a sweep table instead of a replay, and from Phase 62 on, against the Phase 61 baselines.
 
