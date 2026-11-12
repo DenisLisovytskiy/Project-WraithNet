@@ -11,7 +11,7 @@
 ![Panda3D](https://img.shields.io/badge/3D-Panda3D-00b894)
 ![Pydantic](https://img.shields.io/badge/schemas-Pydantic%20v2-e92063)
 ![asyncio](https://img.shields.io/badge/concurrency-asyncio-0984e3)
-![Tests](https://img.shields.io/badge/tests-775%20passing-success)
+![Tests](https://img.shields.io/badge/tests-pytest-success)
 
 <img src="docs/assets/readme/hero-chase.webp" alt="Chase camera following an interceptor through a city at night" width="900">
 
@@ -75,7 +75,7 @@ Every behaviour you see in the viewer comes out of these negotiations. Nothing i
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/readme/scenario-editor.jpg" alt="Scenario editor with quick generate"><br><sub><b>Scenario editor.</b> Quick-generate by difficulty and seed, place or edit any unit, then Preview or Launch.</sub></td>
-<td width="50%"><img src="docs/assets/readme/mission-complete.jpg" alt="Mission complete summary"><br><sub><b>Mission debrief.</b> CONTESTED seed 6: 7/7 targets destroyed, 0 jets lost, all 5 back at base, 30 weapons expended.</sub></td>
+<td width="50%"><img src="docs/assets/readme/mission-complete.jpg" alt="Mission complete summary"><br><sub><b>Mission debrief.</b> CONTESTED seed 6: 7/7 targets destroyed, 0 jets lost, all 5 back at base, 30 weapons expended. This is the best of eight sampled CONTESTED seeds, not a typical run (see <a href="docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md">doc 23 §3</a>).</sub></td>
 </tr>
 </table>
 
@@ -89,17 +89,20 @@ sequenceDiagram
     participant C1 as Jet B
     participant C2 as Jet C
     M->>B: try_open_contract(SAM_01)  — claim target
-    M-->>C1: CFP (target, HP needed, known threats)
+    M-->>C1: CFP (target, HP needed)
     M-->>C2: CFP
+    M-->>C1: RISK_UPDATE (manager's threat contacts)
+    M-->>C2: RISK_UPDATE
     Note over C1,C2: each scores bid utility:<br/>distance · weapon fit · fuel · risk exposure
     C1-->>M: BID (utility 0.82, AGM-88 ×1)
     C2-->>M: BID (utility 0.64, JDAM ×1)
-    M-->>C1: AWARD
+    M-->>C1: ACCEPT
     M-->>C2: REJECT
     C1->>C1: plan attack run (altitude band, release envelope)
-    C1-->>M: DONE / target destroyed
-    M->>B: close_contract(SAM_01)
+    Note over M,B: the claim clears when the target is destroyed<br/>or the claim time limit expires
 ```
+
+The contractor does not report back to the manager: there is no `DONE` message in the protocol today. Adding contract lifecycle messages is [Phase 62](docs/phases/Phase_62_Radio_True_Coordination.md).
 
 The protocol keeps working when things go wrong:
 
@@ -185,11 +188,20 @@ Each **difficulty preset** (Training → Standard → Contested → Nightmare) s
 | | |
 |---|---|
 | **~36k lines** of application code | simulation, agents, generator, 2D and 3D viewers, launcher |
-| **~24k lines** of tests, **775 passing** | unit, property-style seed matrices, end-to-end scenario runs and GUI smoke tests |
-| **100-seed regression matrix** | every generated STANDARD mission must pass the feasibility check |
+| **~24k lines** of tests | unit, property-style seed matrices, end-to-end scenario runs and GUI smoke tests |
+| **100-seed regression matrix** | every generated STANDARD mission must pass the feasibility check. Feasibility is a static check; how often the simulated swarm actually solves a mission is measured separately ([doc 23 §3](docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md)) |
 | **Deterministic** | seeded RNG streams per subsystem (terrain, enemies, friendlies, combat), so a seed reproduces its mission exactly |
-| **Design-first workflow** | 20+ design documents and code reviews, and 56 phase plans in [`docs/`](docs/) |
+| **Design-first workflow** | 25+ design documents and code reviews, and 66 phase plans in [`docs/`](docs/) |
 | **Packaged** | PyInstaller build to a one-click Windows executable ([`packaging/BUILDING.md`](packaging/BUILDING.md)) |
+
+The numbers in this table come from these commands (run from the repository root, in a POSIX shell):
+
+```bash
+git ls-files 'wraithnet/*.py' 'viewer/*.py' 'viewer3d/*.py' 'launcher/*.py' | xargs cat | wc -l   # application lines
+git ls-files 'tests/*.py' | xargs cat | wc -l                                                    # test lines
+pytest --collect-only -q | tail -1                                                               # test count
+ls docs/*.md | wc -l; ls docs/phases | wc -l                                                     # documents, phase plans
+```
 
 ## Quick start
 
@@ -265,7 +277,7 @@ viewer3d/           Panda3D live/replay viewer and scenario editor
 viewer/             lightweight 2D pygame replay viewer
 launcher/           single entry point (editor → launch → watch)
 scenarios/          hand-authored example missions
-tests/              775+ tests
+tests/              pytest suite
 docs/               design documents, code reviews, phase plans
 packaging/          PyInstaller build recipe
 ```
@@ -278,6 +290,8 @@ packaging/          PyInstaller build recipe
 - **Risk-aware CNP negotiation:** [doc 20](docs/20_Risk_Aware_CNP_Negotiation_Design_Document.md)
 - **Smooth live motion (dual-clock interpolation):** [doc 21](docs/21_Smooth_Live_Motion_Design_Document.md)
 - **Authoritative 3D flight attitude, altitude tactics and weapon-release limits:** [doc 22](docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md)
+- **Project state audit and roadmap for Phases 56–65:** [doc 23](docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md)
+- **Changes made outside the phase plan:** [doc 24](docs/24_Post_Phase_Changes_Record.md)
 - **Phase-by-phase build plan:** [`docs/phases/`](docs/phases/)
 
 <div align="center">
