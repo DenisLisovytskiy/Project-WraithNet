@@ -182,7 +182,7 @@ Phase numbers are the order of work.
 |---|---|---|---|---|
 | 56 | Documentation and repository hygiene | — | Independent and cheap; lands the unmerged Phase 55 before anything builds on `main` | **Done** |
 | 57 | Headless experiment runner and determinism | — | The measuring instrument for everything after | **Done** |
-| 58 | Test suite audit and hardening | 57 | The safety net before behaviour changes; reuses the runner for outcome tests | Not started |
+| 58 | Test suite audit and hardening | 57 | The safety net before behaviour changes; reuses the runner for outcome tests | **Done** |
 | 59 | CNP liveness and mission completion | 57, 58 | Fixes the largest visible defect | Not started |
 | 60 | Simulation hot-path performance | 57, 59 | Makes large sweeps cheap; profiled after the stalls are gone, because they distort where time goes | Not started |
 | 61 | Baseline allocators and comparative experiments | 57–60 | The yardstick has to exist before the backbone is changed; its matrix is rerun after each later phase | Not started |
