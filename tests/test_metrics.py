@@ -330,3 +330,19 @@ def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
     ].tolist()
     assert after_rows[-1] == pytest.approx(12.0)
     assert after_rows == sorted(after_rows)
+
+
+@pytest.mark.asyncio
+async def test_objective_outcomes_report_each_objective_status_of_a_solved_run():
+    """objective_outcomes was always {} because it read an attribute nothing set."""
+    from wraithnet.bridge import WraithNetBridge
+
+    bridge = WraithNetBridge()
+    await bridge.run(max_ticks=500)
+    summary = summarize(bridge.model)
+
+    assert summary["solved"] is True
+    ids = {o.objective_id for o in bridge.model.mission_objectives}
+    assert ids
+    assert summary["objective_outcomes"] == {oid: "COMPLETE" for oid in ids}
+

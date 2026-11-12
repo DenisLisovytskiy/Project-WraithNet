@@ -17,36 +17,21 @@ def summarize(model) -> dict:
     ``model.jets`` silently dropped those numbers the moment a jet was
     reaped — a latent bug this phase closes.
     """
-    if hasattr(model, "jet_travel_stats"):
-        all_stats = model.jet_travel_stats()
-    else:
-        live_stats = {
-            aid: (jet.distance_traveled, dict(jet.payload))
-            for aid, jet in model.jets.items()
-        }
-        past_stats = {
-            aid: (o.distance_traveled, dict(o.final_payload_remaining))
-            for aid, o in getattr(model, "jet_outcomes", {}).items()
-        }
-        all_stats = {**past_stats, **live_stats}
-
-    if hasattr(model, "total_distance_traveled"):
-        total_distance = model.total_distance_traveled()
-    else:
-        total_distance = sum(d for d, _ in all_stats.values())
+    all_stats = model.jet_travel_stats()
+    total_distance = model.total_distance_traveled()
     contributors_by_target: dict[str, set[str]] = {}
     missiles_by_weapon_type: Counter[str] = Counter()
     for entry in model.strike_log:
         contributors_by_target.setdefault(entry["target_id"], set()).add(entry["agent_id"])
         missiles_by_weapon_type[entry["weapon_type"]] += 1
 
-    outcomes = getattr(model, "jet_outcomes", {})
+    outcomes = model.jet_outcomes
     jets_destroyed = sum(1 for o in outcomes.values() if o.outcome == "destroyed")
     jets_returned_to_base = sum(
         1 for o in outcomes.values() if o.outcome == "returned_to_base"
     )
 
-    missile_events = getattr(model, "missile_events", None) or []
+    missile_events = model.missile_events
     launches = sum(1 for e in missile_events if e.get("event") == "launch")
     hits = sum(
         1
@@ -78,23 +63,23 @@ def summarize(model) -> dict:
         for e in missile_events
         if e.get("event") == "impact" and e.get("outcome") == "INTERCEPTED"
     )
-    flare_attempts = int(getattr(model, "flare_attempts", 0) or 0)
-    flare_successes = int(getattr(model, "flare_successes", 0) or 0)
-    notch_attempts = int(getattr(model, "notch_attempts", 0) or 0)
-    notch_completions = int(getattr(model, "notch_completions", 0) or 0)
-    notch_lock_breaks = int(getattr(model, "notch_lock_breaks", 0) or 0)
+    flare_attempts = int(model.flare_attempts)
+    flare_successes = int(model.flare_successes)
+    notch_attempts = int(model.notch_attempts)
+    notch_completions = int(model.notch_completions)
+    notch_lock_breaks = int(model.notch_lock_breaks)
     flares_remaining = {
-        aid: int(getattr(jet, "flares_remaining", 0))
+        aid: int(jet.flares_remaining)
         for aid, jet in model.jets.items()
     }
-    deaths_by_guidance = dict(getattr(model, "deaths_by_guidance", {}) or {})
-    agm84_launches = int(getattr(model, "agm84_launches", 0) or 0)
-    agm84_hits = int(getattr(model, "agm84_hits", 0) or 0)
+    deaths_by_guidance = dict(model.deaths_by_guidance)
+    agm84_launches = int(model.agm84_launches)
+    agm84_hits = int(model.agm84_hits)
     agm84_hit_rate = (
         (agm84_hits / agm84_launches) if agm84_launches > 0 else 0.0
     )
 
-    negotiation_events = list(getattr(model, "negotiation_events", None) or [])
+    negotiation_events = model.negotiation_events
     awards_by_flare_readiness: Counter[str] = Counter()
     decline_reasons: Counter[str] = Counter()
     overkill_avoided_milli = 0
@@ -119,20 +104,14 @@ def summarize(model) -> dict:
 
     return {
         "ticks_elapsed": model.tick,
-        "solved": bool(
-            getattr(
-                model,
-                "mission_solved",
-                all(t.is_destroyed for t in model.targets.values()),
-            )
-        ),
+        "solved": bool(model.mission_solved),
         "swarm_wiped_out": model.swarm_wiped_out,
-        "mission_aborted": getattr(model, "mission_aborted", False),
+        "mission_aborted": model.mission_aborted,
         "targets_destroyed": sum(1 for t in model.targets.values() if t.is_destroyed),
         "total_targets": len(model.targets),
         "jets_destroyed": jets_destroyed,
         "jets_returned_to_base": jets_returned_to_base,
-        "jets_crashed": len(getattr(model, "crash_log", [])),
+        "jets_crashed": len(model.crash_log),
         "jets_still_flying": len(model.jets),
         "total_distance_traveled": total_distance,
         "total_missiles_fired": len(model.strike_log),
@@ -151,37 +130,31 @@ def summarize(model) -> dict:
         "notch_completions": notch_completions,
         "notch_lock_breaks": notch_lock_breaks,
         "deaths_by_guidance": deaths_by_guidance,
-        "corvette_sam_launches": int(getattr(model, "corvette_sam_launches", 0) or 0),
-        "ciws_attempts": int(getattr(model, "ciws_attempts", 0) or 0),
-        "ciws_intercepts": int(getattr(model, "ciws_intercepts", 0) or 0),
-        "deck_gun_hits": int(getattr(model, "deck_gun_hits", 0) or 0),
-        "corvette_losses": int(getattr(model, "corvette_losses", 0) or 0),
-        "aaa_bursts": int(getattr(model, "aaa_bursts", 0) or 0),
-        "aaa_rounds": int(getattr(model, "aaa_rounds", 0) or 0),
-        "aaa_hits": int(getattr(model, "aaa_hits", 0) or 0),
-        "aaa_damage": int(getattr(model, "aaa_damage", 0) or 0),
-        "aaa_kills": int(getattr(model, "aaa_kills", 0) or 0),
+        "corvette_sam_launches": int(model.corvette_sam_launches),
+        "ciws_attempts": int(model.ciws_attempts),
+        "ciws_intercepts": int(model.ciws_intercepts),
+        "deck_gun_hits": int(model.deck_gun_hits),
+        "corvette_losses": int(model.corvette_losses),
+        "aaa_bursts": int(model.aaa_bursts),
+        "aaa_rounds": int(model.aaa_rounds),
+        "aaa_hits": int(model.aaa_hits),
+        "aaa_damage": int(model.aaa_damage),
+        "aaa_kills": int(model.aaa_kills),
         "aaa_ammo_remaining": sum(
-            int(getattr(s, "ammo", 0) or 0)
-            for s in getattr(model, "aaa_sites", {}).values()
+            int(s.ammo) for s in model.aaa_sites.values()
         ),
-        "aircraft_losses_to_aaa": int(
-            getattr(model, "aircraft_losses_to_aaa", 0) or 0
-        ),
-        "tank_rounds": int(getattr(model, "tank_rounds", 0) or 0),
-        "tank_hits": int(getattr(model, "tank_hits", 0) or 0),
-        "tank_kills_friendly": int(getattr(model, "tank_kills_friendly", 0) or 0),
-        "tank_kills_enemy": int(getattr(model, "tank_kills_enemy", 0) or 0),
-        "tank_losses_friendly": int(getattr(model, "tank_losses_friendly", 0) or 0),
-        "tank_losses_enemy": int(getattr(model, "tank_losses_enemy", 0) or 0),
+        "aircraft_losses_to_aaa": int(model.aircraft_losses_to_aaa),
+        "tank_rounds": int(model.tank_rounds),
+        "tank_hits": int(model.tank_hits),
+        "tank_kills_friendly": int(model.tank_kills_friendly),
+        "tank_kills_enemy": int(model.tank_kills_enemy),
+        "tank_losses_friendly": int(model.tank_losses_friendly),
+        "tank_losses_enemy": int(model.tank_losses_enemy),
         "tank_distance_traveled": sum(
-            float(getattr(t, "distance_traveled", 0) or 0)
-            for t in getattr(model, "tanks", {}).values()
+            float(t.distance_traveled) for t in model.tanks.values()
         ),
         "tank_ammo_remaining": sum(
-            int(getattr(t, "ammo", 0) or 0)
-            for t in getattr(model, "tanks", {}).values()
-            if not getattr(t, "is_destroyed", False)
+            int(t.ammo) for t in model.tanks.values() if not t.is_destroyed
         ),
         "agm84_launches": agm84_launches,
         "agm84_hits": agm84_hits,
@@ -191,18 +164,10 @@ def summarize(model) -> dict:
         "negotiation_decline_reasons": dict(decline_reasons),
         "reservation_overkill_milli": overkill_avoided_milli,
         "low_confidence_coverage_awards": low_confidence_awards,
-        "carrier_recoveries": int(getattr(model, "carrier_recoveries", 0) or 0),
-        "carrier_count": len(getattr(model, "carriers", {}) or {}),
-        "corvette_count": len(getattr(model, "corvettes", {}) or {}),
-        "objective_outcomes": {
-            oid: {
-                "status": str(getattr(st, "status", getattr(st, "state", ""))),
-                "reason": str(getattr(st, "reason", "") or ""),
-            }
-            for oid, st in (getattr(model, "objective_states", None) or {}).items()
-        }
-        if getattr(model, "objective_states", None)
-        else {},
+        "carrier_recoveries": int(model.carrier_recoveries),
+        "carrier_count": len(model.carriers),
+        "corvette_count": len(model.corvettes),
+        "objective_outcomes": dict(model.objective_status),
         "missile_outcomes_by_seeker": dict(
             Counter(
                 str(e.get("guidance") or e.get("weapon_type") or "UNKNOWN")
@@ -210,7 +175,7 @@ def summarize(model) -> dict:
                 if e.get("event") == "impact"
             )
         ),
-        "total_jammed_agent_ticks": getattr(model, "total_jammed_agent_ticks", 0),
+        "total_jammed_agent_ticks": model.total_jammed_agent_ticks,
         "contributors_by_target": {k: sorted(v) for k, v in contributors_by_target.items()},
         "per_jet_distance_traveled": {aid: d for aid, (d, _) in all_stats.items()},
         "per_jet_total_payload_remaining": {
