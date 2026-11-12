@@ -166,6 +166,7 @@ def test_acceptance_jdam_inverted_reject_then_upright_accept():
     jet.desired_heading = 90.0
     jet.pitch_deg = 0.0
     jet.roll_deg = 170.0
+    jet.altitude = 10.0  # JDAM releases at or below max_release_altitude
     jdam_before = jet.payload["JDAM"]
     hp_before = target.hp_remaining
 
@@ -181,6 +182,9 @@ def test_acceptance_jdam_inverted_reject_then_upright_accept():
             roll_deg=jet.roll_deg,
         )
         if ok:
+            # Jets keep airspeed while rolling upright, so the recovery carried
+            # it past the target; put it back so attitude is the only gate.
+            model.space.move_agent(jet, target.position)
             model.step(
                 {
                     "Jet_2": ActionIntent(
@@ -190,6 +194,7 @@ def test_acceptance_jdam_inverted_reject_then_upright_accept():
                         target_id="Target_A",
                         weapon_type="JDAM",
                         desired_heading=90.0,
+                        desired_altitude=10.0,
                         desired_pitch_deg=0.0,
                         desired_roll_deg=0.0,
                     )
@@ -203,6 +208,7 @@ def test_acceptance_jdam_inverted_reject_then_upright_accept():
                     tick=tick,
                     action_type="IDLE",
                     desired_heading=90.0,
+                    desired_altitude=10.0,
                     desired_pitch_deg=0.0,
                     desired_roll_deg=0.0,
                 )
@@ -225,6 +231,7 @@ def test_acceptance_aam_launchable_where_jdam_rejected():
     jet.payload = {"AIM9X": 1, "JDAM": 1, "AGM65": 0}
     jet.roll_deg = 120.0
     jet.pitch_deg = 0.0
+    jet.altitude = 10.0  # under the JDAM ceiling, so attitude is the only gate
 
     assert model._jet_release_attitude_reason(jet, "JDAM") == (
         "jet_inverted_release_forbidden"
