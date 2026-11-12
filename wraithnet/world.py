@@ -341,13 +341,22 @@ class WraithNetModel(mesa.Model):
     def __init__(
         self, seed: int | None = None, scenario: ScenarioConfig | None = None
     ) -> None:
+        scenario = scenario or _default_scenario()
         # Mesa 3.5 prefers `rng=`; passing `seed=` directly is soft-deprecated.
-        super().__init__(rng=seed)
+        # Nothing in the simulation draws from Mesa's generator (combat uses
+        # keyed rolls from combat_seed), but it is seeded from the scenario
+        # anyway so that no generator in a run is ever seeded from the OS.
+        super().__init__(
+            rng=seed
+            if seed is not None
+            else int(getattr(scenario, "combat_seed", 0) or 0)
+        )
         # Mesa 3.x replaces self.step with a no-arg _wrapped_step for its
         # event scheduler. Restore our intents-based step so callers (and
         # Phase 4's Bridge) can use model.step(intents) directly.
         self.step = self._user_step
-        self._scenario = scenario or _default_scenario()
+        # Assigned after Mesa's __init__, which sets its own `_scenario`.
+        self._scenario = scenario
         self.space = mesa.space.ContinuousSpace(
             self._scenario.grid_width, self._scenario.grid_height, config.GRID_TORUS
         )

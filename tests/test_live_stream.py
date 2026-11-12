@@ -16,12 +16,6 @@ from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_s
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 def _tiny_scenario() -> ScenarioConfig:
     return scenario_from_data(new_scenario_data(
         jets=[
@@ -92,7 +86,7 @@ async def _wait_until_subscribed(server: LiveStreamServer, n: int = 1) -> None:
 
 
 @pytest.mark.asyncio
-async def test_early_client_receives_header_then_ticks_in_order(fast_cnp):
+async def test_early_client_receives_header_then_ticks_in_order():
     server = LiveStreamServer(port=0)
     await server.start()
     try:
@@ -122,7 +116,7 @@ async def test_early_client_receives_header_then_ticks_in_order(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_late_client_receives_full_backlog_without_further_ticks(fast_cnp):
+async def test_late_client_receives_full_backlog_without_further_ticks():
     """Backfill-on-connect: a client that attaches mid-run gets everything so far."""
     server = LiveStreamServer(port=0)
     await server.start()
@@ -149,7 +143,7 @@ async def test_late_client_receives_full_backlog_without_further_ticks(fast_cnp)
 
 
 @pytest.mark.asyncio
-async def test_multi_client_fan_out_sees_identical_complete_sequence(fast_cnp):
+async def test_multi_client_fan_out_sees_identical_complete_sequence():
     server = LiveStreamServer(port=0)
     await server.start()
     try:
@@ -184,7 +178,7 @@ async def test_multi_client_fan_out_sees_identical_complete_sequence(fast_cnp):
 
 @pytest.mark.asyncio
 async def test_recorder_and_live_stream_emit_identical_header_and_ticks(
-    tmp_path, fast_cnp
+    tmp_path
 ):
     scenario = _tiny_scenario()
     path = tmp_path / "trace.jsonl"
@@ -246,7 +240,7 @@ async def test_close_sends_end_message_to_connected_client():
 
 
 @pytest.mark.asyncio
-async def test_sinks_have_zero_effect_on_summarize(tmp_path, fast_cnp):
+async def test_sinks_have_zero_effect_on_summarize(tmp_path):
     scenario = _tiny_scenario()
 
     async def _run_with(sinks) -> dict:

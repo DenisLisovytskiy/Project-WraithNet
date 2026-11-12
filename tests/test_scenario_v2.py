@@ -16,15 +16,8 @@ from wraithnet.metrics import export_results, summarize
 from wraithnet.world import WraithNetModel
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    """Keep wall-clock short under pytest; CNP logic is unchanged."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 @pytest.mark.asyncio
-async def test_v2_scenario_fully_resolves(fast_cnp):
+async def test_v2_scenario_fully_resolves():
     """v3 scenario has supply slack so infeasibility is never the failure mode."""
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
@@ -39,7 +32,7 @@ async def test_v2_scenario_fully_resolves(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_target_a_requires_multi_jet_jdam_cooperation(fast_cnp):
+async def test_target_a_requires_multi_jet_jdam_cooperation():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
@@ -52,7 +45,7 @@ async def test_target_a_requires_multi_jet_jdam_cooperation(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_target_b_solo_with_agm65(fast_cnp):
+async def test_target_b_solo_with_agm65():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
@@ -64,7 +57,7 @@ async def test_target_b_solo_with_agm65(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_sam_site_destroyed_with_jdam(fast_cnp):
+async def test_sam_site_destroyed_with_jdam():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
 
@@ -76,7 +69,7 @@ async def test_sam_site_destroyed_with_jdam(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_no_wasted_or_misassigned_strikes(fast_cnp):
+async def test_no_wasted_or_misassigned_strikes():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
     summary = summarize(bridge.model)
@@ -87,7 +80,7 @@ async def test_no_wasted_or_misassigned_strikes(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_fog_of_war_and_jamming_were_both_actually_exercised(fast_cnp):
+async def test_fog_of_war_and_jamming_were_both_actually_exercised():
     # Initial geometry: Jet_2 cannot see Target_A/B (FoW). After RTB landings,
     # agent runtimes are removed, so we cannot inspect received_messages post-run.
     model = WraithNetModel()
@@ -113,7 +106,7 @@ async def test_fog_of_war_and_jamming_were_both_actually_exercised(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_no_agent_left_in_a_zombie_state(fast_cnp):
+async def test_no_agent_left_in_a_zombie_state():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=1000), timeout=60)
 
@@ -132,7 +125,7 @@ async def test_no_agent_left_in_a_zombie_state(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_total_distance_traveled_is_reasonable(fast_cnp):
+async def test_total_distance_traveled_is_reasonable():
     """Empirically bounded from real runs (Phase 10 Context).
 
     Observed under the fixed v3 scenario with mandatory RTB and nose-along-
@@ -151,7 +144,7 @@ async def test_total_distance_traveled_is_reasonable(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_determinism_across_repeated_runs(fast_cnp):
+async def test_determinism_across_repeated_runs():
     """Nothing in this scenario is randomized — repeated runs must match."""
     results = []
     for _ in range(2):

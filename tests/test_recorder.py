@@ -13,12 +13,6 @@ from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_s
 from wraithnet.trace_schemas import TraceHeader, TraceTick
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 def _read_trace(path):
     lines = path.read_text(encoding="utf-8").splitlines()
     header = TraceHeader.model_validate_json(lines[0])
@@ -112,7 +106,7 @@ def test_jammed_flag_reflects_jam_radius(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_destroyed_jet_is_absent_from_subsequent_tick(tmp_path, fast_cnp):
+async def test_destroyed_jet_is_absent_from_subsequent_tick(tmp_path):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     bridge = WraithNetBridge(sinks=[recorder])
@@ -139,7 +133,7 @@ def _peek_last_tick_jets(path):
 
 
 @pytest.mark.asyncio
-async def test_recorded_role_matches_runtime_for_two_roles(tmp_path, fast_cnp):
+async def test_recorded_role_matches_runtime_for_two_roles(tmp_path):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     bridge = WraithNetBridge(sinks=[recorder])
@@ -168,7 +162,7 @@ async def test_recorded_role_matches_runtime_for_two_roles(tmp_path, fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_recorder_has_zero_effect_on_summarize(tmp_path, fast_cnp):
+async def test_recorder_has_zero_effect_on_summarize(tmp_path):
     """Attaching a TraceRecorder must not change simulation outcomes."""
     bridge_plain = WraithNetBridge()
     await asyncio.wait_for(bridge_plain.run(max_ticks=1000), timeout=60)
@@ -187,7 +181,7 @@ async def test_recorder_has_zero_effect_on_summarize(tmp_path, fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_full_run_trace_is_parseable_and_matches_final_state(tmp_path, fast_cnp):
+async def test_full_run_trace_is_parseable_and_matches_final_state(tmp_path):
     path = tmp_path / "trace.jsonl"
     recorder = TraceRecorder(path)
     try:

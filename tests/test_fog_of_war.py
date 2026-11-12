@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
@@ -44,7 +46,7 @@ def _obs(
 async def _wait_until(predicate, timeout: float = 0.5) -> None:
     async def _poll() -> None:
         while not predicate():
-            await asyncio.sleep(0.01)
+            await settle()
 
     await asyncio.wait_for(_poll(), timeout=timeout)
 
@@ -117,7 +119,7 @@ async def test_share_new_contacts_broadcasts_only_changed():
             _obs("Jet_1", (70.0, 70.0), {"JDAM": 1, "AIM9X": 0}, [target], tick=1)
         )
         await jet1.share_new_contacts()
-        await asyncio.sleep(0.05)
+        await settle()
         assert len(jet2.received_messages) == before
     finally:
         for jet in (jet1, jet2):
@@ -128,7 +130,6 @@ async def test_share_new_contacts_broadcasts_only_changed():
 @pytest.mark.asyncio
 async def test_helper_bids_from_datalink_contact_only(monkeypatch):
     """Helper never directly senses the target; bids purely from Jet_1's contact."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     helper = JetAgentRuntime("Helper", broker)
@@ -152,7 +153,7 @@ async def test_helper_bids_from_datalink_contact_only(monkeypatch):
         assert "Target_A" in helper.world_view
 
         await manager.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
 
         assert helper.role == "CONTRACTOR"
         assert helper.committed_target_id == "Target_A"

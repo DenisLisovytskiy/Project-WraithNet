@@ -4,8 +4,10 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
-from wraithnet.agents import JetAgentRuntime, MAX_CFP_ROUNDS
+from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
 from wraithnet.schemas import Observation, TargetInfo
 from wraithnet.world import WraithNetModel
@@ -52,8 +54,6 @@ def _set_obs(jet: JetAgentRuntime, obs: Observation) -> None:
 async def test_jammed_manager_eventually_releases_claim(monkeypatch):
     """Existing MAX_CFP_ROUNDS / BID_TIMEOUT machinery frees a jammed Manager —
     no jamming-specific branching in negotiation methods required."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.02)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 2.0)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     bidder = JetAgentRuntime("Bidder", broker)
@@ -72,7 +72,7 @@ async def test_jammed_manager_eventually_releases_claim(monkeypatch):
     try:
         await manager.scan_and_negotiate()
         # Allow any remaining timeout rounds to settle.
-        await asyncio.sleep(MAX_CFP_ROUNDS * 0.02 + 0.1)
+        await settle()
         assert manager.role == "IDLE"
         assert broker.is_claimed("Target_A") is False
         assert bidder.role == "IDLE"
@@ -86,7 +86,6 @@ async def test_jammed_manager_eventually_releases_claim(monkeypatch):
 @pytest.mark.asyncio
 async def test_bidder_self_heals_via_pending_ttl_when_accept_jammed(monkeypatch):
     """ACCEPT dropped because bidder is jammed → CONTRACTOR_PENDING TTL reverts to IDLE."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(config, "CONTRACTOR_PENDING_TTL_TICKS", 3)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
@@ -113,7 +112,7 @@ async def test_bidder_self_heals_via_pending_ttl_when_accept_jammed(monkeypatch)
 
     try:
         await manager.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
         assert bidder.role == "CONTRACTOR_PENDING"
         assert bidder.pending_bid_since_tick is not None
 

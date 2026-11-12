@@ -2,13 +2,22 @@
 
 import argparse
 import asyncio
+import json
+import time
 from pathlib import Path
 
 from wraithnet.bridge import WraithNetBridge
+from wraithnet.generation_presets import DIFFICULTY_PRESETS, parameters_for_preset
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.metrics import export_results, summarize
+from wraithnet.metrics import (
+    build_run_record,
+    classify_outcome,
+    export_results,
+    summarize,
+)
 from wraithnet.paths import user_data_dir
 from wraithnet.recorder import TraceRecorder
+from wraithnet.scenario_generator import generate_scenario
 from wraithnet.scenario_io import load_scenario
 from wraithnet.scenario_schema import ScenarioConfig
 from wraithnet.trace_sink import TraceSink
@@ -16,12 +25,42 @@ from wraithnet.trace_sink import TraceSink
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the WraithNet PoC scenario.")
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--scenario",
         type=str,
         default=None,
         help="Path to a scenario JSON file (wraithnet.scenario_schema.ScenarioConfig). "
         "Defaults to the built-in fixed PoC scenario if omitted.",
+    )
+    source.add_argument(
+        "--generate",
+        type=str,
+        default=None,
+        metavar="PRESET",
+        choices=sorted(DIFFICULTY_PRESETS),
+        help="Generate the scenario from a difficulty preset instead of loading "
+        "a file. Requires --seed.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Generation seed for --generate."
+    )
+    parser.add_argument(
+        "--max-ticks",
+        type=int,
+        default=1000,
+        help="Stop after this many ticks if the mission has not ended (TICK_CAP).",
+    )
+    parser.add_argument(
+        "--no-trace",
+        action="store_true",
+        help="Do not write trace.jsonl or the CSV exports.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        type=str,
+        default=None,
+        help="Write the run summary and metadata to this path as one JSON object.",
     )
     parser.add_argument(
         "--live",
@@ -38,7 +77,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Defaults to the user-data results folder. Concurrent runs should "
         "pass distinct directories so they do not truncate each other's files.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.generate is not None and args.seed is None:
+        parser.error("--generate requires --seed")
+    if args.seed is not None and args.generate is None:
+        parser.error("--seed is only valid with --generate")
+    return args
 
 
 def _results_dir(output_dir: str | None = None):
@@ -55,10 +99,15 @@ async def run_scenario(
     live_host: str = "127.0.0.1",
     live_port: int = 8765,
     output_dir: str | None = None,
+    *,
+    max_ticks: int = 1000,
+    trace: bool = True,
 ) -> WraithNetBridge:
-    results_dir = _results_dir(output_dir)
-    recorder = TraceRecorder(str(results_dir / "trace.jsonl"))
-    sinks: list[TraceSink] = [recorder]
+    sinks: list[TraceSink] = []
+    recorder = None
+    if trace:
+        recorder = TraceRecorder(str(_results_dir(output_dir) / "trace.jsonl"))
+        sinks.append(recorder)
     live_server = None
     if live:
         live_server = LiveStreamServer(live_host, live_port)
@@ -68,9 +117,10 @@ async def run_scenario(
 
     bridge = WraithNetBridge(sinks=sinks, scenario=scenario)
     try:
-        await bridge.run()
+        await bridge.run(max_ticks=max_ticks)
     finally:
-        recorder.close()
+        if recorder is not None:
+            recorder.close()
         if live_server is not None:
             # Tick-based CNP finishes quickly; hold the socket so a viewer that
             # connects just after launch still receives the header/backlog.
@@ -82,19 +132,49 @@ async def run_scenario(
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     scenario = load_scenario(args.scenario) if args.scenario else None
-    results_dir = _results_dir(args.output_dir)
+    preset = None
+    feasible = None
+    if args.generate:
+        generated = generate_scenario(
+            parameters_for_preset(args.generate, seed=args.seed)
+        )
+        scenario = generated.scenario
+        preset = args.generate
+        feasible = generated.feasibility.feasible
+    trace = not args.no_trace
+    # --no-trace with no explicit directory writes nothing, so do not create one.
+    results_dir = _results_dir(args.output_dir) if trace or args.output_dir else None
+    started = time.perf_counter()
     bridge = asyncio.run(
         run_scenario(
             scenario,
             live=args.live,
             live_host=args.live_host,
             live_port=args.live_port,
-            output_dir=str(results_dir),
+            output_dir=str(results_dir) if results_dir else None,
+            max_ticks=args.max_ticks,
+            trace=trace,
         )
     )
+    wall_time_s = time.perf_counter() - started
     summary = summarize(bridge.model)
+    if args.summary_json:
+        # Only here: the record runs the feasibility analyser and asks git for
+        # the commit, which a plain run (and every GUI launch) does not need.
+        record = build_run_record(
+            bridge.model,
+            max_ticks=args.max_ticks,
+            wall_time_s=wall_time_s,
+            preset=preset,
+            generation_seed=args.seed,
+            feasible=feasible,
+        )
+        out = Path(args.summary_json)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
 
     print(f"Simulation finished at tick {summary['ticks_elapsed']}")
+    print(f"Outcome: {classify_outcome(bridge.model)}")
     if summary["swarm_wiped_out"]:
         print("OUTCOME: FAILURE — entire swarm destroyed before objective complete.")
     elif summary["mission_aborted"]:
@@ -125,8 +205,9 @@ def main(argv: list[str] | None = None) -> None:
             f"payload_remaining={summary['per_jet_total_payload_remaining'][agent_id]}"
         )
 
-    export_results(bridge.model, output_dir=str(results_dir))
-    print(f"Results exported to {results_dir / 'model_vars.csv'} and {results_dir / 'agent_vars.csv'}")
+    if trace:
+        export_results(bridge.model, output_dir=str(results_dir))
+        print(f"Results exported to {results_dir / 'model_vars.csv'} and {results_dir / 'agent_vars.csv'}")
 
 
 if __name__ == "__main__":

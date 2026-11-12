@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
@@ -48,7 +50,6 @@ def _set_obs(jet: JetAgentRuntime, obs: Observation) -> None:
 
 @pytest.mark.asyncio
 async def test_managed_contracts_populated_and_survives_resolution(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     jet1 = JetAgentRuntime("Jet_1", broker)
     jet2 = JetAgentRuntime("Jet_2", broker)
@@ -62,7 +63,7 @@ async def test_managed_contracts_populated_and_survives_resolution(monkeypatch):
 
     try:
         await jet1.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
 
         assert jet1.managed_target_id is None  # cleared after successful resolve
         assert "Target_A" in jet1.managed_contracts
@@ -78,7 +79,6 @@ async def test_managed_contracts_populated_and_survives_resolution(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notify_contractor_lost_reopens_bidding(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     helper = JetAgentRuntime("Helper", broker)
@@ -98,7 +98,7 @@ async def test_notify_contractor_lost_reopens_bidding(monkeypatch):
 
     try:
         await manager.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
 
         assert "Helper" in manager.managed_contracts.get("Target_A", set())
         # Simulate helper's contribution never landing — shortfall remains.
@@ -116,7 +116,7 @@ async def test_notify_contractor_lost_reopens_bidding(monkeypatch):
         assert broker.is_claimed("Target_A")
 
         await manager.notify_contractor_lost("Helper", "Target_A")
-        await asyncio.sleep(0.15)
+        await settle()
 
         assert "Helper" not in manager.managed_contracts.get("Target_A", set())
         assert replacement.role == "CONTRACTOR"
@@ -130,7 +130,6 @@ async def test_notify_contractor_lost_reopens_bidding(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notify_contractor_lost_noop_for_unknown(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     _set_obs(
@@ -154,7 +153,6 @@ async def test_notify_contractor_lost_noop_for_unknown(monkeypatch):
 async def test_scan_skips_unsuitable_weapon_but_zero_payload_can_coordinate(monkeypatch):
     """Documents deliberate scan_and_negotiate optimization (review §2): wrong
     weapon skips auto-management; zero-payload agents may still coordinate."""
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     jdam_only = JetAgentRuntime("JDAM_Only", broker)
     coordinator = JetAgentRuntime("Coordinator", broker)
@@ -177,12 +175,12 @@ async def test_scan_skips_unsuitable_weapon_but_zero_payload_can_coordinate(monk
 
     try:
         await jdam_only.scan_and_negotiate()
-        await asyncio.sleep(0.05)
+        await settle()
         assert jdam_only.role == "IDLE"
         assert jdam_only.managed_target_id is None
 
         await coordinator.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
         assert coordinator.role in ("MANAGER", "CONTRACTOR", "IDLE")
         assert coordinator.managed_target_id is None or coordinator.role != "IDLE"
     finally:
@@ -193,7 +191,6 @@ async def test_scan_skips_unsuitable_weapon_but_zero_payload_can_coordinate(monk
 
 @pytest.mark.asyncio
 async def test_notify_contractor_lost_noop_if_target_destroyed(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
     broker = MessageBroker()
     manager = JetAgentRuntime("Manager", broker)
     helper = JetAgentRuntime("Helper", broker)
@@ -211,7 +208,7 @@ async def test_notify_contractor_lost_noop_if_target_destroyed(monkeypatch):
 
     try:
         await manager.notify_contractor_lost("Helper", "Target_A")
-        await asyncio.sleep(0.05)
+        await settle()
         assert "Target_A" not in manager.managed_contracts
         assert manager.role == "IDLE"
         assert manager.managed_target_id is None

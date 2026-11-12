@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.async_helpers import settle
+
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.bridge import WraithNetBridge
@@ -47,14 +49,8 @@ def _set_obs(jet: JetAgentRuntime, obs: Observation) -> None:
     jet.refresh_world_view()
 
 
-@pytest.fixture
-def fast_cnp(monkeypatch):
-    monkeypatch.setattr(config, "BID_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(config, "MAX_TICK_WAIT_SECONDS", 1.0)
-
-
 @pytest.mark.asyncio
-async def test_bridge_runs_scenario_to_completion(fast_cnp):
+async def test_bridge_runs_scenario_to_completion():
     bridge = WraithNetBridge()
     await asyncio.wait_for(bridge.run(max_ticks=500), timeout=60.0)
 
@@ -92,7 +88,7 @@ async def test_bridge_runs_scenario_to_completion(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_bridge_removes_destroyed_jet_and_notifies(fast_cnp):
+async def test_bridge_removes_destroyed_jet_and_notifies():
     """Force-destroy a committed contractor: runtime cancelled, agent removed,
     and Manager Fallback notified (contractor dropped from managed_contracts)."""
     bridge = WraithNetBridge()
@@ -142,7 +138,7 @@ async def test_bridge_removes_destroyed_jet_and_notifies(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_notify_contractor_lost_skips_destroyed_manager(fast_cnp):
+async def test_notify_contractor_lost_skips_destroyed_manager():
     """Regression for docs/05_Code_Review_Phases_6-8.md §1: a manager and its
     accepted contractor destroyed in the same tick must not let the dead
     manager broadcast a zombie CFP that strands a surviving bidder."""
@@ -187,14 +183,14 @@ async def test_notify_contractor_lost_skips_destroyed_manager(fast_cnp):
 
         # Surviving Jet_1 must not be stranded in CONTRACTOR_PENDING.
         await jet1.scan_and_negotiate()
-        await asyncio.sleep(0.15)
+        await settle()
         assert jet1.role != "CONTRACTOR_PENDING"
     finally:
         await bridge.stop_agent_loops()
 
 
 @pytest.mark.asyncio
-async def test_bridge_swarm_wipeout_terminates(fast_cnp):
+async def test_bridge_swarm_wipeout_terminates():
     bridge = WraithNetBridge()
     bridge.start_agent_loops()
     try:
@@ -210,7 +206,7 @@ async def test_bridge_swarm_wipeout_terminates(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
+async def test_bridge_runs_custom_scenario_to_completion():
     """Phase 14: a custom ScenarioConfig actually reaches the running simulation."""
     scenario = scenario_from_data(new_scenario_data(
         jets=[
@@ -243,7 +239,7 @@ async def test_bridge_runs_custom_scenario_to_completion(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_rtb_contractor_notifies_manager_like_a_combat_loss(fast_cnp):
+async def test_rtb_contractor_notifies_manager_like_a_combat_loss():
     """A contractor that hits bingo is handed off the same way a SAM kill is."""
     bridge = WraithNetBridge()
     bridge.start_agent_loops()
@@ -293,7 +289,7 @@ async def test_rtb_contractor_notifies_manager_like_a_combat_loss(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
+async def test_landed_jet_runtime_is_removed_from_bridge_agents():
     scenario = scenario_from_data(new_scenario_data(
         home_base=(20.0, 20.0),
         jets=[
@@ -330,7 +326,7 @@ async def test_landed_jet_runtime_is_removed_from_bridge_agents(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
+async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed():
     scenario = scenario_from_data(new_scenario_data(
         home_base=(2.0, 2.0),
         jets=[
@@ -361,7 +357,7 @@ async def test_fuel_exhausted_en_route_runtime_is_removed_not_landed(fast_cnp):
         await bridge.stop_agent_loops()
 
 @pytest.mark.asyncio
-async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes(fast_cnp):
+async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes():
     scenario = scenario_from_data(new_scenario_data(
         jets=[],
         targets=[
@@ -384,7 +380,7 @@ async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes(fast_cnp):
 
 
 @pytest.mark.asyncio
-async def test_bridge_idle_scan_order_is_agent_id_sorted(fast_cnp, monkeypatch):
+async def test_bridge_idle_scan_order_is_agent_id_sorted(monkeypatch):
     """CNP scan runs in stable agent-id order (not dict insertion order)."""
     scenario = scenario_from_data(new_scenario_data(
         jets=[
@@ -416,3 +412,54 @@ async def test_bridge_idle_scan_order_is_agent_id_sorted(fast_cnp, monkeypatch):
         await bridge.stop_agent_loops()
     assert order == sorted(order)
     assert order[0] == "Jet_A"
+
+
+async def _two_jets_one_bunker_tick(monkeypatch, yields: int) -> WraithNetBridge:
+    monkeypatch.setattr(config, "MAX_TICK_NEGOTIATION_YIELDS", yields)
+    scenario = scenario_from_data(new_scenario_data(
+        jets=[
+            JetSpec(agent_id="Jet_A", position=(10.0, 10.0), payload={"JDAM": 1, "AIM9X": 0}),
+            JetSpec(agent_id="Jet_B", position=(12.0, 12.0), payload={"JDAM": 1, "AIM9X": 0}),
+        ],
+        targets=[
+            TargetSpec(
+                target_id="Bunker",
+                position=(60.0, 60.0),
+                hp_required=2,
+                target_type="HARDENED_BUNKER",
+            )
+        ],
+    ))
+    bridge = WraithNetBridge(scenario=scenario)
+    for agent in bridge.agents.values():
+        # The bunker is out of sensor range; hand both jets the contact.
+        agent.world_view["Bunker"] = (
+            _target(target_id="Bunker", position=(60.0, 60.0), hp_required=2, hp_remaining=2),
+            0,
+        )
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+    finally:
+        await bridge.stop_agent_loops()
+    return bridge
+
+
+@pytest.mark.asyncio
+async def test_negotiation_cut_off_by_yield_count_releases_the_claim(monkeypatch):
+    """The tick guard counts scheduling rounds. Cut off mid-auction, the
+    manager gives the target back and nobody is left in a negotiating role."""
+    bridge = await _two_jets_one_bunker_tick(monkeypatch, yields=2)
+    assert bridge.model.tick == 1
+    assert bridge.broker.is_claimed("Bunker") is False
+    assert {a.role for a in bridge.agents.values()} <= {"IDLE", "CONTRACTOR_PENDING"}
+    assert all(a.managed_target_id is None for a in bridge.agents.values())
+
+
+@pytest.mark.asyncio
+async def test_negotiation_completes_inside_the_default_yield_budget(monkeypatch):
+    bridge = await _two_jets_one_bunker_tick(
+        monkeypatch, yields=config.MAX_TICK_NEGOTIATION_YIELDS
+    )
+    assert bridge.broker.is_claimed("Bunker") is True
+    assert {a.role for a in bridge.agents.values()} == {"CONTRACTOR"}
