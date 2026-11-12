@@ -285,3 +285,28 @@ def test_bid_proposal_schema_validates():
         normalized_context_hash="abc",
     )
     assert proposal.payload_offered == 1
+
+
+def test_no_unreserved_hp_rejects_every_bid():
+    from wraithnet.bid_utility import estimate_attack_plan
+
+    plan = estimate_attack_plan(
+        bidder_id="J", weapon_type="JDAM", position=(0.0, 0.0), altitude=10.0,
+        target_position=(10.0, 0.0),
+    )
+    # 9 units to the release point at 3 per tick.
+    assert (plan.estimated_ticks_to_launch, plan.estimated_ticks_to_impact) == (3, 4)
+    proposal = BidProposal(
+        bidder_id="Jet_A", weapon_type="JDAM", payload_offered=1, plan=plan,
+        bidder_state=BidderStateSnapshot(
+            agent_id="Jet_A", position=(0.0, 0.0), altitude=0.0, heading_deg=0.0,
+            velocity=0.0, hp=3, hp_max=3, flares_remaining=0, flare_capacity=0,
+        ),
+        risk=BidRiskBreakdownModel(ir_risk=0.0, radar_risk=0.0, gun_risk=0.0, combined=0.0),
+        utility=BidUtilityBreakdownModel(
+            capability=1.0, reach=1.0, survival=1.0, recovery=1.0, total=0.5),
+        normalized_context_hash="",
+    )
+    award = select_winning_bids([proposal], AwardContext(target_id="T", unreserved_hp=0))
+    assert award.accepted == []
+    assert award.reject_reasons == {"Jet_A": "MANAGER_REJECTED"}

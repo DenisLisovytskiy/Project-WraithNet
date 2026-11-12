@@ -169,3 +169,30 @@ def test_catalog_policy_matches_design_doc_section_6_2():
         assert w.requires_upright is True
         assert w.max_release_abs_roll_deg == 60.0
         assert w.max_release_abs_pitch_deg == 40.0
+
+
+def test_release_envelope_limits_are_inclusive():
+    import dataclasses
+
+    from wraithnet.weapons_release import (
+        AttitudeCommand,
+        release_reachable,
+        weapon_has_attitude_envelope,
+    )
+
+    jdam = config.WEAPON_CATALOG["JDAM"]
+    agm65 = config.WEAPON_CATALOG["AGM65"]
+    ceiling = jdam.max_release_altitude
+    assert release_attitude_ok(jdam, pitch_deg=0.0, roll_deg=0.0, altitude=ceiling) == (True, None)
+    assert release_attitude_ok(jdam, pitch_deg=jdam.max_release_abs_pitch_deg, roll_deg=0.0) == (True, None)
+    assert release_reachable(jdam, ceiling) is True
+    assert release_reachable(jdam, ceiling + 0.1) is False
+    # Upside down by a fraction past 90 degrees is inverted, not just "too much roll".
+    wide_roll = dataclasses.replace(agm65, max_release_abs_roll_deg=None)
+    assert release_attitude_ok(wide_roll, pitch_deg=0.0, roll_deg=90.5) == (
+        False, "jet_inverted_release_forbidden")
+    roll_only = dataclasses.replace(
+        config.WEAPON_CATALOG["AIM9X"], max_release_abs_roll_deg=30.0)
+    assert weapon_has_attitude_envelope(roll_only) is True
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        AttitudeCommand(0.0, 0.0).desired_pitch_deg = 5.0

@@ -334,13 +334,23 @@ async def test_jetless_bridge_ticks_world_with_zero_cnp_runtimes():
         ],
         combat_seed=42,
     ))
-    bridge = WraithNetBridge(scenario=scenario)
+    recorded = []
+
+    class _Sink:
+        def record_header(self, b):
+            pass
+
+        def record_tick(self, b):
+            recorded.append(b.model.tick)
+
+    bridge = WraithNetBridge(sinks=[_Sink()], scenario=scenario)
     assert bridge.agents == {}
     assert bridge.model.combat_seed == 42
     tick_before = bridge.model.tick
     await bridge._tick()
     assert bridge.model.tick == tick_before + 1
     assert bridge.agents == {}
+    assert recorded[-1] == tick_before + 1  # sinks still see a jetless tick
 
 
 @pytest.mark.asyncio
@@ -471,3 +481,19 @@ async def test_contractor_shot_down_mid_contract_is_replaced_through_tick():
         assert bridge.agents["A_Coordinator"].managed_contracts["Bunker"] == {"C_Reserve"}
     finally:
         await bridge.stop_agent_loops()
+
+
+@pytest.mark.asyncio
+async def test_one_jet_at_bingo_does_not_stop_the_end_of_mission_recall_of_the_others():
+    """When the required objectives are done, every jet heads home, also the
+    ones sorted after a jet that went bingo on the same tick."""
+    bridge = WraithNetBridge()
+    first = sorted(bridge.agents)[0]
+    bridge.model.required_destroy_objectives_complete = lambda: True
+    bridge.agents[first].bingo_fuel_reached = lambda: True
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+    finally:
+        await bridge.stop_agent_loops()
+    assert {aid: a.role for aid, a in bridge.agents.items()} == {aid: "RTB" for aid in bridge.agents}

@@ -531,3 +531,70 @@ def test_poc_still_solves_with_countermeasures():
     summary = summarize(bridge.model)
     assert summary["solved"] is True
     assert summary["swarm_wiped_out"] is False
+
+
+def test_countermeasure_helpers_give_the_designed_values():
+    from wraithnet.countermeasures import (
+        is_active_terminal,
+        missile_to_target_range,
+        notch_break_probability,
+        notch_heading_choices,
+    )
+
+    assert missile_to_target_range((0.0, 0.0, 0.0), (3.0, 4.0, 12.0)) == pytest.approx(13.0)
+    assert notch_heading_choices(30.0) == (120.0, 300.0)
+    # quality 1, resistance 0.5, half the flare range, aspect 0.5:
+    # 1 * 0.5 * 0.5 * (0.45 + 0.55 * 0.5)
+    assert flare_decoy_probability(
+        flare_quality=1.0, countermeasure_resistance=0.5,
+        range_to_missile=6.0, closing_aspect=0.5,
+    ) == pytest.approx(0.18125)
+    assert notch_break_probability(
+        countermeasure_resistance=0.5, active_terminal=False, evasion_bonus=1
+    ) == pytest.approx(0.49)
+
+    def terminal(requires_support, terminal_range, distance):
+        return is_active_terminal(
+            guidance="RADAR", requires_support=requires_support,
+            terminal_range=terminal_range,
+            missile_pos=(0.0, 0.0, 0.0), target_pos=(distance, 0.0, 0.0),
+        )
+
+    assert terminal(False, 1.0, 50.0) is True  # self-guided radar is always terminal
+    assert terminal(True, 0.0, 0.3) is True  # range 0 falls back to 0.5
+    assert terminal(True, 0.8, 0.6) is True
+    assert terminal(True, 0.8, 0.9) is False
+
+
+def test_notch_needs_minimum_speed_even_when_perpendicular():
+    assert not notch_geometry_ok(
+        velocity_xy=(0.5, 0.0), los_bearing_deg=0.0, angle_window_deg=20.0, min_speed=1.0
+    )
+
+
+@pytest.mark.parametrize("probability, expected", [(0.0, False), (1.0, True)])
+def test_notch_break_roll_respects_certain_probabilities(probability, expected):
+    from wraithnet.countermeasures import roll_notch_break
+
+    for tick in range(20):
+        assert roll_notch_break(
+            7, missile_id="M", jet_id="J", tick=tick, probability=probability
+        ) is expected
+
+
+def test_agent_does_not_flare_while_the_flare_cooldown_runs():
+    from wraithnet.agents import JetAgentRuntime
+    from wraithnet.broker import MessageBroker
+    from wraithnet.schemas import InboundThreat, Observation
+
+    runtime = JetAgentRuntime("Jet_1", MessageBroker())
+    runtime.set_observation(Observation(
+        agent_id="Jet_1", tick=1, current_position=(10.0, 10.0),
+        sensor_radius=config.SENSOR_RADIUS, payload={"JDAM": 1}, known_targets=[],
+        inbound_threats=[InboundThreat(
+            missile_id="M", guidance="INFRARED",
+            estimated_bearing=20.0, estimated_time_to_impact=1.5,
+        )],
+        flares_remaining=4, flare_capacity=6, flare_cooldown_remaining=1,
+    ))
+    assert runtime.decide_intent().countermeasure_action != "FLARE"

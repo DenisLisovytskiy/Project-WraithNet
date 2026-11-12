@@ -363,3 +363,48 @@ def test_strike_compat_guided_still_goes_through_ack():
     assert any(a.accepted for a in model.launch_acks)
     assert target.hp_remaining == 0
 
+
+def _amraam_request(**overrides) -> LaunchRequest:
+    fields = dict(
+        shooter_id="Jet_X", target_id="T", weapon_type="AMRAAM",
+        shooter_position=(0.0, 0.0, 20.0), target_position=(0.0, 10.0, 20.0),
+        shooter_faction="FRIENDLY", target_faction="ENEMY", target_class="AIRCRAFT",
+        target_signature=config.SensorSignature(heat=1.0, radar_cross_section=0.5, radar_emitter=True),
+        has_los=True, ammo_available=1,
+    )
+    fields.update(overrides)
+    return LaunchRequest(**fields)
+
+
+def test_radar_missile_needs_the_minimum_radar_cross_section():
+    min_rcs = config.WEAPON_CATALOG["AMRAAM"].min_rcs
+    sig = lambda rcs: config.SensorSignature(heat=1.0, radar_cross_section=rcs, radar_emitter=True)
+    assert validate_launch(_amraam_request(target_signature=sig(min_rcs))) is None
+    assert validate_launch(_amraam_request(target_signature=sig(min_rcs / 2))) == "insufficient_rcs"
+
+
+def test_firing_arc_is_measured_from_the_shooter_heading(monkeypatch):
+    # No guided weapon in the catalog has an arc under 360 degrees today, so
+    # give AMRAAM a 60-degree arc to exercise the check.
+    import dataclasses
+
+    narrow = dataclasses.replace(config.WEAPON_CATALOG["AMRAAM"], firing_arc_deg=60.0)
+    monkeypatch.setitem(config.WEAPON_CATALOG, "AMRAAM", narrow)
+    north, east = (0.0, 10.0, 20.0), (10.0, 0.0, 20.0)
+    cases = [(north, 0.0, None), (north, 10.0, None), (north, 350.0, None),
+             (north, 90.0, "outside_firing_arc"), (east, 90.0, None),
+             (east, 0.0, "outside_firing_arc"), (north, 31.0, "outside_firing_arc")]
+    for target, heading, expected in cases:
+        req = _amraam_request(target_position=target, firing_heading_deg=heading)
+        assert validate_launch(req) == expected, (target, heading)
+
+
+def test_closest_approach_of_a_missile_that_did_not_move():
+    assert closest_approach_distance((1.0, 1.0, 1.0), (1.0, 1.0, 1.0), (2.0, 3.0, 3.0)) == pytest.approx(3.0)
+
+
+def test_missile_moves_its_speed_per_tick_toward_the_target():
+    req = _amraam_request(target_position=(0.0, 100.0, 20.0))
+    m = create_missile(missile_id="M", req=req, launch_tick=1)
+    advance_missile(m, req.target_position)
+    assert m.position == pytest.approx((0.0, config.WEAPON_CATALOG["AMRAAM"].speed_per_tick, 20.0))

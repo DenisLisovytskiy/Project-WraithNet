@@ -294,3 +294,19 @@ def test_planned_altitude_default_keeps_altitude_blind_exposure():
     assert default.plan.launch_altitude == 8.0
     assert exposure_from_threat_contacts(_gun(5.0)) == (0.0, 0.0, 1.0)
     assert exposure_from_threat_contacts(_gun(5.0), planned_altitude=8.0) == (0.0, 0.0, 0.0)
+
+
+def test_risk_terms_give_the_designed_values():
+    from wraithnet.bid_utility import BidRiskBreakdown, flare_readiness, gun_risk
+
+    def ready(cooldown, encounter):
+        return flare_readiness(
+            flares_remaining=6, flare_capacity=6, flare_cooldown_remaining=cooldown,
+            ticks_to_first_ir_encounter=encounter, frame_flare_cooldown_ticks=6,
+        )
+
+    assert ready(3, None) == 0.0  # cooling down, no known IR threat
+    assert ready(5, 2.0) == pytest.approx(0.5)  # 3 ticks late of a 6-tick cooldown
+    # Full hp, no evasion: survivability 0.5, mitigation 0.5.
+    assert gun_risk(known_gun_exposure=1.0, hp_fraction=1.0, evasion_bonus=0.0) == pytest.approx(0.75)
+    assert BidRiskBreakdown(ir_risk=0.5, radar_risk=0.0, gun_risk=0.5).combined == pytest.approx(0.75)
