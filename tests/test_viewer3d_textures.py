@@ -40,18 +40,30 @@ def test_missing_directory_degrades(monkeypatch):
     assert textures.textures_available() is False
 
 
+_LOADER_PATH_BUG = pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "SPRITE_FILES points at assets/textures/<name>.jpeg, but the sprite JPEGs "
+        "are committed under assets/textures/pics/, so no unit sprite loads in a "
+        "checkout (terrains load); found in the Phase 58 audit, fix belongs to the viewer"
+    ),
+)
+
+
+@_LOADER_PATH_BUG
 def test_repo_checkout_has_the_gemini_jpegs():
-    if not textures.textures_available():
-        pytest.skip("assets/textures not present")
-    for key in ("STRIKE_FIGHTER", "HARDENED_BUNKER", "SAM_SITE", "AAA_LIGHT"):
-        assert textures.load_sprite(key) is not None, key
-    assert textures.load_terrain("PLAINS") is not None
+    assert textures.textures_available()
+    loaded = [textures.load_sprite(k) for k in ("STRIKE_FIGHTER", "HARDENED_BUNKER", "SAM_SITE", "AAA_LIGHT")]
+    loaded.append(textures.load_terrain("PLAINS"))
+    for tex in loaded:
+        assert tex is not None
+        assert tex.get_x_size() >= 16 and tex.get_y_size() >= 16
 
 
+@_LOADER_PATH_BUG
 def test_keyed_sprite_has_a_transparent_corner():
     tex = textures.load_sprite("STRIKE_FIGHTER")
-    if tex is None:
-        pytest.skip("strike fighter jpeg not present")
+    assert tex is not None
     from panda3d.core import PNMImage
 
     img = PNMImage()

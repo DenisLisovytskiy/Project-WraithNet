@@ -145,6 +145,8 @@ def test_score_bid_no_nan_inf_at_boundaries():
     )
     util = score_bid(capability=0.0, reach=0.0, risk=risk, recovery=0.0)
     _finite(util.total, util.survival, risk.combined, risk.ir_risk)
+    for value in (util.total, util.survival, risk.combined, risk.ir_risk):
+        assert 0.0 <= value <= 1.0
 
 
 def test_proposal_json_insertion_order_determinism():

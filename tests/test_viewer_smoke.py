@@ -268,7 +268,7 @@ def test_autoplay_accumulator_advances_then_pauses_at_end():
     assert playing is False
 
 
-def test_end_of_run_overlay_mission_aborted_and_fuel_bars_do_not_raise():
+def test_end_of_run_overlay_mission_aborted_and_fuel_bars_draw():
     pygame.init()
     try:
         surface = pygame.Surface(WINDOW_SIZE)
@@ -299,8 +299,15 @@ def test_end_of_run_overlay_mission_aborted_and_fuel_bars_do_not_raise():
             swarm_wiped_out=False,
             mission_aborted=True,
         )
+        from viewer.hud_text import overlay_lines
+
+        assert overlay_lines(header, [empty], summary=summary)[0] == "MISSION ABORTED"
+        blank = pygame.image.tobytes(surface, "RGB")
         draw_end_of_run_overlay(surface, header, [empty], summary=summary)
+        assert pygame.image.tobytes(surface, "RGB") != blank
+        frames = []
         for fuel in (0.0, 40.0, 80.0):
+            surface = pygame.Surface(WINDOW_SIZE)
             tick = TraceTick(
                 tick=0,
                 jets=[
@@ -323,6 +330,9 @@ def test_end_of_run_overlay_mission_aborted_and_fuel_bars_do_not_raise():
             )
             draw_jets(surface, header, tick, show_sensor_radius=False)
             draw_home_base(surface, header)
+            frames.append(pygame.image.tobytes(surface, "RGB"))
+        # The fuel bar is drawn, and its length follows the fuel level.
+        assert len(set(frames)) == 3
     finally:
         pygame.quit()
 
