@@ -9,38 +9,7 @@ from tests.async_helpers import settle
 from wraithnet import config
 from wraithnet.agents import JetAgentRuntime
 from wraithnet.broker import MessageBroker
-from wraithnet.schemas import Observation, TargetInfo
-
-
-def _target(**overrides) -> TargetInfo:
-    data = {
-        "target_id": "Target_A",
-        "position": (75.0, 75.0),
-        "target_type": "HARDENED_BUNKER",
-        "hp_required": 5,
-        "hp_remaining": 5,
-        "claimed": False,
-    }
-    data.update(overrides)
-    return TargetInfo(**data)
-
-
-def _obs(
-    agent_id: str,
-    position: tuple[float, float],
-    payload: dict[str, int],
-    targets: list[TargetInfo],
-    tick: int = 0,
-) -> Observation:
-    return Observation(
-        agent_id=agent_id,
-        tick=tick,
-        current_position=position,
-        sensor_radius=config.SENSOR_RADIUS,
-        payload=payload,
-        known_targets=targets,
-        comms_jammed=False,
-    )
+from tests.conftest import target_info as _target, observation as _obs
 
 
 async def _wait_until(predicate, timeout: float = 0.5) -> None:

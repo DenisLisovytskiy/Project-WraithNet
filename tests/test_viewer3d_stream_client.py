@@ -13,36 +13,15 @@ import time
 
 import pytest
 
-from wraithnet import config
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.scenario_schema import JetSpec, ScenarioConfig, TargetSpec, new_scenario_data, scenario_from_data
 from viewer3d.stream_client import (
     DisconnectedEvent,
     HeaderEvent,
     StreamClient,
     TickEvent,
 )
-
-
-def _tiny_scenario() -> ScenarioConfig:
-    return scenario_from_data(new_scenario_data(
-        jets=[
-            JetSpec(
-                agent_id="Solo_Jet",
-                position=(20.0, 20.0),
-                payload={"JDAM": 1, "AIM9X": 0},
-            )
-        ],
-        targets=[
-            TargetSpec(
-                target_id="Near_Bunker",
-                position=(20.5, 20.0),
-                hp_required=1,
-                target_type="HARDENED_BUNKER",
-            )
-        ],
-    ))
+from tests.conftest import tiny_scenario as _tiny_scenario
 
 
 async def _drain_events(client: StreamClient, min_count: int, timeout: float = 5.0):
