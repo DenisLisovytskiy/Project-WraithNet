@@ -311,7 +311,7 @@ def test_editor_mode_switch_and_stroke_undo():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        ed = app._editor
+        ed = app.editor
         assert ed._edit_mode == "ENTITY"
         ed.enter_terrain_mode()
         assert ed._edit_mode == "TERRAIN"

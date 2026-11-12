@@ -301,11 +301,11 @@ def test_viewer_app_drains_live_stream_without_raising():
         for event in events:
             app._client.events.put(event)
         app.task_mgr.step()
-        assert app._header is not None
-        assert app._handles is not None
-        assert app._header.jet_ids == ["Solo_Jet"]
-        assert "Solo_Jet" in app._handles.jets
-        assert app._latest_tick is not None and app._latest_tick.tick == 3
+        assert app.header is not None
+        assert app.scene is not None
+        assert app.header.jet_ids == ["Solo_Jet"]
+        assert "Solo_Jet" in app.scene.jets
+        assert app.latest_tick is not None and app.latest_tick.tick == 3
         assert app.view_mode == "live"
     finally:
         _destroy_app(app)
@@ -326,7 +326,7 @@ def test_live_jet_altitude_eases_over_presentation_time(panda_fake_clock):
         samples: list[float] = []
         for _ in range(int(3 * panda_fake_clock)):
             app.task_mgr.step()
-            z = app._handles.rendered_altitude.get("Solo_Jet")
+            z = app.scene.rendered_altitude.get("Solo_Jet")
             if z is not None:
                 samples.append(z)
         assert len(samples) >= 3
@@ -396,9 +396,9 @@ def test_view_mode_connecting_brief_live_finished():
         app.task_mgr.step()
         assert app.view_mode == "brief"
         assert app.camera_mode == "brief"
-        assert app._header is not None
-        assert app._handles is not None
-        assert app._latest_tick is None
+        assert app.header is not None
+        assert app.scene is not None
+        assert app.latest_tick is None
 
         tick0 = _tick(
             0,
@@ -409,7 +409,7 @@ def test_view_mode_connecting_brief_live_finished():
         app.task_mgr.step()
         assert app.view_mode == "live"
         assert app.camera_mode == "orbit"
-        assert app._latest_tick is tick0
+        assert app.latest_tick is tick0
 
         # Stream end alone must not finish while presentation is mid-run.
         app._client.events.put(EndEvent())
@@ -496,7 +496,7 @@ def test_hud_update_across_modes_panels_and_disconnect_reason():
 
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
-        hud = app._hud
+        hud = app.hud
         connecting_mission = hud.mission_info_text
         assert connecting_mission
         hud.update(
@@ -598,7 +598,7 @@ def test_editor_launch_transitions_editor_brief_live_finished(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         assert app.view_mode == "editor"
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
@@ -610,14 +610,14 @@ def test_editor_launch_transitions_editor_brief_live_finished(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        assert app._sim_handle is not None
+        assert app.sim_handle is not None
 
         modes = _step_until(app, lambda: app.view_mode == "finished")
         assert "live" in modes
         assert app.view_mode == "finished"
-        assert app._latest_tick is not None
-        assert app._header is not None
-        assert app._header.jet_ids == ["Jet_1"]
+        assert app.latest_tick is not None
+        assert app.header is not None
+        assert app.header.jet_ids == ["Jet_1"]
     finally:
         _destroy_app(app)
 
@@ -634,7 +634,7 @@ def test_malformed_scenario_launch_sets_launch_failed(tmp_path):
         app._attach_sim(handle)
         _step_until(app, lambda: app.view_mode == "launch_failed")
         assert app.view_mode == "launch_failed"
-        assert "LAUNCH FAILED" in app._hud.mission_info_text
+        assert "LAUNCH FAILED" in app.hud.mission_info_text
     finally:
         _destroy_app(app)
 
@@ -648,7 +648,7 @@ def test_cancel_launch_terminates_sim_and_returns_to_editor(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -659,16 +659,16 @@ def test_cancel_launch_terminates_sim_and_returns_to_editor(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
         assert handle.is_running()
 
         app.cancel_launch()
 
         assert app.view_mode == "editor"
-        assert app._sim_handle is None
-        assert app._header is None
-        assert app._editor is editor
+        assert app.sim_handle is None
+        assert app.header is None
+        assert app.editor is editor
         assert editor._panel is not None and not editor._panel.is_hidden()
 
         handle.process.wait(timeout=HANG_GUARD_S)
@@ -686,7 +686,7 @@ def test_escape_during_preview_cancels_launch_via_on_escape(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -697,13 +697,13 @@ def test_escape_during_preview_cancels_launch_via_on_escape(tmp_path):
 
         app.on_launch_clicked()
         assert app.view_mode == "brief"
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
 
         app._on_escape()
 
         assert app.view_mode == "editor"
-        assert app._sim_handle is None
+        assert app.sim_handle is None
         handle.process.wait(timeout=HANG_GUARD_S)
         assert handle.is_running() is False
     finally:
@@ -718,19 +718,19 @@ def test_preview_without_sim_exits_back_to_editor(tmp_path):
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((15.0, 15.0))
         editor.begin_placement("target")
         editor.on_ground_clicked((60.0, 60.0))
         assert editor.preview() is None
         assert app.view_mode == "brief"
-        assert app._sim_handle is None
+        assert app.sim_handle is None
 
         app.exit_preview()
 
         assert app.view_mode == "editor"
-        assert app._header is None
+        assert app.header is None
         assert editor._panel is not None and not editor._panel.is_hidden()
         assert editor._handles is not None
         assert set(editor._handles.jets) == {"Jet_1"}
@@ -809,23 +809,23 @@ def test_hud_force_status_counts_and_minimap_dots():
                 TargetFrame(target_id="SAM_Site_1", hp_remaining=1, claimed=False),
             ],
         )
-        app._hud.update(
+        app.hud.update(
             mode="live",
             header=header,
             latest_tick=tick0,
             camera_mode="orbit",
             selected_jet_id="Jet_1",
         )
-        force = app._hud.force_status_text
+        force = app.hud.force_status_text
         assert "BUNKER" in force
         assert "0 / 1" in force
         assert "SAM" in force
         assert "1 / 1" in force
         assert "ALIVE   1 / 2" in force
         assert "MANAGER" in force
-        shown = [d for d in app._hud._minimap_dots if not d.is_hidden()]
+        shown = [d for d in app.hud._minimap_dots if not d.is_hidden()]
         assert shown, "minimap should place at least one dot for jammer/targets/jets"
-        assert "ORBIT" in app._hud.controls_text
+        assert "ORBIT" in app.hud.controls_text
     finally:
         _destroy_app(app)
 
@@ -842,8 +842,8 @@ def test_disconnected_event_surfaces_on_hud():
         app.task_mgr.step()
         assert app._disconnect_reason == "could not connect after retries"
         assert app.view_mode == "connecting"
-        assert "DISCONNECTED" in app._hud.mission_info_text
-        assert "could not connect after retries" in app._hud.mission_info_text
+        assert "DISCONNECTED" in app.hud.mission_info_text
+        assert "could not connect after retries" in app.hud.mission_info_text
     finally:
         _destroy_app(app)
 
@@ -853,7 +853,7 @@ def test_escape_cancels_editor_placement_without_quitting():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         assert editor._placement_kind == "jet"
         app._on_escape()
@@ -868,19 +868,19 @@ def test_editor_zoom_keybindings_change_ortho_zoom():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        start = app._editor.camera.zoom
+        start = app.editor.camera.zoom
         app.messenger.send("wheel_up")
-        assert app._editor.camera.zoom > start
-        zoomed = app._editor.camera.zoom
+        assert app.editor.camera.zoom > start
+        zoomed = app.editor.camera.zoom
         app.messenger.send("wheel_down")
-        assert app._editor.camera.zoom < zoomed
+        assert app.editor.camera.zoom < zoomed
         app.messenger.send("+")
-        assert app._editor.camera.zoom > start
+        assert app.editor.camera.zoom > start
         app.messenger.send("-")
-        assert app._editor.camera.zoom == pytest.approx(start)
+        assert app.editor.camera.zoom == pytest.approx(start)
         app._editor_pan(4.0, -2.0)
-        assert app._editor.camera.center_x == pytest.approx(54.0)
-        assert app._editor.camera.center_y == pytest.approx(48.0)
+        assert app.editor.camera.center_x == pytest.approx(54.0)
+        assert app.editor.camera.center_y == pytest.approx(48.0)
     finally:
         _destroy_app(app)
 
@@ -890,8 +890,8 @@ def test_hud_hidden_in_editor_mode():
 
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     try:
-        assert app._hud._visible is False
-        assert app._hud._mission_frame.is_hidden()
+        assert app.hud._visible is False
+        assert app.hud._mission_frame.is_hidden()
     finally:
         _destroy_app(app)
 
@@ -902,7 +902,7 @@ def test_window_close_terminates_launched_sim(tmp_path):
     app = WraithNetViewer3D(editor_mode=True, start_client=False)
     handle = None
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -911,11 +911,11 @@ def test_window_close_terminates_launched_sim(tmp_path):
         editor._path = str(dest)
         editor._path_entry.enterText(str(dest))
         app.on_launch_clicked()
-        handle = app._sim_handle
+        handle = app.sim_handle
         assert handle is not None
         assert handle.is_running()
         app.on_window_close()
-        assert app._sim_handle is None
+        assert app.sim_handle is None
         handle.process.wait(timeout=HANG_GUARD_S)
         assert handle.is_running() is False
     finally:
@@ -1053,7 +1053,7 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes(panda_fake_cloc
         app._client.events.put(TickEvent(tick=tick0))
         app.task_mgr.step()
         app._flush_presentation()
-        assert "Jet_1" in app._handles.jets
+        assert "Jet_1" in app.scene.jets
 
         # Force-destroy Jet_1 by omitting it from the next tick (same as recorder pattern).
         tick1 = _tick(
@@ -1065,14 +1065,14 @@ def test_destroyed_jet_removal_is_deferred_until_wreck_completes(panda_fake_cloc
         app.task_mgr.step()
         app._flush_presentation()
 
-        assert "Jet_1" in app._handles.jets, "jet must still be present during wreck"
-        assert "Jet_1" in app._handles.pending_jet_removal
-        jet_node = app._handles.jets["Jet_1"]
+        assert "Jet_1" in app.scene.jets, "jet must still be present during wreck"
+        assert "Jet_1" in app.scene.pending_jet_removal
+        jet_node = app.scene.jets["Jet_1"]
         assert not jet_node.is_empty()
 
         _advance_intervals(app, 1.5)
-        assert "Jet_1" not in app._handles.jets
-        assert "Jet_1" not in app._handles.pending_jet_removal
+        assert "Jet_1" not in app.scene.jets
+        assert "Jet_1" not in app.scene.pending_jet_removal
         assert jet_node.is_empty()
     finally:
         _destroy_app(app)
@@ -1091,7 +1091,7 @@ def test_current_scenario_path_default_uses_user_data_dir(tmp_path, monkeypatch)
     monkeypatch.setattr("viewer3d.app.user_data_dir", fake_user_data_dir)
     app = WraithNetViewer3D("127.0.0.1", 9, start_client=False)
     try:
-        assert app._editor is None
+        assert app.editor is None
         assert app._current_scenario_path() == str(tmp_path / "scenarios" / "custom.json")
     finally:
         _destroy_app(app)
@@ -1114,11 +1114,11 @@ def test_takeoff_continues_after_burst_tick_drain(panda_fake_clock):
             )
         app.task_mgr.step()
         app._flush_presentation()
-        z_burst = app._handles.rendered_altitude["Jet_1"]
+        z_burst = app.scene.rendered_altitude["Jet_1"]
         assert z_burst < 1.5
 
         _advance_intervals(app, TAKEOFF_CLIMB_SECONDS + 1.6)
-        z_later = app._handles.rendered_altitude["Jet_1"]
+        z_later = app.scene.rendered_altitude["Jet_1"]
         assert z_later >= CRUISE_ALTITUDE - 0.6
     finally:
         _destroy_app(app)
@@ -1199,7 +1199,7 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet(panda_fake_clock):
         )
         app.task_mgr.step()
         app._flush_presentation()
-        assert "Jet_1" in app._handles.pending_jet_removal
+        assert "Jet_1" in app.scene.pending_jet_removal
 
         app._client.events.put(HeaderEvent(header=header))
         app._client.events.put(
@@ -1213,11 +1213,11 @@ def test_wreck_cleanup_does_not_remove_replacement_scene_jet(panda_fake_clock):
         )
         app.task_mgr.step()
         app._flush_presentation()
-        replacement = app._handles.jets["Jet_1"]
+        replacement = app.scene.jets["Jet_1"]
         assert not replacement.is_empty()
         _advance_intervals(app, 1.5)
-        assert "Jet_1" in app._handles.jets
-        assert not app._handles.jets["Jet_1"].is_empty()
+        assert "Jet_1" in app.scene.jets
+        assert not app.scene.jets["Jet_1"].is_empty()
     finally:
         _destroy_app(app)
 

@@ -82,7 +82,7 @@ def test_screen_to_world_corners_and_center():
 def test_begin_placement_then_click_adds_each_kind():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         assert len(editor.scenario_draft["jets"]) == 1
@@ -109,7 +109,7 @@ def test_begin_placement_then_click_adds_each_kind():
 def test_save_without_required_objective_returns_errors_and_does_not_write(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         # Empty draft: no targets/SAMs → no required DESTROY objective.
         dest = tmp_path / "no_objectives.json"
         errors = editor.save(str(dest))
@@ -123,7 +123,7 @@ def test_save_without_required_objective_returns_errors_and_does_not_write(tmp_p
 def test_save_jetless_with_target_is_allowed(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("target")
         editor.on_ground_clicked((10.0, 10.0))
         dest = tmp_path / "jetless.json"
@@ -139,7 +139,7 @@ def test_save_jetless_with_target_is_allowed(tmp_path):
 def test_save_valid_draft_round_trips(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         editor.begin_placement("target")
@@ -161,7 +161,7 @@ def test_save_valid_draft_round_trips(tmp_path):
 def test_load_replaces_draft_and_scene(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((5.0, 5.0))
         editor.begin_placement("jammer")
@@ -323,7 +323,7 @@ def test_preview_valid_draft_enters_brief():
         app.cam = NodePath(Camera("preview-lens-test"))
         app.cam.node().set_lens(OrthographicLens())
         app._perspective_lens = PerspectiveLens()
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 25.0))
         editor.begin_placement("target")
@@ -331,11 +331,11 @@ def test_preview_valid_draft_enters_brief():
         assert editor.preview() is None
         assert app.view_mode == "brief"
         assert app.camera_mode == "brief"
-        assert app._header is not None
-        assert app._handles is not None
-        assert "Jet_1" in app._header.jet_ids
-        assert "Target_1" in app._header.target_ids
-        assert not app._handles.root.find("**/target-Target_1").is_empty()
+        assert app.header is not None
+        assert app.scene is not None
+        assert "Jet_1" in app.header.jet_ids
+        assert "Target_1" in app.header.target_ids
+        assert not app.scene.root.find("**/target-Target_1").is_empty()
         assert isinstance(app.cam.node().get_lens(), PerspectiveLens)
 
         radius = app._brief.radius
@@ -353,7 +353,7 @@ def test_preview_valid_draft_enters_brief():
 def test_preview_invalid_draft_keeps_editor_mode():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         # Empty draft has no required objective → invalid.
         errors = editor.preview()
         assert errors is not None
@@ -413,7 +413,7 @@ def test_scenario_to_header_matches_config_constants_and_entities():
 def test_directgui_add_jet_command_arms_placement():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         _invoke(editor._btn_add_jet)
         assert editor._placement_kind == "jet"
         editor.on_ground_clicked((30.0, 40.0))
@@ -426,7 +426,7 @@ def test_directgui_add_jet_command_arms_placement():
 def test_directgui_add_each_entity_kind_via_buttons():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         _invoke(editor._btn_add_target)
         editor.on_ground_clicked((10.0, 20.0))
         _invoke(editor._btn_add_sam)
@@ -443,7 +443,7 @@ def test_directgui_add_each_entity_kind_via_buttons():
 def test_directgui_save_button_writes_valid_draft(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         editor.begin_placement("target")
@@ -462,7 +462,7 @@ def test_directgui_save_button_writes_valid_draft(tmp_path):
 def test_directgui_preview_and_back_buttons(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 25.0))
         editor.begin_placement("target")
@@ -479,7 +479,7 @@ def test_directgui_preview_and_back_buttons(tmp_path):
 def test_directgui_launch_button_enters_brief(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((20.0, 20.0))
         editor.begin_placement("target")
@@ -489,7 +489,7 @@ def test_directgui_launch_button_enters_brief(tmp_path):
         editor._path_entry.enterText(str(dest))
         _invoke(editor._btn_launch)
         assert app.view_mode == "brief"
-        assert app._sim_handle is not None
+        assert app.sim_handle is not None
         app.cancel_launch()
         assert app.view_mode == "editor"
     finally:
@@ -499,7 +499,7 @@ def test_directgui_launch_button_enters_brief(tmp_path):
 def test_delete_entity_removes_jet_from_draft_and_scene():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         editor.begin_placement("target")
@@ -516,7 +516,7 @@ def test_delete_entity_removes_jet_from_draft_and_scene():
 def test_property_form_apply_updates_payload():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((12.0, 13.0))
         editor._id_entry.enterText("Renamed_Jet")
@@ -535,7 +535,7 @@ def test_jet_property_form_layout_does_not_overlap():
     """Payload rows sit below flares; Apply stays inside the properties card."""
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((12.0, 13.0))
         flare_z = editor._field_b_entry.getPos()[2]
@@ -559,7 +559,7 @@ def test_jet_property_form_layout_does_not_overlap():
 def test_ground_click_without_placement_selects_nearest():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         editor._placement_kind = None
@@ -591,7 +591,7 @@ def test_ortho_camera_zoom_and_pan():
 def test_load_button_surfaces_missing_file(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         missing = tmp_path / "nope.json"
         editor._path_entry.enterText(str(missing))
         _invoke(editor._btn_load)
@@ -604,7 +604,7 @@ def test_load_button_surfaces_missing_file(tmp_path):
 def test_non_default_frame_type_save_reload_round_trips(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((30.0, 40.0))
         editor.set_frame_type("HEAVY_BOMBER")
@@ -626,7 +626,7 @@ def test_non_default_frame_type_save_reload_round_trips(tmp_path):
 def test_place_home_base_is_a_single_moved_marker(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         assert editor.scenario_draft["home_base"] == list(wn_config.DEFAULT_HOME_BASE)
 
         editor.begin_placement("home_base")
@@ -655,7 +655,7 @@ def test_place_home_base_is_a_single_moved_marker(tmp_path):
 def test_save_without_placing_home_base_keeps_the_default(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((10.0, 10.0))
         editor.begin_placement("target")
@@ -694,7 +694,7 @@ def test_slots_usage_indicator_matches_scenario_validator():
 def test_slots_preview_updates_when_payload_or_frame_changes():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((12.0, 13.0))
         assert editor._slots_label["text"] == "1 / 7 slots"
@@ -721,7 +721,7 @@ def test_slots_preview_updates_when_payload_or_frame_changes():
 def test_preset_selection_populates_resolved_values():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         from wraithnet.generation_presets import parameters_for_preset
 
         editor._seed_entry.enterText("42")
@@ -741,7 +741,7 @@ def test_preset_selection_populates_resolved_values():
 def test_editing_advanced_value_sets_custom_preset():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._apply_preset("STANDARD", 7)
         editor._advanced_entries["objective_count"].enterText("6")
         editor._on_advanced_field_edited()
@@ -755,7 +755,7 @@ def test_editing_advanced_value_sets_custom_preset():
 def test_new_seed_uses_secrets_randbits(monkeypatch):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         monkeypatch.setattr("viewer3d.editor.secrets.randbits", lambda bits: 0xABCDEF0123456789)
         _invoke(editor._btn_new_seed)
         assert editor._seed_entry.get() == str(0xABCDEF0123456789)
@@ -768,7 +768,7 @@ def test_new_seed_uses_secrets_randbits(monkeypatch):
 def test_custom_roster_includes_all_weapon_catalog_keys():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         while editor._generation_parameters.friendly_mode != "CUSTOM_ROSTER":
             editor._cycle_friendly_mode()
         assert editor._roster_rows
@@ -786,7 +786,7 @@ def test_generate_installs_exact_generation_result_scenario():
         from wraithnet.generation_presets import parameters_for_preset
         from wraithnet.scenario_generator import generate_scenario
 
-        editor = app._editor
+        editor = app.editor
         params = parameters_for_preset("STANDARD", seed=11)
         editor._generation_parameters = params
         editor._sync_generation_widgets_from_parameters()
@@ -813,7 +813,7 @@ def test_generation_failure_leaves_prior_draft_byte_equivalent(monkeypatch):
     try:
         from wraithnet.scenario_generator import GenerationError
 
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((12.0, 13.0))
         editor.begin_placement("target")
@@ -840,7 +840,7 @@ def test_generation_failure_leaves_prior_draft_byte_equivalent(monkeypatch):
 def test_dirty_draft_confirmation_prevents_accidental_replacement():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((10.0, 10.0))
         assert editor._draft_dirty
@@ -855,7 +855,7 @@ def test_dirty_draft_confirmation_prevents_accidental_replacement():
 def test_fresh_editor_generate_is_one_click():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         assert editor._draft_dirty is False
         assert not editor._draft_has_content()
         editor._seed_entry.enterText("3")
@@ -875,7 +875,7 @@ def test_custom_infeasible_requires_use_anyway_auto_rejects(monkeypatch):
         from wraithnet.generation_schemas import GenerationParameters
         from wraithnet.scenario_generator import GenerationError, generate_scenario
 
-        editor = app._editor
+        editor = app.editor
         base = parameters_for_preset("TRAINING", seed=1).model_dump()
         base.update(
             {
@@ -934,7 +934,7 @@ def test_custom_infeasible_requires_use_anyway_auto_rejects(monkeypatch):
 def test_undo_restores_prior_draft_and_metadata():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.begin_placement("jet")
         editor.on_ground_clicked((9.0, 9.0))
         editor.begin_placement("target")
@@ -956,7 +956,7 @@ def test_undo_restores_prior_draft_and_metadata():
 def test_manual_mutation_marks_generation_metadata_modified():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("8")
         editor._apply_preset("TRAINING", 8)
         editor._generate_clicked()
@@ -974,7 +974,7 @@ def test_manual_mutation_marks_generation_metadata_modified():
 def test_save_load_preserves_generation_metadata(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("15")
         editor._apply_preset("TRAINING", 15)
         editor._generate_clicked()
@@ -1015,7 +1015,7 @@ def test_save_load_preserves_generation_metadata(tmp_path):
 def test_quick_generate_buttons_invoke_methods():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         _invoke(editor._btn_difficulty)
         assert editor._generation_parameters.preset in (
             "TRAINING",
@@ -1045,7 +1045,7 @@ def test_quick_generate_buttons_invoke_methods():
 def test_generated_scene_contains_entities_and_home_base():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("21")
         editor._apply_preset("TRAINING", 21)
         editor._generate_clicked()
@@ -1068,7 +1068,7 @@ def test_generated_scene_contains_entities_and_home_base():
 def test_entity_list_and_property_editor_after_generation():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("22")
         editor._apply_preset("TRAINING", 22)
         editor._generate_clicked()
@@ -1087,22 +1087,22 @@ def test_entity_list_and_property_editor_after_generation():
 def test_preview_and_launch_receive_generated_state(tmp_path):
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("23")
         editor._apply_preset("TRAINING", 23)
         editor._generate_clicked()
         jet_ids = [j["agent_id"] for j in editor.scenario_draft["jets"]]
         assert editor.preview() is None
         assert app.view_mode == "brief"
-        assert app._header is not None
-        assert app._header.jet_ids == jet_ids
+        assert app.header is not None
+        assert app.header.jet_ids == jet_ids
         app.exit_preview()
         dest = tmp_path / "gen_launch.json"
         editor._path = str(dest)
         editor._path_entry.enterText(str(dest))
         _invoke(editor._btn_launch)
         assert app.view_mode == "brief"
-        assert app._sim_handle is not None
+        assert app.sim_handle is not None
         app.cancel_launch()
     finally:
         _destroy_app(app)
@@ -1111,7 +1111,7 @@ def test_preview_and_launch_receive_generated_state(tmp_path):
 def test_generate_panel_survives_preview_transition():
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor._seed_entry.enterText("24")
         editor._apply_preset("TRAINING", 24)
         editor._generate_clicked()
@@ -1148,7 +1148,7 @@ def test_payload_round_trip_keeps_amraam_and_gun_pod(tmp_path):
     )
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.load(str(dest))
         jet = editor.scenario_draft["jets"][0]
         editor.open_property_form(jet)
@@ -1212,7 +1212,7 @@ def test_load_save_preserves_combat_seed_objectives_and_bases(tmp_path):
 
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         editor.load(str(src))
         assert editor.scenario_draft["combat_seed"] == 99
         assert editor.scenario_draft["mission_objectives"][0]["objective_id"] == "OBJ_CUSTOM"
@@ -1241,7 +1241,7 @@ def test_place_carrier_on_water_succeeds_land_fails():
 
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         # Paint a 3x3 water patch so SURFACE placement and list wiring work.
         _paint_water_patch(
             editor,
@@ -1275,7 +1275,7 @@ def test_place_tank_on_water_fails_and_ground_succeeds():
 
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         _paint_water_patch(editor, [(0, 0)])
         terrain = editor._draft_terrain()
         water_pos = cell_center(terrain, 0, 0)
@@ -1304,7 +1304,7 @@ def test_place_corvette_and_naval_tank_save_load_round_trip(tmp_path):
 
     app = _editor_app()
     try:
-        editor = app._editor
+        editor = app.editor
         # Large water basin for footprint-safe naval save validation.
         water = all_water_terrain(100.0, 100.0, cell_size=5.0)
         # Keep a land corner for home/targets/tank.
