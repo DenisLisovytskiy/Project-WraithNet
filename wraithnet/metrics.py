@@ -224,6 +224,10 @@ def classify_outcome(model) -> str:
 
     A model that is still running when the caller stopped ticking it hit the
     tick cap; that is not the same thing as a mission that ended unsolved.
+
+    ABORTED is every other unsolved ending with a friendly left alive or
+    home: the swarm went home unfinished, or a required PROTECT/SURVIVE
+    objective failed. ``mission_aborted`` in the summary tells the two apart.
     """
     if model.running:
         return "TICK_CAP"

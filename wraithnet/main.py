@@ -9,7 +9,12 @@ from pathlib import Path
 from wraithnet.bridge import WraithNetBridge
 from wraithnet.generation_presets import DIFFICULTY_PRESETS, parameters_for_preset
 from wraithnet.live_stream import LiveStreamServer
-from wraithnet.metrics import build_run_record, export_results, summarize
+from wraithnet.metrics import (
+    build_run_record,
+    classify_outcome,
+    export_results,
+    summarize,
+)
 from wraithnet.paths import user_data_dir
 from wraithnet.recorder import TraceRecorder
 from wraithnet.scenario_generator import generate_scenario
@@ -152,22 +157,24 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
     wall_time_s = time.perf_counter() - started
-    record = build_run_record(
-        bridge.model,
-        max_ticks=args.max_ticks,
-        wall_time_s=wall_time_s,
-        preset=preset,
-        generation_seed=args.seed,
-        feasible=feasible,
-    )
     summary = summarize(bridge.model)
     if args.summary_json:
+        # Only here: the record runs the feasibility analyser and asks git for
+        # the commit, which a plain run (and every GUI launch) does not need.
+        record = build_run_record(
+            bridge.model,
+            max_ticks=args.max_ticks,
+            wall_time_s=wall_time_s,
+            preset=preset,
+            generation_seed=args.seed,
+            feasible=feasible,
+        )
         out = Path(args.summary_json)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
 
     print(f"Simulation finished at tick {summary['ticks_elapsed']}")
-    print(f"Outcome: {record['outcome']}")
+    print(f"Outcome: {classify_outcome(bridge.model)}")
     if summary["swarm_wiped_out"]:
         print("OUTCOME: FAILURE — entire swarm destroyed before objective complete.")
     elif summary["mission_aborted"]:

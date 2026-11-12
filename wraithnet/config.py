@@ -908,6 +908,9 @@ BID_TIMEOUT_TICKS: int = 3
 # A manager needs at most MAX_CFP_ROUNDS bid windows of a few yields each,
 # so a healthy tick ends far below this. Counted in yields, never seconds:
 # the outcome of a tick must not depend on how fast the machine is.
+# Keep it above MAX_CFP_ROUNDS * 2 * max(BID_TIMEOUT_TICKS, 3) (30 today): a
+# sweep that raises BID_TIMEOUT_TICKS past 25 must raise this too, or the cap
+# starts cutting ordinary auctions short.
 MAX_TICK_NEGOTIATION_YIELDS: int = 256
 
 # Must exceed worst-case transit time for the fixed PoC (~15 ticks for a

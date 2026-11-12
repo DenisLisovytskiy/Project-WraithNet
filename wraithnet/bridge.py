@@ -180,8 +180,10 @@ class WraithNetBridge:
         try:
             await negotiation
         except asyncio.CancelledError:
-            if not cut_off:
-                raise  # the tick itself was cancelled from outside
+            # Our own cut-off cancels the gather, not this task. If this task
+            # was cancelled too (from outside), that must still propagate.
+            if not cut_off or asyncio.current_task().cancelling():
+                raise
         finally:
             guard.cancel()
 

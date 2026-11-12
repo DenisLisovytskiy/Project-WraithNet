@@ -64,14 +64,20 @@ def apply_config_overrides(overrides: dict[str, object]) -> None:
     """Set ``wraithnet.config`` constants for this process.
 
     ponytail: only constants read as ``config.NAME`` at call time see the new
-    value. A module that did ``from wraithnet.config import NAME`` keeps its
-    copy; change that import if such a constant ever needs sweeping.
+    value, and nothing detects an override that had no effect. Not covered:
+    names imported by value (``from wraithnet.config import NAME``), constants
+    used as Pydantic field defaults (grid size, home base), and constants that
+    live outside ``config`` (``agents.MAX_CFP_ROUNDS``). Check that a sweep
+    moves the result before trusting a flat line; change the read site to
+    ``config.NAME`` if such a constant ever needs sweeping.
     """
     for name, value in overrides.items():
         if not name.isupper() or not hasattr(config, name):
             raise ValueError(f"unknown config constant: {name}")
         current = getattr(config, name)
-        if _is_number(current):
+        if isinstance(current, int) and not isinstance(current, bool):
+            ok = type(value) is int  # a float tick count would break range()
+        elif _is_number(current):
             ok = _is_number(value)
         else:
             ok = isinstance(current, (bool, str)) and type(value) is type(current)
@@ -124,6 +130,7 @@ def run_one(job: dict) -> dict:
         record = {
             "outcome": "ERROR",
             "error": f"{type(exc).__name__}: {exc}",
+            "max_ticks": job["max_ticks"],
             "wall_time_s": round(time.perf_counter() - started, 3),
             "git_commit": job["commit"] or "unknown",
         }
@@ -141,10 +148,18 @@ def run_one(job: dict) -> dict:
 
 
 def read_rows(path: Path) -> list[dict]:
+    """Rows written so far. A last line cut short by a kill is ignored."""
     if not path.is_file():
         return []
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    rows = []
+    for index, line in enumerate(lines):
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if index != len(lines) - 1:
+                raise
+    return rows
 
 
 def summary_table(rows: list[dict]) -> str:
@@ -226,7 +241,22 @@ def run_batch(args: argparse.Namespace) -> list[dict]:
             f"{runs_path} already has {len(existing)} rows; "
             "pass --resume to continue it or choose another --out."
         )
-    done = {r["generation_seed"] for r in existing if r.get("preset") == args.preset}
+    settings = {
+        "preset": args.preset,
+        "max_ticks": args.max_ticks,
+        "params": args.params,
+        "config_overrides": args.config_overrides,
+    }
+    for row in existing:
+        theirs = {key: row.get(key, settings[key]) for key in settings}
+        if theirs != settings:
+            raise SystemExit(
+                f"{runs_path} holds runs made with other settings ({theirs}); "
+                "resume with the same settings or choose another --out."
+            )
+    # A seed with a row is done, ERROR rows included: fix the cause and use a
+    # new --out rather than appending a second row for the same seed.
+    done = {r["generation_seed"] for r in existing}
     commit = git_commit()
     jobs = [
         {
@@ -252,8 +282,23 @@ def run_batch(args: argparse.Namespace) -> list[dict]:
             runs_path.open("a", encoding="utf-8") as handle,
             ProcessPoolExecutor(max_workers=args.workers) as pool,
         ):
-            for future in as_completed([pool.submit(run_one, job) for job in jobs]):
-                row = future.result()
+            futures = {pool.submit(run_one, job): job for job in jobs}
+            for future in as_completed(futures):
+                try:
+                    row = future.result()
+                except Exception as exc:  # noqa: BLE001 - the worker process died
+                    job = futures[future]
+                    row = {
+                        "outcome": "ERROR",
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "preset": job["preset"],
+                        "generation_seed": job["seed"],
+                        "max_ticks": job["max_ticks"],
+                        "params": job["params"],
+                        "config_overrides": job["config_overrides"],
+                        "git_commit": commit or "unknown",
+                        "trace_path": None,
+                    }
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
                 handle.flush()
                 rows.append(row)
