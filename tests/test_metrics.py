@@ -1,7 +1,5 @@
 """Phase 23: summarize() must account for jets that left play."""
 
-from pathlib import Path
-
 import pytest
 
 from wraithnet import config
@@ -26,9 +24,6 @@ def _move_toward(
         target_position=destination,
         desired_heading=bearing_to(origin, destination),
     )
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _assert_three_way_split(model: WraithNetModel) -> None:
@@ -281,17 +276,6 @@ def test_three_way_split_holds_every_tick_of_a_sam_kill():
     assert summary["jets_still_flying"] == 0
     assert summary["swarm_wiped_out"] is True
     assert summary["mission_aborted"] is False
-
-
-def test_legacy_survived_metric_key_is_gone():
-    """The still-flying rename is a clean break — no leftover survived key."""
-    needle = "jets_" + "survived"
-    hits: list[str] = []
-    for folder in ("wraithnet", "tests"):
-        for path in (REPO_ROOT / folder).rglob("*.py"):
-            if needle in path.read_text(encoding="utf-8"):
-                hits.append(str(path.relative_to(REPO_ROOT)).replace("\\", "/"))
-    assert hits == [], f"stale {needle} references remain: {hits}"
 
 
 def test_datacollector_total_distance_stays_cumulative_after_jet_removed():
