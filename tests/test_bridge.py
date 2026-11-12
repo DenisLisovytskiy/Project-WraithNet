@@ -463,3 +463,47 @@ async def test_negotiation_completes_inside_the_default_yield_budget(monkeypatch
     )
     assert bridge.broker.is_claimed("Bunker") is True
     assert {a.role for a in bridge.agents.values()} == {"CONTRACTOR"}
+
+
+@pytest.mark.asyncio
+async def test_contractor_shot_down_mid_contract_is_replaced_through_tick():
+    """The bridge's own tick must tell the manager its contractor died.
+
+    A zero-payload coordinator manages the bunker and awards the closer
+    striker. The striker is shot down before it releases. Within two ticks the
+    reserve jet must hold the contract. Without the loss notification in
+    ``_tick`` the claim would sit until the claim TTL expires, far later.
+    """
+    scenario = scenario_from_data(new_scenario_data(
+        jets=[
+            JetSpec(agent_id="A_Coordinator", position=(40.0, 40.0), payload={"JDAM": 0, "AIM9X": 0}),
+            JetSpec(agent_id="B_Striker", position=(45.0, 40.0), payload={"JDAM": 1, "AIM9X": 0}),
+            JetSpec(agent_id="C_Reserve", position=(35.0, 40.0), payload={"JDAM": 1, "AIM9X": 0}),
+        ],
+        targets=[
+            TargetSpec(target_id="Bunker", position=(60.0, 40.0), hp_required=1, target_type="HARDENED_BUNKER"),
+        ],
+    ))
+    bridge = WraithNetBridge(scenario=scenario)
+    assert bridge.broker.claim_ttl_ticks > 10
+    bridge.start_agent_loops()
+    try:
+        await bridge._tick()
+        assert bridge.agents["B_Striker"].committed_target_id == "Bunker"
+        assert bridge.agents["C_Reserve"].role == "IDLE"
+        assert bridge.agents["A_Coordinator"].managed_contracts["Bunker"] == {"B_Striker"}
+
+        bridge.model.jets["B_Striker"].hp = 0
+        for _ in range(2):
+            await bridge._tick()
+            if bridge.agents["C_Reserve"].role == "CONTRACTOR":
+                break
+
+        assert "B_Striker" not in bridge.agents
+        assert bridge.model.strike_log == []
+        reserve = bridge.agents["C_Reserve"]
+        assert reserve.role == "CONTRACTOR"
+        assert reserve.committed_target_id == "Bunker"
+        assert bridge.agents["A_Coordinator"].managed_contracts["Bunker"] == {"C_Reserve"}
+    finally:
+        await bridge.stop_agent_loops()
