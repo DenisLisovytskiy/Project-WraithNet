@@ -1,4 +1,6 @@
 mesa>=3.1,<4.0
+# Not imported yet. Kept for the Phase 65 route graph (networkx.astar_path);
+# Phase 65 removes it if routing ends up not using it.
 networkx>=3.0,<4.0
 pydantic>=2.0,<3.0
 pandas>=2.0

@@ -1,10 +1,12 @@
 # Design Document: Authoritative 3D Flight Attitude & Weapon Release Gates
 
-> This document is the source of truth for reworking jet movement into **authoritative** pitch / roll / yaw flight in world space, with per-airframe maneuver limits and attitude-gated weapon release. **Nothing in this document is implemented yet.** See Phases 50–55 for LLM-ready implementation prompts.
+> **Status (2026-11, Phase 56):** Phases 50–55 are implemented. Acceptance: `tests/test_flight_attitude_track_acceptance.py`. The tactical altitude model added afterwards is §14.
+
+> This document is the source of truth for reworking jet movement into **authoritative** pitch / roll / yaw flight in world space, with per-airframe maneuver limits and attitude-gated weapon release. **Status (Phase 55 closeout):** Phases **50–55 are implemented** (contracts, movement, weapon gates, agent employment, trace/viewer parity, track acceptance). Phase files under `docs/phases/` remain the historical build prompts.
 >
 > Numbering note: Phases 46–49 remain the smooth live-motion presentation track. This expansion is an independent **gameplay flight** track starting at **Phase 50**.
 >
-> **Supersedes (for attitude / altitude authority):** the “altitude forever cosmetic / sim stays 2D” non-goals in `docs/09_...md` §6.2/§10 and `docs/12_Flight_Dynamics_and_Weapon_Effects_Design_Document.md` §1/§3/§4.1. Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles; this doc completes that direction for **attitude**. Viewer cosmetics from Phases 25–26 remain valid only as presentation easing until Phase 54 wires them to authoritative pose.
+> **Supersedes (for attitude / altitude authority):** the “altitude forever cosmetic / sim stays 2D” non-goals in `docs/09_...md` §6.2/§10 and `docs/12_Flight_Dynamics_and_Weapon_Effects_Design_Document.md` §1/§3/§4.1. Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles; this doc completes that direction for **attitude**. Viewer cosmetics from Phases 25–26 remain valid only as presentation easing toward authoritative pose (Phase 54).
 
 ## 0. Goal
 
@@ -238,14 +240,14 @@ Each phase file under `docs/phases/` is a **standalone LLM prompt** with explici
 
 The track is **done** when all of the following hold:
 
-1. **Per-frame sharpness:** Interceptor yaw/pitch/roll rates are strictly greater than Strike Fighter, which are strictly greater than Heavy Bomber (tests lock the inequalities).
-2. **3D pose:** Every living jet in sim state exposes yaw, pitch, roll, altitude; movement updates all four on ticks where intents request change.
-3. **Altitude coupling:** Changing pitch away from 0 produces altitude change on subsequent ticks (within climb clamps); agents can leave and return to cruise altitude without the old “altitude-only slider” as the sole combat API.
-4. **Bomb gate:** A jet with `|roll| > JDAM envelope` or inverted cannot successfully `STRIKE` with `JDAM`; after rolling upright within envelope, the same geometry can.
-5. **Missile contrast:** At least one AAM (`AIM9X` or `AMRAAM`) remains launchable under a roll attitude that would reject `JDAM` (catalog policy in §6.2), proving gates are weapon-specific.
-6. **Viewer parity:** Live 3D view pitch/roll track sim values (within interpolator delay); F3 or equivalent debug can show attitude.
-7. **Regression:** Full `pytest` green; any intentional PoC summarize drift is documented and accepted in Phase 55.
-8. **Docs:** This design doc’s “Nothing implemented yet” banner is updated when Phase 55 lands; README lists this doc.
+1. [x] **Per-frame sharpness:** Interceptor yaw/pitch/roll rates are strictly greater than Strike Fighter, which are strictly greater than Heavy Bomber (tests lock the inequalities). — `tests/test_flight_attitude_track_acceptance.py`
+2. [x] **3D pose:** Every living jet in sim state exposes yaw, pitch, roll, altitude; movement updates all four on ticks where intents request change.
+3. [x] **Altitude coupling:** Changing pitch away from 0 produces altitude change on subsequent ticks (within climb clamps); agents can leave and return to cruise altitude without the old “altitude-only slider” as the sole combat API.
+4. [x] **Bomb gate:** A jet with `|roll| > JDAM envelope` or inverted cannot successfully `STRIKE` with `JDAM`; after rolling upright within envelope, the same geometry can.
+5. [x] **Missile contrast:** At least one AAM (`AIM9X` or `AMRAAM`) remains launchable under a roll attitude that would reject `JDAM` (catalog policy in §6.2), proving gates are weapon-specific.
+6. [x] **Viewer parity:** Trace + motion sample preserve pitch/roll; scene orients from authoritative attitude (Phase 54 tests). **Manual:** launcher Launch shows bank/pitch; F3 debug matches selected jet (operator checklist).
+7. [x] **Regression:** PoC still solves under wings-level defaults (Phase 55 acceptance); no deferred golden refresh required. Full `pytest` green on clean tree.
+8. [x] **Docs:** Banner updated; README lists this doc (Phases 50–55).
 
 ## 12. Risks & mitigations
 
@@ -265,3 +267,65 @@ The track is **done** when all of the following hold:
 * Whether `desired_altitude` combat path is removed or kept as advisory autopilot.
 
 Freeze choices in Phase 50/51 PR descriptions so Phase 52–55 agents do not fork semantics.
+
+## 14. Tactical altitude (added after Phase 55)
+
+> Built in commits `464add7` and `d5e1f2a` without a phase document. This section is the design record. The short bullets in §5 remain correct; this is the full picture.
+
+### 14.1 What changed
+
+Before this work every jet sat at altitude 20 for the whole mission. Nothing stopped it flying through a 25-unit building, and altitude played no part in tactics. Now altitude decides three things: whether the jet hits terrain, what can shoot at it, and which weapons it can release.
+
+### 14.2 Terrain safety
+
+* **Obstacle heights.** A CITY cell is as tall as its `building_height`; a FOREST cell has a canopy of `terrain.FOREST_CANOPY_HEIGHT` (3.0). Ground and water are 0. `terrain.cell_obstacle_height` is the single source.
+* **Relative altitude.** `WraithNetModel.relative_altitude(jet)` is the height above whatever is under the jet. The trace carries it and the HUD shows it as AGL next to ALT.
+* **Hard floor.** `_altitude_floor`: the jet never goes below `max(frame.min_combat_altitude, obstacle below + terrain_clearance)`. Only the final approach to a base skips it.
+* **Look-ahead (auto-GCAS).** `terrain.lookahead_required_altitude` returns the lowest altitude from which a rate-limited climb still clears every obstacle the jet could reach. An obstacle `d` away takes at least `floor(d / max_speed)` ticks to reach; the first few of those go to rotating the nose up, the rest climb at `altitude_tactics.climb_rate(frame)`. The check is by distance, not by heading, so it holds whichever way the jet turns, and far obstacles barely count, which leaves room to fly low.
+* **Who uses it.** `_terrain_required_altitude` calls it once per jet per tick, adding the height a nose-down jet loses while it rotates. Below that altitude `_autopilot_pitch` commands a full-pitch climb whatever the agent asked for.
+* **Safety net.** A jet that is found below an obstacle anyway is destroyed and written to `model.crash_log`; `summarize()` reports it as `jets_crashed`.
+
+### 14.3 Altitude is flown
+
+Outside carrier or runway recovery, `dz = max_speed * sin(pitch)` and nothing else moves the jet vertically. A level or unset pitch intent means "hold `desired_altitude`": `_autopilot_pitch` turns the altitude error into a pitch command with gain `config.ALTITUDE_HOLD_GAIN`, limited by the airframe's real climb rate `min(max_climb_per_tick, max_speed * sin(pitch_limit))` and then by its pitch rate. An explicit non-zero pitch intent wins over the altitude hold; the terrain look-ahead wins over both.
+
+### 14.4 Tactical bands
+
+`altitude_tactics.transit_altitude` picks the altitude an agent commands in transit and on the way out, from what it knows:
+
+| What the jet knows | Altitude it commands | Why |
+|---|---|---|
+| A gun threat with a known ceiling | above the highest ceiling plus `gun_ceiling_margin` | guns kill low |
+| A live SAM site within `sam_low_level_radius` | 0, which the world floor turns into the terrain clearance | surface radar missiles cannot engage a jet below `sam_radar_min_engagement_agl` (ground clutter) |
+| Neither | the airframe's `cruise_altitude` | sensors see over buildings from there |
+
+`sam_low_level_radius` is the SAM_RADAR range plus the ground covered while the jet noses over and descends from cruise, so the jet is already under the radar when it enters the envelope.
+
+### 14.5 Weapon release
+
+* JDAM and GUN_POD have a `max_release_altitude` (15 and 10). `weapons_release.release_attitude_ok` rejects a release above it with `above_max_release_altitude`. Attack runs with these weapons therefore come down into gun reach, descend just in time and climb back out.
+* `_min_overflight_altitude(jet, position)` is the lowest altitude that airframe can hold over a position, given the terrain around it. It is sent to the agent as `TargetInfo.min_overflight_altitude`.
+* `weapons_release.release_reachable` compares the two. Bidding skips an unguided weapon whose release ceiling is below the overflight floor (a bunker between tall buildings cannot be bombed by a jet that cannot get low enough there), and a contractor drops a commitment it cannot deliver instead of circling.
+* Bids price gun risk at the altitude planned for the offered weapon. Above a gun's ceiling the gun risk is zero. Gun contacts carry their `altitude_ceiling` for this.
+
+### 14.6 Feasibility
+
+`scenario_feasibility.discovery_observer_altitude` judges line of sight for discovery from where a jet would actually fly: cruise, or the clearance floor inside a SAM's low-level radius. The generator uses the conservative lowest altitude, because SAMs and jets are not placed yet when it checks.
+
+### 14.7 Per-scenario rules
+
+`ScenarioConfig.altitude_rules` (`schemas.AltitudeRules`) overrides the defaults in `config.py` and reaches agents through `Observation.altitude_rules`:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `terrain_clearance` | `TERRAIN_CLEARANCE` = 3.0 | minimum height above the roof, treetop or ground under the jet |
+| `sam_radar_min_engagement_agl` | `SAM_RADAR_MIN_ENGAGEMENT_AGL` = 6.0 | surface radar missiles cannot engage below this relative altitude |
+| `gun_ceiling_margin` | `GUN_CEILING_MARGIN` = 3.0 | how far above a known gun ceiling a jet flies |
+
+### 14.8 Tests
+
+`tests/test_jet_altitude.py` (terrain floor, look-ahead, crash log, tactical bands, release ceiling), `tests/test_scenario_feasibility.py` (discovery altitude), `tests/test_bid_utility.py` (gun risk above the ceiling), `tests/test_flight_attitude_track_acceptance.py` (release gate at a legal altitude).
+
+### 14.9 Known cost
+
+`lookahead_required_altitude` scans every cell in its radius on every call. `_min_overflight_altitude` calls it once per jet per known target per tick, although its inputs never change for a static target. Together they are about 80% of simulation time (doc 23 §4). Phase 60 caches it.

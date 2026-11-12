@@ -57,3 +57,6 @@ Thumbs.db
 
 # Simulation exports
 results/
+
+# Editor output. Generated scenarios are not committed (docs/24 section 11).
+scenarios/custom*.json

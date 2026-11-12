@@ -1,5 +1,7 @@
 # Design Document: Airframes, Weapon Behavior, Fuel & RTB ("Phase 4 Expansion")
 
+> **Status (2026-11, Phase 56):** Phases 20–24 are implemented (airframe and weapon catalogs in `wraithnet/config.py`, fuel and RTB in `wraithnet/world.py` and `wraithnet/agents.py`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for a new expansion of the WraithNet **simulation core** — unlike the Phase 3 Expansion (`docs/09_..._Design_Document.md`, 3D live viewer + scenario editor), this one changes `wraithnet/` itself: movement, combat resolution, and CNP bidding all gain new behavior. **Nothing in this document is implemented yet.** See `docs/phases/Phase_20..24_*.md` for the phase-by-phase build plan.
 
 ## 0. What this expansion is, in one paragraph

@@ -1,5 +1,7 @@
 # Design Document: 2D Top-Down Visualization (Pygame Replay Viewer)
 
+> **Status (2026-11, Phase 56):** Phases 11–13 are implemented (`wraithnet/recorder.py`, `viewer/`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for a new, self-contained visualization feature layered on top of the existing WraithNet PoC (Phases 0–10, fully implemented — see `docs/6th-Gen_Warfare_Sim_Design_Document_v2.md` and `docs/04_6th-Gen_Warfare_Sim_Design_Document_v3_Phase2.md`). **Nothing in this document is implemented yet.** See `docs/phases/Phase_11..13_*.md` for the phase-by-phase build plan (each phase is a standalone LLM prompt, mirroring the style already used for Phases 0–10).
 
 ## 1. Goal

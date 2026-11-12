@@ -1,5 +1,7 @@
 # Design Document: 3D Live Visualization & Scenario Editor ("Phase 3 Expansion")
 
+> **Status (2026-11, Phase 56):** Phases 14–19 are implemented (`wraithnet/scenario_schema.py`, `wraithnet/live_stream.py`, `viewer3d/`). The "nothing is implemented yet" wording below is the original design-time text. Superseded for altitude and attitude by doc 22.
+
 > This document is the source of truth for a new, self-contained expansion layered on top of the complete WraithNet simulation (Phases 0–10) and the existing 2D Pygame replay viewer (Phases 11–13, `docs/07_Visualization_Design_Document.md`). **Nothing in this document is implemented yet.** See `docs/phases/Phase_14..19_*.md` for the phase-by-phase build plan — each phase is a standalone LLM prompt, mirroring the style already used for Phases 0–13.
 
 ## 0. What this expansion is, in one paragraph
@@ -110,6 +112,8 @@ The sim's world is 2D: `(x, y)` on a `100×100` grid, `y` "up." Panda3D's defaul
 | *(none — sim is 2D)* | `z` = synthetic altitude (see 6.2) |
 
 ### 6.2 Synthetic altitude — explicit scope boundary
+
+> **Superseded for authoritative attitude / altitude:** [`docs/22_Authoritative_3D_Flight_Attitude_Design_Document.md`](22_Authoritative_3D_Flight_Attitude_Design_Document.md) (Phases 50–55; Phase 37 already made altitude gameplay-relevant for LOS / AAA / missiles).
 
 **The simulation itself stays 2D.** There is no altitude in `wraithnet`'s data model, no altitude-based gameplay (no terrain-following, no vertical evasion, no altitude affecting sensor/SAM range) — this is an explicit non-goal (§8), not an oversight. The 3D viewer alone decides, purely for presentation, to render jets at a fixed flight altitude (e.g. `z = 8` world-units) above a ground plane at `z = 0`, with targets/SAM sites/the jammer sitting on the ground (`z = 0`). This gives an "aircraft flying over a map" look without requiring any change to the tactical model Phases 0–10 already validated. If two jets ever occupy the exact same `(x, y)`, a small deterministic per-jet vertical offset (keyed by index in `jet_ids`, same pattern the 2D viewer uses for its color palette) prevents them from perfectly overlapping — purely cosmetic, never affects gameplay.
 

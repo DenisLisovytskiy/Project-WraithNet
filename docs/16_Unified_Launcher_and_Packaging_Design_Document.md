@@ -1,5 +1,7 @@
 # Design Document: Unified Launcher & Packaging Readiness
 
+> **Status (2026-11, Phase 56):** Phases 27–29 are implemented (`launcher/`, `packaging/`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for turning WraithNet's three separate entry points (`python -m wraithnet.main`, `python -m viewer.app`, `python -m viewer3d.app`) into **one command**, and for restructuring the small amount of code that currently assumes "running from a Python checkout" so the project can later be frozen into a single distributable `.exe` with PyInstaller, without a disruptive rewrite when that day comes. **Nothing in this document is implemented yet.** See `docs/phases/Phase_28_*.md` and `docs/phases/Phase_29_*.md` for the phase-by-phase build plan. This is a tooling/packaging expansion, not a simulation or gameplay feature — it changes zero combat/negotiation/fuel/heading behavior.
 
 ## 0. What this expansion is, in one paragraph

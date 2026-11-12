@@ -1,5 +1,7 @@
 # Design Document: Deterministic Random Scenario Generation
 
+> **Status (2026-11, Phase 56):** Phases 30–33 are implemented (`wraithnet/scenario_generator.py`, `wraithnet/scenario_feasibility.py`, `wraithnet/generation_presets.py`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for WraithNet's random-scenario expansion. It adds a few-click generator to the existing 3D scenario editor without weakening or replacing the existing manual editor. A generated scenario is an ordinary, fully materialized `ScenarioConfig`: users can immediately inspect it, move entities, change loadouts, save it, load it, preview it, and launch it through the same workflow that already exists. Nothing in this document is implemented yet. See Phases 30–33 for LLM-ready implementation prompts.
 
 ## 0. Goal
