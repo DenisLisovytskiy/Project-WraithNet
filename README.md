@@ -199,7 +199,7 @@ The numbers in this table come from these commands (run from the repository root
 ```bash
 git ls-files 'wraithnet/*.py' 'viewer/*.py' 'viewer3d/*.py' 'launcher/*.py' | xargs cat | wc -l   # application lines
 git ls-files 'tests/*.py' | xargs cat | wc -l                                                    # test lines
-pytest --collect-only -q | tail -1                                                               # test count
+pytest -m "" --collect-only -q | tail -1                                                         # test count
 ls docs/*.md | wc -l; ls docs/phases | wc -l                                                     # documents, phase plans
 ```
 
@@ -258,8 +258,11 @@ python -m viewer3d.app --replay results/demo/trace.jsonl --rate 2
 **Run the tests**
 
 ```bash
-pytest
+pytest            # default lane: fast, headless, under a minute
+pytest -m ""      # full lane: adds the slow, end-to-end and 3D viewer tests
 ```
+
+The lanes, the markers and what each test file protects are described in [doc 25](docs/25_Test_Suite_Audit_Report.md).
 
 > On Debian or Ubuntu, always use the virtual environment. PEP 668 blocks installing into the system interpreter, so don't use `sudo pip` or `--break-system-packages`.
 
