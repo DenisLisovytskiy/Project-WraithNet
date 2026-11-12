@@ -1,5 +1,7 @@
 # Design Document: Authoritative 3D Flight Attitude & Weapon Release Gates
 
+> **Status (2026-11, Phase 56):** Phases 50–55 are implemented. Acceptance: `tests/test_flight_attitude_track_acceptance.py`. The tactical altitude model added afterwards is §14.
+
 > This document is the source of truth for reworking jet movement into **authoritative** pitch / roll / yaw flight in world space, with per-airframe maneuver limits and attitude-gated weapon release. **Status (Phase 55 closeout):** Phases **50–55 are implemented** (contracts, movement, weapon gates, agent employment, trace/viewer parity, track acceptance). Phase files under `docs/phases/` remain the historical build prompts.
 >
 > Numbering note: Phases 46–49 remain the smooth live-motion presentation track. This expansion is an independent **gameplay flight** track starting at **Phase 50**.

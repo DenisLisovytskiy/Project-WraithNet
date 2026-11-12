@@ -1,5 +1,7 @@
 # Design Document: Smooth Live Motion (Dual-Clock Presentation)
 
+> **Status (2026-11, Phase 56):** Phases 46–49 are implemented (`viewer3d/motion.py`, `tests/test_viewer3d_motion*.py`, `tests/test_viewer3d_phase49.py`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for making live (and replay) viewing feel continuous at roughly **30–60 FPS**, without turning WraithNet’s discrete Mesa/CNP combat model into continuous physics. **Nothing in this document is implemented yet.** See Phases 46–49 for LLM-ready implementation prompts.
 >
 > Numbering note: Phases 34–45 remain the terrain / naval / combined-arms track. This expansion is an independent presentation track that starts at **Phase 46** so agents can implement it without waiting on terrain.

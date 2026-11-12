@@ -1,5 +1,7 @@
 # Design Document: Risk-Aware Contract Net Negotiation
 
+> **Status (2026-11, Phase 56):** Phase 45 is **partially implemented**: typed proposals, award selection, flare/notch readiness and the negotiation audit log are in the code; route-based exposure, shared threat contacts, the normalisation round, reservations and target ordering are not. The remainder is [Phase 63](phases/Phase_63_Shared_Threat_Picture_and_Phase_45_Completion.md); the gap list is in [doc 23 §1.3](23_Project_State_Audit_and_Next_Phases_Roadmap.md).
+
 > This document is the source of truth for Phase 45. It updates jet Contract Net Protocol (CNP) bidding and manager award selection after terrain, guided defenses, naval units, AAA, countermeasures, dynamic bases, and combined-arms objectives exist. It explicitly makes low/no flare inventory a disadvantage when a task exposes the bidder to known infrared threats. Nothing in this document is implemented yet.
 
 ## 0. Problem

@@ -1,5 +1,7 @@
 # Design Document: Terrain, Naval Warfare & Combined Arms
 
+> **Status (2026-11, Phase 56):** Phases 34–44 are implemented (`wraithnet/terrain.py`, `wraithnet/missiles.py`, `wraithnet/countermeasures.py`, `wraithnet/naval.py`, `wraithnet/aaa.py`, `wraithnet/tanks.py`). The "nothing is implemented yet" wording below is the original design-time text.
+
 > This document is the source of truth for Phases 34–44. It extends WraithNet from an open, flat, jet-versus-static-target simulation into a terrain-aware combined-arms simulation with water, plains, forests, cities, naval bases and combatants, guided missiles and countermeasures, gun-based air defenses, and opposing tank forces. Nothing in this document is implemented yet.
 
 ## 0. Requested outcome

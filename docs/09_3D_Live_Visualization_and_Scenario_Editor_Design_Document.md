@@ -1,5 +1,7 @@
 # Design Document: 3D Live Visualization & Scenario Editor ("Phase 3 Expansion")
 
+> **Status (2026-11, Phase 56):** Phases 14–19 are implemented (`wraithnet/scenario_schema.py`, `wraithnet/live_stream.py`, `viewer3d/`). The "nothing is implemented yet" wording below is the original design-time text. Superseded for altitude and attitude by doc 22.
+
 > This document is the source of truth for a new, self-contained expansion layered on top of the complete WraithNet simulation (Phases 0–10) and the existing 2D Pygame replay viewer (Phases 11–13, `docs/07_Visualization_Design_Document.md`). **Nothing in this document is implemented yet.** See `docs/phases/Phase_14..19_*.md` for the phase-by-phase build plan — each phase is a standalone LLM prompt, mirroring the style already used for Phases 0–13.
 
 ## 0. What this expansion is, in one paragraph
