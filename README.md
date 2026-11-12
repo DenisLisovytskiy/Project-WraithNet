@@ -190,7 +190,7 @@ Each **difficulty preset** (Training → Standard → Contested → Nightmare) s
 | **~36k lines** of application code | simulation, agents, generator, 2D and 3D viewers, launcher |
 | **~24k lines** of tests | unit, property-style seed matrices, end-to-end scenario runs and GUI smoke tests |
 | **100-seed regression matrix** | every generated STANDARD mission must pass the feasibility check. Feasibility is a static check; how often the simulated swarm actually solves a mission is measured separately ([doc 23 §3](docs/23_Project_State_Audit_and_Next_Phases_Roadmap.md)) |
-| **Deterministic** | seeded RNG streams per subsystem (terrain, enemies, friendlies, combat), so a seed reproduces its mission exactly |
+| **Deterministic** | seeded RNG streams per subsystem (terrain, enemies, friendlies, combat) and no wall-clock time in the simulation tick, so a seed reproduces its mission exactly in any process, on any machine |
 | **Design-first workflow** | 25+ design documents and code reviews, and 66 phase plans in [`docs/`](docs/) |
 | **Packaged** | PyInstaller build to a one-click Windows executable ([`packaging/BUILDING.md`](packaging/BUILDING.md)) |
 
@@ -228,9 +228,26 @@ Pick a difficulty and a seed, click **Generate**, inspect or edit the units, the
 
 ```bash
 python -m wraithnet.main --scenario scenarios/default.json --output-dir results/demo
+python -m wraithnet.main --generate CONTESTED --seed 6 --output-dir results/contested-6
 ```
 
-This prints a debrief (targets, losses, missiles, jamming) and writes `trace.jsonl`, `model_vars.csv` and `agent_vars.csv`.
+This prints a debrief (targets, losses, missiles, jamming) and writes `trace.jsonl`, `model_vars.csv` and `agent_vars.csv`. The first form loads a scenario file; the second generates the mission from a difficulty preset and a seed, with no editor involved. Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--max-ticks N` | stop after `N` ticks if the mission has not ended (default 1000) |
+| `--no-trace` | write no trace and no CSV files |
+| `--summary-json PATH` | write the summary and run metadata as one JSON object |
+
+The outcome is one of `SOLVED`, `ABORTED`, `WIPED` or `TICK_CAP`. `TICK_CAP` means the run was stopped at the tick limit, which is not the same as a mission that ended unsolved.
+
+**Batch of seeded missions**
+
+```bash
+python -m wraithnet.experiment --preset STANDARD --seeds 0-99 --workers 8 --out results/exp-standard
+```
+
+Each seed runs in its own process, with no window. Every finished run appends one JSON row to `results/exp-standard/runs.jsonl` (load it with `pandas.read_json(path, lines=True)`), and a table of outcomes is printed at the end. `--resume` continues a batch that was stopped, `--keep-traces {none,failed,all}` chooses which runs keep a trace for replay (default `failed`), `--param key=value` overrides a generation parameter, and `--config-override NAME=value` sets a constant from `wraithnet/config.py` for the whole batch. The result for a seed does not depend on the number of workers or on how fast the machine is.
 
 **3. Replay any recorded run in 3D**
 
