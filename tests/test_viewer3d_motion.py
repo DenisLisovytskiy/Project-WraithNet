@@ -406,6 +406,7 @@ def test_catchup_rate_speeds_presentation_when_lagged():
     assert buf.is_catching_up is True
 
 
+@pytest.mark.slow
 def test_push_sample_1000_ticks_under_ci_ceiling():
     import time
 
