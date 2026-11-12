@@ -267,3 +267,65 @@ The track is **done** when all of the following hold:
 * Whether `desired_altitude` combat path is removed or kept as advisory autopilot.
 
 Freeze choices in Phase 50/51 PR descriptions so Phase 52–55 agents do not fork semantics.
+
+## 14. Tactical altitude (added after Phase 55)
+
+> Built in commits `464add7` and `d5e1f2a` without a phase document. This section is the design record. The short bullets in §5 remain correct; this is the full picture.
+
+### 14.1 What changed
+
+Before this work every jet sat at altitude 20 for the whole mission. Nothing stopped it flying through a 25-unit building, and altitude played no part in tactics. Now altitude decides three things: whether the jet hits terrain, what can shoot at it, and which weapons it can release.
+
+### 14.2 Terrain safety
+
+* **Obstacle heights.** A CITY cell is as tall as its `building_height`; a FOREST cell has a canopy of `terrain.FOREST_CANOPY_HEIGHT` (3.0). Ground and water are 0. `terrain.cell_obstacle_height` is the single source.
+* **Relative altitude.** `WraithNetModel.relative_altitude(jet)` is the height above whatever is under the jet. The trace carries it and the HUD shows it as AGL next to ALT.
+* **Hard floor.** `_altitude_floor`: the jet never goes below `max(frame.min_combat_altitude, obstacle below + terrain_clearance)`. Only the final approach to a base skips it.
+* **Look-ahead (auto-GCAS).** `terrain.lookahead_required_altitude` returns the lowest altitude from which a rate-limited climb still clears every obstacle the jet could reach. An obstacle `d` away takes at least `floor(d / max_speed)` ticks to reach; the first few of those go to rotating the nose up, the rest climb at `altitude_tactics.climb_rate(frame)`. The check is by distance, not by heading, so it holds whichever way the jet turns, and far obstacles barely count, which leaves room to fly low.
+* **Who uses it.** `_terrain_required_altitude` calls it once per jet per tick, adding the height a nose-down jet loses while it rotates. Below that altitude `_autopilot_pitch` commands a full-pitch climb whatever the agent asked for.
+* **Safety net.** A jet that is found below an obstacle anyway is destroyed and written to `model.crash_log`; `summarize()` reports it as `jets_crashed`.
+
+### 14.3 Altitude is flown
+
+Outside carrier or runway recovery, `dz = max_speed * sin(pitch)` and nothing else moves the jet vertically. A level or unset pitch intent means "hold `desired_altitude`": `_autopilot_pitch` turns the altitude error into a pitch command with gain `config.ALTITUDE_HOLD_GAIN`, limited by the airframe's real climb rate `min(max_climb_per_tick, max_speed * sin(pitch_limit))` and then by its pitch rate. An explicit non-zero pitch intent wins over the altitude hold; the terrain look-ahead wins over both.
+
+### 14.4 Tactical bands
+
+`altitude_tactics.transit_altitude` picks the altitude an agent commands in transit and on the way out, from what it knows:
+
+| What the jet knows | Altitude it commands | Why |
+|---|---|---|
+| A gun threat with a known ceiling | above the highest ceiling plus `gun_ceiling_margin` | guns kill low |
+| A live SAM site within `sam_low_level_radius` | 0, which the world floor turns into the terrain clearance | surface radar missiles cannot engage a jet below `sam_radar_min_engagement_agl` (ground clutter) |
+| Neither | the airframe's `cruise_altitude` | sensors see over buildings from there |
+
+`sam_low_level_radius` is the SAM_RADAR range plus the ground covered while the jet noses over and descends from cruise, so the jet is already under the radar when it enters the envelope.
+
+### 14.5 Weapon release
+
+* JDAM and GUN_POD have a `max_release_altitude` (15 and 10). `weapons_release.release_attitude_ok` rejects a release above it with `above_max_release_altitude`. Attack runs with these weapons therefore come down into gun reach, descend just in time and climb back out.
+* `_min_overflight_altitude(jet, position)` is the lowest altitude that airframe can hold over a position, given the terrain around it. It is sent to the agent as `TargetInfo.min_overflight_altitude`.
+* `weapons_release.release_reachable` compares the two. Bidding skips an unguided weapon whose release ceiling is below the overflight floor (a bunker between tall buildings cannot be bombed by a jet that cannot get low enough there), and a contractor drops a commitment it cannot deliver instead of circling.
+* Bids price gun risk at the altitude planned for the offered weapon. Above a gun's ceiling the gun risk is zero. Gun contacts carry their `altitude_ceiling` for this.
+
+### 14.6 Feasibility
+
+`scenario_feasibility.discovery_observer_altitude` judges line of sight for discovery from where a jet would actually fly: cruise, or the clearance floor inside a SAM's low-level radius. The generator uses the conservative lowest altitude, because SAMs and jets are not placed yet when it checks.
+
+### 14.7 Per-scenario rules
+
+`ScenarioConfig.altitude_rules` (`schemas.AltitudeRules`) overrides the defaults in `config.py` and reaches agents through `Observation.altitude_rules`:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `terrain_clearance` | `TERRAIN_CLEARANCE` = 3.0 | minimum height above the roof, treetop or ground under the jet |
+| `sam_radar_min_engagement_agl` | `SAM_RADAR_MIN_ENGAGEMENT_AGL` = 6.0 | surface radar missiles cannot engage below this relative altitude |
+| `gun_ceiling_margin` | `GUN_CEILING_MARGIN` = 3.0 | how far above a known gun ceiling a jet flies |
+
+### 14.8 Tests
+
+`tests/test_jet_altitude.py` (terrain floor, look-ahead, crash log, tactical bands, release ceiling), `tests/test_scenario_feasibility.py` (discovery altitude), `tests/test_bid_utility.py` (gun risk above the ceiling), `tests/test_flight_attitude_track_acceptance.py` (release gate at a legal altitude).
+
+### 14.9 Known cost
+
+`lookahead_required_altitude` scans every cell in its radius on every call. `_min_overflight_altitude` calls it once per jet per known target per tick, although its inputs never change for a static target. Together they are about 80% of simulation time (doc 23 §4). Phase 60 caches it.
