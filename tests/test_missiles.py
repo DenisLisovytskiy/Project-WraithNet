@@ -404,7 +404,8 @@ def test_closest_approach_of_a_missile_that_did_not_move():
 
 
 def test_missile_moves_its_speed_per_tick_toward_the_target():
-    req = _amraam_request(target_position=(0.0, 100.0, 20.0))
+    req = _amraam_request(target_position=(6.0, 8.0, 20.0))  # 10 away, off-axis
     m = create_missile(missile_id="M", req=req, launch_tick=1)
-    advance_missile(m, req.target_position)
-    assert m.position == pytest.approx((0.0, config.WEAPON_CATALOG["AMRAAM"].speed_per_tick, 20.0))
+    advance_missile(m, (60.0, 80.0, 20.0))
+    step = config.WEAPON_CATALOG["AMRAAM"].speed_per_tick
+    assert m.position == pytest.approx((0.6 * step, 0.8 * step, 20.0))
