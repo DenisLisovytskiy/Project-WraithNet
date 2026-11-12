@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -32,6 +34,7 @@ def _start(out_dir: Path, hash_seed: str) -> subprocess.Popen:
     )
 
 
+@pytest.mark.slow
 def test_same_seed_in_two_processes_with_different_hash_seeds(tmp_path):
     runs = {seed: _start(tmp_path / f"hash-{seed}", seed) for seed in ("1", "2")}
     for seed, process in runs.items():

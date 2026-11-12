@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 
+import pytest
+
 from wraithnet import config
 from wraithnet.generation_presets import parameters_for_preset
 from wraithnet.generation_rng import GENERATOR_VERSION
@@ -115,6 +117,7 @@ def test_training_preset_matrix_smoke():
         assert result.feasibility is not None
 
 
+@pytest.mark.slow
 def test_contested_25_seed_combined_arms_smoke():
     """Contested can emit non-zero tanks/naval across a 25-seed matrix."""
     saw_enemy_tank = False

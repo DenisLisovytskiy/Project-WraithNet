@@ -72,6 +72,7 @@ def test_headless_equals_form_and_unknown_tokens_are_forwarded():
     assert parsed.role_argv == ("--scenario=x.json", "--cool-new-flag", "1")
 
 
+@pytest.mark.slow
 def test_headless_help_shows_wraithnet_main_help():
     result = subprocess.run(
         [sys.executable, "-m", "launcher", "--headless", "--help"],

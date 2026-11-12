@@ -54,6 +54,7 @@ def test_config_override_sets_known_constants_and_rejects_the_rest(monkeypatch):
         apply_config_overrides({"WEAPON_CATALOG": 1})
 
 
+@pytest.mark.slow
 def test_batch_writes_one_row_per_seed_and_resume_runs_nothing(tmp_path, capsys):
     out = tmp_path / "exp"
     argv = [*BASE, "--seeds", "0-3", "--workers", "2", "--out", str(out)]
@@ -78,6 +79,7 @@ def test_batch_writes_one_row_per_seed_and_resume_runs_nothing(tmp_path, capsys)
     assert sorted(r["generation_seed"] for r in read_rows(runs_path)) == [0, 1, 2, 3, 4]
 
 
+@pytest.mark.slow
 def test_rows_do_not_depend_on_worker_count(tmp_path):
     one, four = tmp_path / "w1", tmp_path / "w4"
     main([*BASE, "--seeds", "0-3", "--workers", "1", "--out", str(one)])
@@ -85,6 +87,7 @@ def test_rows_do_not_depend_on_worker_count(tmp_path):
     assert _by_seed(read_rows(one / RUNS_FILE)) == _by_seed(read_rows(four / RUNS_FILE))
 
 
+@pytest.mark.slow
 def test_invalid_override_is_an_error_row_not_a_crash(tmp_path):
     out = tmp_path / "bad"
     main([
@@ -98,6 +101,7 @@ def test_invalid_override_is_an_error_row_not_a_crash(tmp_path):
     assert "ERROR" in summary_table([row])
 
 
+@pytest.mark.slow
 def test_failed_runs_keep_their_trace(tmp_path):
     out = tmp_path / "traces"
     main([

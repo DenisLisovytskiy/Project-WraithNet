@@ -299,6 +299,7 @@ def test_legacy_header_without_terrain_renders_plains():
     assert all(c.terrain_type == "PLAINS" for row in resolved.cells for c in row)
 
 
+@pytest.mark.gui
 def test_editor_mode_switch_and_stroke_undo():
     from panda3d.core import loadPrcFileData
 

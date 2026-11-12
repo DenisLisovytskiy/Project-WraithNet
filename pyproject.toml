@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Default lane: fast and headless. Full lane: pytest -m ""
+addopts = "-m 'not slow and not gui'"
+markers = [
+    "slow: takes a second or more; runs in the full lane only",
+    "gui: builds the 3D viewer application or launches the viewer's simulator",
+    "e2e: runs whole missions and asserts on their results",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    # A warning raised from our own code is a bug.
+    "error:::wraithnet.*",
+    # Mesa's unseeded-RNG warning means a run is not reproducible.
+    "error:No Agents specified:UserWarning",
+]

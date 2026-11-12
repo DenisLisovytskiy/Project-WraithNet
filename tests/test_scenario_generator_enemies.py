@@ -92,6 +92,7 @@ def test_global_random_state_unchanged():
     assert random.getstate() == state_before
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("preset", ["TRAINING", "STANDARD", "CONTESTED", "NIGHTMARE"])
 def test_presets_over_seed_matrix_exact_counts_and_ids(preset):
     for seed in range(50):

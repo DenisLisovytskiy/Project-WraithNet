@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
+
 from viewer3d.launch import build_sim_worker_argv, launch_scenario
 from viewer3d.stream_client import HeaderEvent, StreamClient
 from wraithnet.scenario_io import save_scenario

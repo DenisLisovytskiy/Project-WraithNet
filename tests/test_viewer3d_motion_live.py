@@ -6,6 +6,9 @@ import time
 
 import pytest
 
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
+
 pytest.importorskip("panda3d")
 
 from panda3d.core import loadPrcFileData

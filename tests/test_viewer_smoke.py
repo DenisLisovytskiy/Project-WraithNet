@@ -164,6 +164,7 @@ def _three_tick_trace() -> tuple[TraceHeader, list[TraceTick]]:
     return header, ticks
 
 
+@pytest.mark.slow
 def test_draw_pipeline_raises_nothing_across_three_tick_trace(tmp_path):
     header, ticks = _three_tick_trace()
     path = tmp_path / "trace.jsonl"

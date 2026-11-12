@@ -8,6 +8,9 @@ from __future__ import annotations
 import copy
 
 import pytest
+
+# Builds the full viewer application or launches the viewer's simulator.
+pytestmark = pytest.mark.gui
 from pydantic import ValidationError
 from pathlib import Path
 
