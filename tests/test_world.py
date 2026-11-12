@@ -583,7 +583,10 @@ def test_jet_destroyed_removed_from_jets_and_space(monkeypatch):
         guard += 1
         assert guard < 50, "SAM missiles failed to destroy HEAVY_BOMBER"
     assert "Victim" not in model.jets
-    assert jet not in model.space.agents
+    # Not `model.space.agents`: on an empty space Mesa builds an AgentSet with
+    # no generator and warns about reproducibility.
+    assert jet.pos is None
+    assert jet not in model.agents
     assert model.jet_outcomes["Victim"].outcome == "destroyed"
     assert_all_jet_ids_intact(model)
 
